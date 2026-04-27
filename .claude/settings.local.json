@@ -9,7 +9,8 @@
       "mcp__jira__jira_get_ticket",
       "mcp__jira__jira_delete_ticket",
       "mcp__jira__jira_update_ticket",
-      "Bash(bash push-config.sh)"
+      "Bash(bash push-config.sh)",
+      "Bash(npm create *)"
     ]
   }
 }

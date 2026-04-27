@@ -51,13 +51,26 @@ git checkout -b feature/KAN-XX-ten-tinh-nang
 
 ### Bước 4 — Implement theo đúng cấu trúc
 
-**Web (ReactJS):**
+**Web (ReactJS) — Feature-based + Shared:**
 ```
-pages/          ← route entry, chỉ layout + data fetching
-components/     ← UI components (stateless ưu tiên)
-stores/         ← Zustand global state
-services/       ← Axios API calls (KHÔNG fetch trong component)
+features/<tên-feature>/
+  pages/        ← route entry: layout + gọi hook, không có logic
+  components/   ← UI components của feature này
+  hooks/        ← TanStack Query (useQuery / useMutation)
+  services/     ← Axios API calls qua axiosInstance (KHÔNG fetch trong component)
+  schemas/      ← Zod schema cho form validation
+  types/        ← TypeScript types của feature
+
+shared/
+  components/layout/   ← AppLayout, AuthLayout, Sidebar, Header
+  components/common/   ← LoadingSpinner, ErrorBoundary, EmptyState
+  components/ui/       ← shadcn components
+  lib/axios.ts         ← Axios instance (không tạo instance mới)
+  stores/sessionStore  ← Zustand auth state (không tạo store mới cho auth)
+  types/api.types.ts   ← ResponseData<T>, PaginationResponse<T>
 ```
+
+**Không đặt file mới vào `shared/` trừ khi dùng ở ≥ 2 feature khác nhau.**
 
 **Mobile (React Native / Expo):**
 ```
@@ -94,5 +107,5 @@ Chuyển ticket sang **IN PROGRESS**.
 ---
 
 ## Stack FE
-**Web:** ReactJS 18 · Zustand · Axios · shadcn/ui · Tailwind · Recharts
+**Web:** React 19 · React Router DOM v7 · TanStack Query v5 · Zustand · Axios · React Hook Form + Zod · shadcn/ui · Tailwind v4 · Recharts · Sonner · js-cookie · jwt-decode · next-themes · date-fns
 **Mobile:** React Native · Expo · Expo Router · Axios
