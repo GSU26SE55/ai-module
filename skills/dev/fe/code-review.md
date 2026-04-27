@@ -9,8 +9,11 @@
 
 ### Architecture
 - [ ] Không có business logic trong component (chỉ UI + state)?
-- [ ] API call qua `services/` layer, không fetch trực tiếp?
-- [ ] Global state dùng Zustand, không prop-drill quá 2 cấp?
+- [ ] API call qua `services/` layer → hook TanStack Query, không fetch trực tiếp trong component?
+- [ ] File mới đặt đúng chỗ: `features/<tên>/` cho code của feature, `shared/` chỉ khi dùng ≥ 2 feature?
+- [ ] `features/<A>` không import trực tiếp từ `features/<B>`?
+- [ ] Zustand (`sessionStore`) chỉ cho auth session — không dùng cho server state?
+- [ ] Không tạo Axios instance mới — dùng `shared/lib/axios.ts`?
 
 ### Code Quality
 - [ ] Component đặt tên PascalCase?

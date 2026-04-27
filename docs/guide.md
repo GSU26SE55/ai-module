@@ -8,57 +8,27 @@
 
 ---
 
-## Lần đầu setup (làm 1 lần duy nhất)
+## LEADER — Setup (Trần Minh Trí)
 
-### Bước 1 — Clone repo và mở đúng folder
+> Leader làm việc từ folder `Search` (workflow-ai), không phải role repo.
+
+### Bước 1 — Mở Claude Code từ đúng folder
 
 ```bash
-cd C:\Users\<tên máy>\Desktop\Project\Search
+cd C:\Users\ttei8\Desktop\Project\Search
 claude
 ```
 
-> Phải mở Claude Code từ folder `Search` — không mở folder khác.
+### Bước 2 — Tạo `.claude/CLAUDE.local.md`
 
----
-
-### Bước 2 — Tạo file CLAUDE.local.md (không commit)
-
-Tạo file `.claude/CLAUDE.local.md` với nội dung theo role của bạn:
-
-**Nếu là BE Dev:**
-```
-Role: BE
-Tên: [Tên của bạn]
-MSSV: [MSSV của bạn]
-```
-
-**Nếu là FE Dev:**
-```
-Role: FE
-Tên: [Tên của bạn]
-MSSV: [MSSV của bạn]
-```
-
-**Nếu là Leader (kiêm dev):**
 ```
 Role: Leader
-Dev Role: FE   ← hoặc BE / AI tùy vị trí thực tế
-Tên: [Tên của bạn]
-MSSV: [MSSV của bạn]
+Dev Role: FE
+Tên: Trần Minh Trí
+MSSV: SE183109
 ```
 
-**Nếu là AI Dev:**
-```
-Role: AI
-Tên: [Tên của bạn]
-MSSV: [MSSV của bạn]
-```
-
----
-
-### Bước 3 — Tạo file .env (không commit)
-
-Tạo file `.env` ở root folder `Search`:
+### Bước 3 — Tạo `.env` ở root folder `Search`
 
 ```
 JIRA_BASE_URL=https://fpt-team-d7rg7yak.atlassian.net
@@ -66,28 +36,111 @@ JIRA_EMAIL=<email fpt của bạn>
 JIRA_API_TOKEN=<token Jira của bạn>
 ```
 
-**Lấy Jira API Token:**
-1. Vào https://id.atlassian.com/manage-profile/security/api-tokens
-2. Nhấn **Create API token**
-3. Đặt tên → Copy token
-
----
-
 ### Bước 4 — Setup Jira MCP
-
-Chạy lệnh này trong terminal (thay thông tin của bạn):
 
 ```bash
 npx -y @rui.branco/jira-mcp setup "<email fpt>" "<API token>" "https://fpt-team-d7rg7yak.atlassian.net"
-```
-
-Sau đó đăng ký MCP server:
-
-```bash
 claude mcp add --transport stdio jira -- npx -y @rui.branco/jira-mcp
 ```
 
+### Bước 5 — Verify
+
+Mở Claude Code → gõ `/mcp` → thấy `jira: connected` là xong.
+
 ---
+
+## MEMBER — Setup (FE / BE / Mobile / AI Dev)
+
+> Member clone role repo về máy, làm việc từ folder role repo đó. **Không dùng folder `Search`.**
+
+### Bước 1 — Clone role repo và mở Claude Code
+
+Clone đúng repo theo role của bạn:
+
+| Role | Repo |
+|------|------|
+| FE | `GSU26SE55/frontend` |
+| BE | `GSU26SE55/backend` |
+| Mobile | `GSU26SE55/mobile` |
+| AI | `GSU26SE55/ai-module` |
+
+```bash
+# Ví dụ FE dev:
+cd C:\Users\<tên máy>\Desktop\Project\GSU26SE55\frontend
+claude
+```
+
+> Phải mở Claude Code từ folder role repo của bạn — không mở folder khác.
+
+### Bước 2 — Tạo `.claude/CLAUDE.local.md` (không commit)
+
+Tạo file `.claude/CLAUDE.local.md` ngay trong folder role repo:
+
+**FE Dev:**
+```
+Role: FE
+Tên: [Tên của bạn]
+MSSV: [MSSV của bạn]
+```
+
+**BE Dev:**
+```
+Role: BE
+Tên: [Tên của bạn]
+MSSV: [MSSV của bạn]
+```
+
+**Mobile Dev:**
+```
+Role: Mobile
+Tên: [Tên của bạn]
+MSSV: [MSSV của bạn]
+```
+
+**AI Dev:**
+```
+Role: AI
+Tên: [Tên của bạn]
+MSSV: [MSSV của bạn]
+```
+
+### Bước 3 — Tạo `.claude/.env` (không commit)
+
+Tạo file `.claude/.env` bên trong folder `.claude/` của role repo:
+
+```
+JIRA_BASE_URL=https://fpt-team-d7rg7yak.atlassian.net
+JIRA_EMAIL=<email fpt của bạn>
+JIRA_API_TOKEN=<token Jira của bạn>
+```
+
+> File này đã có trong `.gitignore` của `.claude/` — không cần thêm gì.
+
+**Lấy Jira API Token:**
+1. Vào https://id.atlassian.com/manage-profile/security/api-tokens
+2. Nhấn **Create API token** → đặt tên → Copy token
+
+### Bước 4 — Setup Jira MCP trong `settings.local.json`
+
+Mở `.claude/settings.local.json` trong folder role repo, thêm block `mcpServers` với credentials từ bước 3:
+
+```json
+{
+  "mcpServers": {
+    "jira": {
+      "command": "npx",
+      "args": ["-y", "@rui.branco/jira-mcp"],
+      "env": {
+        "JIRA_BASE_URL": "https://fpt-team-d7rg7yak.atlassian.net",
+        "JIRA_EMAIL": "<email fpt của bạn>",
+        "JIRA_API_TOKEN": "<token Jira của bạn>"
+      }
+    }
+  }
+}
+```
+
+> `settings.local.json` đã có trong `.gitignore` — không lo lộ token.
 
 ### Bước 5 — Verify
 
@@ -99,8 +152,15 @@ Mở Claude Code → gõ `/mcp` → thấy `jira: connected` là xong.
 
 ### Mở Claude Code
 
+**Leader:**
 ```bash
-cd C:\Users\<tên máy>\Desktop\Project\Search
+cd C:\Users\ttei8\Desktop\Project\Search
+claude
+```
+
+**Member (ví dụ FE):**
+```bash
+cd C:\Users\<tên máy>\Desktop\Project\GSU26SE55\frontend
 claude
 ```
 
@@ -109,8 +169,6 @@ claude
 ```
 /kltn
 ```
-
-Gõ lệnh này bất kỳ lúc nào để xem danh sách đầy đủ.
 
 ---
 
@@ -131,7 +189,6 @@ Gõ lệnh này bất kỳ lúc nào để xem danh sách đầy đủ.
 ```
 1. /kltn-task KAN-XX   → Claude đọc ticket, phân tích context
 2. Plan + viết file    → Claude viết logs/KAN-XX/plan.md
-                           (Scope, Files, Approach, Edge cases, Estimate)
 3. Bạn review plan     → Gõ "ok" / "approve" / "tiến hành" để xác nhận
                          ⚠️ Claude KHÔNG code trước khi có xác nhận này
 4. Code...
@@ -167,7 +224,7 @@ Ticket chỉ được coi là **Done** khi đủ cả 3:
 
 ---
 
-## Lệnh của Leader (Trần Minh Trí — SE183109)
+## Lệnh của Leader
 
 | Lệnh | Tác dụng |
 |------|---------|
@@ -182,138 +239,41 @@ Ticket chỉ được coi là **Done** khi đủ cả 3:
 - **Không merge PR của chính mình** — cần ít nhất 1 người approve
 - **Không push thẳng lên main** — luôn qua PR
 - **1 ticket = 1 branch** — `feature/KAN-XX-ten-ngan`
-- **Không commit** `.env` và `CLAUDE.local.md` — đã có trong `.gitignore`
+- **Không commit** `.env`, `.claude/.env`, `CLAUDE.local.md` — đã có trong `.gitignore`
 - **Commit format:** `feat(KAN-XX): mô tả` / `fix` / `refactor` / `test`
-- Chỉ dùng tech stack trong `.claude/rules/tech-defaults.md` — không tự thêm package lạ
+- Chỉ dùng tech stack trong `.claude/rules/tech/` theo role — không tự thêm package lạ
 
 ---
 
-## Cần hỗ trợ
+## Cập nhật Skills / Config
 
-Liên hệ Leader: **Trần Minh Trí (SE183109)**
-
----
-
-## Cập nhật Skills / Config — Dành cho tất cả thành viên
-
-> Đây là cách duy nhất để đề xuất thay đổi skills, rules, hoặc bất kỳ file nào trong `.claude/`.
-> **Không sửa trực tiếp trong role repo** (backend / frontend / mobile / ai-module) — sẽ bị ghi đè khi Leader sync.
-
----
-
-### Tại sao phải làm theo cách này?
-
-```
-workflow-ai (GitHub)  ←  source of truth duy nhất cho .claude/
-        ↓
-  push-config.sh
-        ↓
-backend / frontend / mobile / ai-module  ←  chỉ nhận, không sửa
-```
-
-Mọi thay đổi phải đi qua `workflow-ai` → Leader review → mới sync xuống tất cả.
-
----
-
-### Bước 1 — Clone `workflow-ai` về máy (làm 1 lần)
+> Mọi thay đổi `.claude/` phải đi qua `workflow-ai` → Leader review → mới sync xuống.
+> **Không sửa trực tiếp trong role repo** — sẽ bị ghi đè khi Leader sync.
 
 ```bash
-git clone https://github.com/GSU26SE55/workflow-ai.git
-cd workflow-ai
-```
+# 1. Clone workflow-ai (làm 1 lần)
+git clone https://github.com/GSU26SE55/workflow-ai.git && cd workflow-ai
 
-> Nếu đã clone rồi, pull bản mới nhất trước:
-> ```bash
-> git pull origin main
-> ```
-
----
-
-### Bước 2 — Tạo branch mới
-
-```bash
+# 2. Tạo branch
 git checkout -b fix/ten-thay-doi
-```
 
-Ví dụ: `fix/update-task-skill-be`, `fix/them-rule-commit`, `fix/sua-checklist-ship`
+# 3. Sửa file trong .claude/
 
----
-
-### Bước 3 — Sửa file trong `.claude/`
-
-Các file thường cần sửa:
-
-| File | Khi nào sửa |
-|------|-------------|
-| `.claude/skills/dev/be/task.md` | Checklist task của BE cần cập nhật |
-| `.claude/skills/dev/fe/task.md` | Checklist task của FE cần cập nhật |
-| `.claude/rules/workflow.md` | Quy trình làm việc thay đổi |
-| `.claude/rules/tech-defaults.md` | Thêm/bỏ package, công nghệ |
-
----
-
-### Bước 4 — Commit và push
-
-```bash
+# 4. Commit và push
 git add .claude/
 git commit -m "fix: mô tả thay đổi"
 git push origin fix/ten-thay-doi
+
+# 5. Mở PR trên GitHub → assign Leader review
 ```
 
----
-
-### Bước 5 — Mở Pull Request
-
-1. Vào `https://github.com/GSU26SE55/workflow-ai`
-2. GitHub sẽ hiện banner **"Compare & pull request"** → bấm vào
-3. Điền mô tả ngắn gọn thay đổi là gì và tại sao
-4. Assign **Leader (Trần Minh Trí)** để review
-
----
-
-### Sau khi Leader merge
-
-Leader sẽ chạy `push-config.sh` để sync xuống tất cả role repos.
-
-Bạn chỉ cần `git pull` ở role repo của mình để nhận bản mới:
-
-```bash
-git pull origin main
-```
-
----
-
-### Lưu ý quan trọng
-
-- **Không push thẳng vào `main`** của `workflow-ai` — branch protection đã bật
-- **Không sửa file ngoài `.claude/`** trong repo này
-- **1 PR = 1 thay đổi cụ thể** — không gộp nhiều thứ không liên quan vào 1 PR
-- Nếu không chắc nên sửa gì → nhắn Leader trước, đừng tự sửa
+Sau khi Leader merge → chạy `push-config.sh` → member `git pull` để nhận bản mới.
 
 ---
 
 ## Bảo vệ code — Pre-commit & GitHub Actions
 
-### Tổng quan
-
-Mỗi sub-repo (`backend`, `frontend`, `mobile`, `ai-module`) đều có sẵn:
-
-- **Pre-commit hooks** — chặn lỗi ngay tại local trước khi commit/push
-- **GitHub Actions CI** — tự động build + test khi mở PR lên `main`
-
-```
-git commit  →  pre-commit chạy  →  nếu PASS → commit thành công
-                                 →  nếu FAIL → chặn lại, hiện lỗi cụ thể
-
-git push + mở PR  →  GitHub Actions chạy  →  nếu PASS → merge được
-                                            →  nếu FAIL → block merge
-```
-
----
-
 ### Cài đặt pre-commit (mỗi thành viên làm 1 lần sau khi clone)
-
-**Yêu cầu:** Python đã cài (BE/AI đã có, FE/Mobile cần cài thêm nếu chưa có)
 
 ```bash
 pip install pre-commit
@@ -321,38 +281,16 @@ pre-commit install
 pre-commit install --hook-type commit-msg
 ```
 
-Chạy trong folder repo của bạn (`backend` / `frontend` / `mobile` / `ai-module`). Xong — hook tự chạy mỗi lần commit từ đây về sau.
-
----
-
 ### Những gì bị kiểm tra tự động
 
-**Tất cả repo:**
-
-| Hook | Kiểm tra gì | Khi nào chạy |
-|------|-------------|--------------|
-| `no-commit-to-branch` | Chặn commit thẳng vào `main` | pre-commit |
-| `conventional-pre-commit` | Format commit message | commit-msg |
-| `trailing-whitespace` | Xóa khoảng trắng thừa cuối dòng | pre-commit |
-
-**Backend (.NET):**
-| Hook | Kiểm tra gì |
-|------|-------------|
-| `dotnet format` | Code style C# — format đúng chuẩn |
-
-**Frontend / Mobile (React):**
-| Hook | Kiểm tra gì |
-|------|-------------|
-| `eslint` | Lỗi JS/TS trên file đang staged |
-| `tsc` | TypeScript type errors |
-
-**AI Module (Python):**
-| Hook | Kiểm tra gì |
-|------|-------------|
-| `ruff` | Lint + auto-fix Python |
-| `ruff-format` | Format code Python |
-
----
+| Hook | Kiểm tra gì | Role |
+|------|-------------|------|
+| `no-commit-to-branch` | Chặn commit thẳng vào `main` | Tất cả |
+| `conventional-pre-commit` | Format commit message | Tất cả |
+| `trailing-whitespace` | Khoảng trắng thừa | Tất cả |
+| `eslint` + `tsc` | Lint + type check | FE / Mobile |
+| `dotnet format` | Code style C# | BE |
+| `ruff` + `ruff-format` | Lint + format Python | AI |
 
 ### Commit message bắt buộc
 
@@ -361,100 +299,20 @@ feat(KAN-XX): mô tả ngắn gọn
 fix(KAN-XX): mô tả ngắn gọn
 refactor(KAN-XX): mô tả ngắn gọn
 test(KAN-XX): mô tả ngắn gọn
-chore(KAN-XX): mô tả ngắn gọn
-docs(KAN-XX): mô tả ngắn gọn
-```
-
-Commit sai format sẽ bị **chặn ngay tại local**:
-
-```
-conventional-pre-commit..........Failed
-  Commit message "add login" does not follow Conventional Commits.
-  Expected: type(scope): description
-  Example:  feat(KAN-12): add login API
-```
-
----
-
-### Branch naming bắt buộc
-
-```
-feature/KAN-XX-ten-ngan
-```
-
-Ví dụ: `feature/KAN-12-login-api`, `feature/KAN-25-battery-chart`
-
----
-
-### GitHub Actions CI
-
-Tự động chạy khi **mở hoặc cập nhật PR** vào `main`. Không cần làm gì — GitHub tự trigger.
-
-**Backend:** `dotnet restore` → `dotnet build` → `dotnet test`
-
-**Frontend:** `npm ci` → `tsc --noEmit` → `eslint` → `npm run build`
-
-**Mobile:** `npm ci` → `tsc --noEmit` → `eslint`
-
-**AI Module:** `pip install` → `ruff check` → `pytest`
-
-Nếu CI fail → **không merge được** dù có người approve. Phải sửa lỗi và push lại.
-
----
-
-### Xử lý khi hook bị chặn
-
-**Commit bị chặn do lint lỗi:**
-```bash
-# Xem lỗi cụ thể, sửa file, rồi:
-git add <file đã sửa>
-git commit -m "feat(KAN-XX): mô tả"
-```
-
-**Chạy kiểm tra thủ công trước khi commit:**
-```bash
-pre-commit run --all-files        # kiểm tra toàn bộ
-pre-commit run ruff               # chỉ chạy 1 hook
-pre-commit run --files src/main.py # chỉ check 1 file
-```
-
-**Cập nhật hooks lên version mới (Leader làm):**
-```bash
-pre-commit autoupdate
-git add .pre-commit-config.yaml
-git commit -m "chore: update pre-commit hooks"
 ```
 
 ---
 
 ## Quản lý config (Leader only)
 
-### Cập nhật .claude/ config xuống tất cả role repos
-
-Mỗi khi Leader sửa bất kỳ file nào trong `workflow-ai` (Search), chạy **1 lệnh** để sync xuống `backend` / `frontend` / `mobile` / `ai-module`:
-
 ```bash
 cd C:\Users\ttei8\Desktop\Project\Search
-git push-config
-```
-
-Hoặc:
-
-```bash
 bash push-config.sh
 ```
 
-Lệnh này tự động làm 3 việc:
-1. Push `workflow-ai` lên GitHub org
-2. Cập nhật branch `subtree/claude-config`
-3. Sync `.claude/` xuống 4 role repos và push
+Sync `.claude/` xuống 4 role repos. Member chỉ cần `git pull` để nhận.
 
-Sau khi sync xong, member chỉ cần `git pull` để nhận config mới.
-
-### Yêu cầu
-
-Các folder role repos phải tồn tại trên máy Leader:
-
+**Yêu cầu — folders phải tồn tại trên máy Leader:**
 ```
 C:\Users\ttei8\Desktop\Project\GSU26SE55\
 ├── backend\
@@ -465,14 +323,6 @@ C:\Users\ttei8\Desktop\Project\GSU26SE55\
 
 ---
 
-## Cấu trúc thư mục tham khảo
+## Cần hỗ trợ
 
-```
-.claude/
-├── CLAUDE.md              ← bộ não dự án (đọc để hiểu context)
-├── rules/                 ← quy tắc coding, design, tech stack
-├── commands/              ← slash commands (/kltn, /kltn-task, ...)
-├── skills/dev/be|fe|ai/   ← chi tiết checklist theo role
-├── agents/                ← researcher + reviewer + tester
-└── docs/                  ← file hướng dẫn này
-```
+Liên hệ Leader: **Trần Minh Trí (SE183109)**
