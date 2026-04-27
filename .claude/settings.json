@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+"Bash(curl:*)",
+      "Bash(git:*)",
+      "Bash(gh:*)",
+      "mcp__jira__jira_create_subtask",
+      "mcp__jira__jira_search",
+      "mcp__jira__jira_get_ticket"
+    ]
+  }
+}
