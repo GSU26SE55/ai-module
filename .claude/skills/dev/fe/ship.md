@@ -13,19 +13,25 @@
    ```
    Không có: `.env`, `node_modules`, file build (`.next/`, `dist/`, `.expo/`)
 
-2. **Push branch**
+2. **Commit logs**
+   ```bash
+   git add logs/KAN-XX/
+   git commit -m "docs(KAN-XX): thêm plan, review, test log"
+   ```
+
+3. **Push branch**
    ```bash
    git push origin feature/KAN-XX-ten-tinh-nang
    ```
 
-3. **Tạo PR**
+4. **Tạo PR**
    ```bash
    gh pr create \
      --title "feat(KAN-XX): [tóm tắt]" \
      --body "## Ticket\nKAN-XX\n\n## Thay đổi\n- \n\n## Test\n- [ ] Chạy được trên browser/device\n- [ ] Không break trang/screen khác\n- [ ] Responsive (nếu là Web)"
    ```
 
-4. **Cập nhật Jira** — chuyển sang IN REVIEW, paste link PR vào comment
+5. **Cập nhật Jira** — chuyển sang IN REVIEW, paste link PR vào comment
 
 ---
 
