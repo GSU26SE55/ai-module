@@ -8,7 +8,8 @@
       "mcp__jira__jira_search",
       "mcp__jira__jira_get_ticket",
       "mcp__jira__jira_delete_ticket",
-      "mcp__jira__jira_update_ticket"
+      "mcp__jira__jira_update_ticket",
+      "Bash(bash push-config.sh)"
     ]
   }
 }
