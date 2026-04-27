@@ -28,22 +28,25 @@ Tên: Trần Minh Trí
 MSSV: SE183109
 ```
 
-### Bước 3 — Tạo `.env` ở root folder `Search`
+### Bước 3 — Setup Jira MCP (user scope — dùng được ở mọi repo)
 
-```
-JIRA_BASE_URL=https://fpt-team-d7rg7yak.atlassian.net
-JIRA_EMAIL=<email fpt của bạn>
-JIRA_API_TOKEN=<token Jira của bạn>
-```
+Leader làm việc trên nhiều repo (workflow-ai + các sub-repo), nên cài MCP ở **user scope**.
 
-### Bước 4 — Setup Jira MCP
+**Lấy Jira API Token:**
+1. Vào https://id.atlassian.com/manage-profile/security/api-tokens
+2. Nhấn **Create API token** → đặt tên → Copy token
 
 ```bash
+# 1. Lưu credentials (chỉ chạy 1 lần)
 npx -y @rui.branco/jira-mcp setup "<email fpt>" "<API token>" "https://fpt-team-d7rg7yak.atlassian.net"
-claude mcp add --transport stdio jira -- npx -y @rui.branco/jira-mcp
+
+# 2. Đăng ký MCP ở user scope (có hiệu lực trong mọi folder)
+claude mcp add --scope user jira npx -- -y @rui.branco/jira-mcp
 ```
 
-### Bước 5 — Verify
+> **Tại sao user scope?** Project scope (mặc định) chỉ hoạt động trong folder `workflow-ai`. User scope cho phép dùng Jira MCP trong `frontend`, `backend`, v.v. mà không cần cấu hình lại.
+
+### Bước 4 — Verify
 
 Mở Claude Code → gõ `/mcp` → thấy `jira: connected` là xong.
 
@@ -104,25 +107,13 @@ Tên: [Tên của bạn]
 MSSV: [MSSV của bạn]
 ```
 
-### Bước 3 — Tạo `.claude/.env` (không commit)
-
-Tạo file `.claude/.env` bên trong folder `.claude/` của role repo:
-
-```
-JIRA_BASE_URL=https://fpt-team-d7rg7yak.atlassian.net
-JIRA_EMAIL=<email fpt của bạn>
-JIRA_API_TOKEN=<token Jira của bạn>
-```
-
-> File này đã có trong `.gitignore` của `.claude/` — không cần thêm gì.
+### Bước 3 — Setup Jira MCP trong `settings.local.json`
 
 **Lấy Jira API Token:**
 1. Vào https://id.atlassian.com/manage-profile/security/api-tokens
 2. Nhấn **Create API token** → đặt tên → Copy token
 
-### Bước 4 — Setup Jira MCP trong `settings.local.json`
-
-Mở `.claude/settings.local.json` trong folder role repo, thêm block `mcpServers` với credentials từ bước 3:
+Mở `.claude/settings.local.json` trong folder role repo, thêm block `mcpServers` (giữ nguyên phần `permissions` nếu đã có):
 
 ```json
 {
@@ -140,9 +131,9 @@ Mở `.claude/settings.local.json` trong folder role repo, thêm block `mcpServe
 }
 ```
 
-> `settings.local.json` đã có trong `.gitignore` — không lo lộ token.
+> `settings.local.json` đã có trong `.gitignore` — token không bị commit lên Git.
 
-### Bước 5 — Verify
+### Bước 4 — Verify
 
 Mở Claude Code → gõ `/mcp` → thấy `jira: connected` là xong.
 
