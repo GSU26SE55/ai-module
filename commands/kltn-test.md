@@ -25,7 +25,6 @@ Thực hiện đúng theo `.claude/agents/tester.md`:
 
 Sau khi có kết quả, lưu vào:
 ```
-logs/KAN-XX-ten-feature/test.md
+logs/KAN-XX/test.md
 ```
-Copy từ `logs/_template/test.md`, điền kết quả thực tế.
 Nếu folder chưa tồn tại → tạo mới.

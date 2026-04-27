@@ -49,7 +49,7 @@
 
 Sau khi có kết quả, lưu vào:
 ```
-logs/KAN-XX-ten-feature/review.md
+logs/KAN-XX/review.md
 ```
-Copy từ `logs/_template/review.md`, điền kết quả thực tế.
+Nếu folder chưa tồn tại → tạo mới.
 
