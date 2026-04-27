@@ -39,7 +39,9 @@
 - [ ] Không còn `console.log` sót lại?
 
 ### UI / UX
-- [ ] Dùng đúng shadcn/ui components (Web), không tự custom lại cái đã có?
+- [ ] UI primitive dùng từ `shared/components/ui` (shadcn generated components)?
+- [ ] Không tự custom Button/Input/Form/Dialog/Table/Badge/Skeleton nếu shadcn đã có?
+- [ ] Primitive mới được thêm bằng `npx shadcn@latest add <component>`?
 - [ ] Responsive trên mobile viewport (Web)?
 - [ ] Expo Router navigation đúng pattern (Mobile)?
 

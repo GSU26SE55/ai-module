@@ -10,7 +10,7 @@
 | Client state | Zustand v5 | Chỉ cho auth session + UI state |
 | HTTP | Axios | Interceptors: auto-attach token + refresh |
 | Form | React Hook Form + Zod | Validation schema-first |
-| UI | shadcn/ui + Tailwind v4 | Không custom lại component đã có |
+| UI | shadcn/ui + Tailwind v4 | Generate component source vào `src/shared/components/ui`, không cài như UI runtime library |
 | Charts | Recharts | SLA timeline, battery health |
 | Toast | Sonner | Thông báo thành công / lỗi |
 | Auth cookie | js-cookie | Đọc/ghi accesstoken, refreshtoken |
@@ -24,6 +24,10 @@
 ```bash
 npm install zod react-hook-form @hookform/resolvers sonner js-cookie jwt-decode next-themes recharts date-fns
 npm install -D @types/js-cookie
+
+# shadcn/ui setup
+npx shadcn@latest init
+npx shadcn@latest add button input label form card dialog dropdown-menu table badge avatar separator sheet skeleton
 ```
 
 ## Nguyên tắc
