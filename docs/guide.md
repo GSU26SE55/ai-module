@@ -292,6 +292,141 @@ git pull origin main
 
 ---
 
+## Bảo vệ code — Pre-commit & GitHub Actions
+
+### Tổng quan
+
+Mỗi sub-repo (`backend`, `frontend`, `mobile`, `ai-module`) đều có sẵn:
+
+- **Pre-commit hooks** — chặn lỗi ngay tại local trước khi commit/push
+- **GitHub Actions CI** — tự động build + test khi mở PR lên `main`
+
+```
+git commit  →  pre-commit chạy  →  nếu PASS → commit thành công
+                                 →  nếu FAIL → chặn lại, hiện lỗi cụ thể
+
+git push + mở PR  →  GitHub Actions chạy  →  nếu PASS → merge được
+                                            →  nếu FAIL → block merge
+```
+
+---
+
+### Cài đặt pre-commit (mỗi thành viên làm 1 lần sau khi clone)
+
+**Yêu cầu:** Python đã cài (BE/AI đã có, FE/Mobile cần cài thêm nếu chưa có)
+
+```bash
+pip install pre-commit
+pre-commit install
+pre-commit install --hook-type commit-msg
+```
+
+Chạy trong folder repo của bạn (`backend` / `frontend` / `mobile` / `ai-module`). Xong — hook tự chạy mỗi lần commit từ đây về sau.
+
+---
+
+### Những gì bị kiểm tra tự động
+
+**Tất cả repo:**
+
+| Hook | Kiểm tra gì | Khi nào chạy |
+|------|-------------|--------------|
+| `no-commit-to-branch` | Chặn commit thẳng vào `main` | pre-commit |
+| `conventional-pre-commit` | Format commit message | commit-msg |
+| `trailing-whitespace` | Xóa khoảng trắng thừa cuối dòng | pre-commit |
+
+**Backend (.NET):**
+| Hook | Kiểm tra gì |
+|------|-------------|
+| `dotnet format` | Code style C# — format đúng chuẩn |
+
+**Frontend / Mobile (React):**
+| Hook | Kiểm tra gì |
+|------|-------------|
+| `eslint` | Lỗi JS/TS trên file đang staged |
+| `tsc` | TypeScript type errors |
+
+**AI Module (Python):**
+| Hook | Kiểm tra gì |
+|------|-------------|
+| `ruff` | Lint + auto-fix Python |
+| `ruff-format` | Format code Python |
+
+---
+
+### Commit message bắt buộc
+
+```
+feat(KAN-XX): mô tả ngắn gọn
+fix(KAN-XX): mô tả ngắn gọn
+refactor(KAN-XX): mô tả ngắn gọn
+test(KAN-XX): mô tả ngắn gọn
+chore(KAN-XX): mô tả ngắn gọn
+docs(KAN-XX): mô tả ngắn gọn
+```
+
+Commit sai format sẽ bị **chặn ngay tại local**:
+
+```
+conventional-pre-commit..........Failed
+  Commit message "add login" does not follow Conventional Commits.
+  Expected: type(scope): description
+  Example:  feat(KAN-12): add login API
+```
+
+---
+
+### Branch naming bắt buộc
+
+```
+feature/KAN-XX-ten-ngan
+```
+
+Ví dụ: `feature/KAN-12-login-api`, `feature/KAN-25-battery-chart`
+
+---
+
+### GitHub Actions CI
+
+Tự động chạy khi **mở hoặc cập nhật PR** vào `main`. Không cần làm gì — GitHub tự trigger.
+
+**Backend:** `dotnet restore` → `dotnet build` → `dotnet test`
+
+**Frontend:** `npm ci` → `tsc --noEmit` → `eslint` → `npm run build`
+
+**Mobile:** `npm ci` → `tsc --noEmit` → `eslint`
+
+**AI Module:** `pip install` → `ruff check` → `pytest`
+
+Nếu CI fail → **không merge được** dù có người approve. Phải sửa lỗi và push lại.
+
+---
+
+### Xử lý khi hook bị chặn
+
+**Commit bị chặn do lint lỗi:**
+```bash
+# Xem lỗi cụ thể, sửa file, rồi:
+git add <file đã sửa>
+git commit -m "feat(KAN-XX): mô tả"
+```
+
+**Chạy kiểm tra thủ công trước khi commit:**
+```bash
+pre-commit run --all-files        # kiểm tra toàn bộ
+pre-commit run ruff               # chỉ chạy 1 hook
+pre-commit run --files src/main.py # chỉ check 1 file
+```
+
+**Cập nhật hooks lên version mới (Leader làm):**
+```bash
+pre-commit autoupdate
+git add .pre-commit-config.yaml
+git commit -m "chore: update pre-commit hooks"
+```
+
+---
+
 ## Quản lý config (Leader only)
 
 ### Cập nhật .claude/ config xuống tất cả role repos
