@@ -194,6 +194,44 @@ Liên hệ Leader: **Trần Minh Trí (SE183109)**
 
 ---
 
+## Quản lý config (Leader only)
+
+### Cập nhật .claude/ config xuống tất cả role repos
+
+Mỗi khi Leader sửa bất kỳ file nào trong `workflow-ai` (Search), chạy **1 lệnh** để sync xuống `backend` / `frontend` / `mobile` / `ai-module`:
+
+```bash
+cd C:\Users\ttei8\Desktop\Project\Search
+git push-config
+```
+
+Hoặc:
+
+```bash
+bash push-config.sh
+```
+
+Lệnh này tự động làm 3 việc:
+1. Push `workflow-ai` lên GitHub org
+2. Cập nhật branch `subtree/claude-config`
+3. Sync `.claude/` xuống 4 role repos và push
+
+Sau khi sync xong, member chỉ cần `git pull` để nhận config mới.
+
+### Yêu cầu
+
+Các folder role repos phải tồn tại trên máy Leader:
+
+```
+C:\Users\ttei8\Desktop\Project\GSU26SE55\
+├── backend\
+├── frontend\
+├── mobile\
+└── ai-module\
+```
+
+---
+
 ## Cấu trúc thư mục tham khảo
 
 ```
