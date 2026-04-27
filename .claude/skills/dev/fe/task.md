@@ -64,13 +64,18 @@ features/<tên-feature>/
 shared/
   components/layout/   ← AppLayout, AuthLayout, Sidebar, Header
   components/common/   ← LoadingSpinner, ErrorBoundary, EmptyState
-  components/ui/       ← shadcn components
+  components/ui/       ← shadcn generated components (Button, Input, Form, Dialog, Table...)
   lib/axios.ts         ← Axios instance (không tạo instance mới)
   stores/sessionStore  ← Zustand auth state (không tạo store mới cho auth)
   types/api.types.ts   ← ResponseData<T>, PaginationResponse<T>
 ```
 
 **Không đặt file mới vào `shared/` trừ khi dùng ở ≥ 2 feature khác nhau.**
+
+**shadcn/ui (Web):**
+- UI primitive dùng từ `shared/components/ui`.
+- Nếu cần primitive mới: chạy `npx shadcn@latest add <component>`.
+- Không tự viết lại Button/Input/Form/Dialog/Table/Badge/Skeleton nếu shadcn đã có.
 
 **Mobile (React Native / Expo):**
 ```
@@ -83,6 +88,7 @@ services/       ← Axios API calls
 ### Bước 5 — Tự kiểm tra trước commit
 - Không còn `console.log`
 - Loading + error state đã xử lý
+- UI primitive import từ `shared/components/ui`, không tự custom lại component shadcn đã có
 - Không hardcode URL / token
 - Route cần auth đã có protected wrapper
 - Responsive đúng (Web)
