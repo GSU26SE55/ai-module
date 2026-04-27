@@ -194,6 +194,104 @@ Liên hệ Leader: **Trần Minh Trí (SE183109)**
 
 ---
 
+## Cập nhật Skills / Config — Dành cho tất cả thành viên
+
+> Đây là cách duy nhất để đề xuất thay đổi skills, rules, hoặc bất kỳ file nào trong `.claude/`.
+> **Không sửa trực tiếp trong role repo** (backend / frontend / mobile / ai-module) — sẽ bị ghi đè khi Leader sync.
+
+---
+
+### Tại sao phải làm theo cách này?
+
+```
+workflow-ai (GitHub)  ←  source of truth duy nhất cho .claude/
+        ↓
+  push-config.sh
+        ↓
+backend / frontend / mobile / ai-module  ←  chỉ nhận, không sửa
+```
+
+Mọi thay đổi phải đi qua `workflow-ai` → Leader review → mới sync xuống tất cả.
+
+---
+
+### Bước 1 — Clone `workflow-ai` về máy (làm 1 lần)
+
+```bash
+git clone https://github.com/GSU26SE55/workflow-ai.git
+cd workflow-ai
+```
+
+> Nếu đã clone rồi, pull bản mới nhất trước:
+> ```bash
+> git pull origin main
+> ```
+
+---
+
+### Bước 2 — Tạo branch mới
+
+```bash
+git checkout -b fix/ten-thay-doi
+```
+
+Ví dụ: `fix/update-task-skill-be`, `fix/them-rule-commit`, `fix/sua-checklist-ship`
+
+---
+
+### Bước 3 — Sửa file trong `.claude/`
+
+Các file thường cần sửa:
+
+| File | Khi nào sửa |
+|------|-------------|
+| `.claude/skills/dev/be/task.md` | Checklist task của BE cần cập nhật |
+| `.claude/skills/dev/fe/task.md` | Checklist task của FE cần cập nhật |
+| `.claude/rules/workflow.md` | Quy trình làm việc thay đổi |
+| `.claude/rules/tech-defaults.md` | Thêm/bỏ package, công nghệ |
+
+---
+
+### Bước 4 — Commit và push
+
+```bash
+git add .claude/
+git commit -m "fix: mô tả thay đổi"
+git push origin fix/ten-thay-doi
+```
+
+---
+
+### Bước 5 — Mở Pull Request
+
+1. Vào `https://github.com/GSU26SE55/workflow-ai`
+2. GitHub sẽ hiện banner **"Compare & pull request"** → bấm vào
+3. Điền mô tả ngắn gọn thay đổi là gì và tại sao
+4. Assign **Leader (Trần Minh Trí)** để review
+
+---
+
+### Sau khi Leader merge
+
+Leader sẽ chạy `push-config.sh` để sync xuống tất cả role repos.
+
+Bạn chỉ cần `git pull` ở role repo của mình để nhận bản mới:
+
+```bash
+git pull origin main
+```
+
+---
+
+### Lưu ý quan trọng
+
+- **Không push thẳng vào `main`** của `workflow-ai` — branch protection đã bật
+- **Không sửa file ngoài `.claude/`** trong repo này
+- **1 PR = 1 thay đổi cụ thể** — không gộp nhiều thứ không liên quan vào 1 PR
+- Nếu không chắc nên sửa gì → nhắn Leader trước, đừng tự sửa
+
+---
+
 ## Quản lý config (Leader only)
 
 ### Cập nhật .claude/ config xuống tất cả role repos
