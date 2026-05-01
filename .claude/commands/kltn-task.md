@@ -16,9 +16,9 @@ Trước khi code, trình bày plan gồm:
 - **Approach:** Mô tả ngắn thuật toán, data flow, hoặc API design
 - **Edge cases:** Các trường hợp cần xử lý đặc biệt
 - **Estimate:** Small / Medium / Large theo ngưỡng:
-  - **Small** (< 2 giờ) — code luôn
-  - **Medium** (2–4 giờ) — code luôn
-  - **Large** (> 4 giờ) — **hỏi leader trước khi code**
+  - **Small** (< 2 giờ) : code luôn
+  - **Medium** (2–4 giờ) : code luôn
+  - **Large** (> 4 giờ) :Yêu cầu apprvoed trước khi code
 
 Chờ xác nhận plan (hoặc người dùng gõ "ok" / "proceed") trước khi bắt đầu code.
 

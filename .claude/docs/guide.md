@@ -200,7 +200,7 @@ claude
 |------|-----------|--------------------------|
 | Small | < 2 giờ | Code luôn |
 | Medium | 2–4 giờ | Code luôn |
-| Large | > 4 giờ | **Hỏi Leader trước khi code** |
+| Large | > 4 giờ | Yêu cầu apprvoed trước khi code |
 
 > **Mọi ticket đều phải có `logs/KAN-XX/plan.md` được approve trước khi code. Không có ngoại lệ.**
 
