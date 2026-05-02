@@ -239,7 +239,21 @@ Ticket chỉ được coi là **Done** khi đủ cả 3:
 ## Cập nhật Skills / Config
 
 > Mọi thay đổi `.claude/` phải đi qua `workflow-ai` → Leader review → mới sync xuống.
-> **Không sửa trực tiếp trong role repo** — sẽ bị ghi đè khi Leader sync.
+> **Không sửa trực tiếp trong role repo** — sẽ bị ghi đè khi Actions sync.
+
+### Luồng chuẩn
+
+```
+[MEMBER]  tạo PR trên workflow-ai
+    ↓
+[LEADER]  pull về Search → review → push lên org-workflow (workflow-ai)
+    ↓
+[ACTIONS] tự động sync .claude/ xuống 4 repo con
+    ↓
+[MEMBER]  git pull trong role repo để nhận bản mới
+```
+
+### Member — đề xuất thay đổi skill / config
 
 ```bash
 # 1. Clone workflow-ai (làm 1 lần)
@@ -258,7 +272,21 @@ git push origin fix/ten-thay-doi
 # 5. Mở PR trên GitHub → assign Leader review
 ```
 
-Sau khi Leader merge → GitHub Actions tự động sync xuống 4 repo con. Member chỉ cần `git pull` để nhận bản mới.
+### Leader — review và merge
+
+```bash
+# Trong folder Search — pull PR về để review local
+git pull org-workflow main
+
+# Review thay đổi
+git diff HEAD~1
+
+# Nếu OK — push lên org-workflow để trigger Actions
+git push org-workflow main
+```
+
+> Actions chỉ trigger khi push lên **`org-workflow`** (GSU26SE55/workflow-ai).
+> Sau khi Actions chạy xong, member `git pull` trong role repo là xong.
 
 ---
 
@@ -296,24 +324,26 @@ test(KAN-XX): mô tả ngắn gọn
 
 ## Quản lý config (Leader only)
 
-> **Không cần clone local các role repo.** GitHub Actions tự động sync khi Leader push.
+> **Không cần clone local các role repo.** GitHub Actions tự động sync khi Leader push lên `org-workflow`.
 
-### Auto-sync (khuyến nghị)
+### Leader — push config trực tiếp
 
-Mỗi khi push thay đổi trong `.claude/` hoặc `templates/` lên `workflow-ai`, GitHub Actions sẽ tự động sync xuống 4 repo con.
+```bash
+cd C:\Users\ttei8\Desktop\Project\Search
 
+# Sửa file trong .claude/ hoặc templates/
+git add .claude/
+git commit -m "chore: mô tả thay đổi"
+git push org-workflow main   # ← trigger Actions
 ```
-Sửa .claude/  →  git push  →  GitHub Actions sync → member git pull
-```
 
-Theo dõi kết quả tại: https://github.com/GSU26SE55/workflow-ai/actions
+### Manual trigger (không có thay đổi file)
 
-### Manual trigger
-
-Nếu cần sync ngay mà không có thay đổi file:
 1. Vào https://github.com/GSU26SE55/workflow-ai/actions
 2. Chọn **"Sync config to sub-repos"**
 3. Nhấn **Run workflow**
+
+Theo dõi kết quả tại: https://github.com/GSU26SE55/workflow-ai/actions
 
 ---
 
