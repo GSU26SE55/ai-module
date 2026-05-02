@@ -258,7 +258,7 @@ git push origin fix/ten-thay-doi
 # 5. Mở PR trên GitHub → assign Leader review
 ```
 
-Sau khi Leader merge → chạy `push-config.sh` → member `git pull` để nhận bản mới.
+Sau khi Leader merge → GitHub Actions tự động sync xuống 4 repo con. Member chỉ cần `git pull` để nhận bản mới.
 
 ---
 
@@ -296,21 +296,24 @@ test(KAN-XX): mô tả ngắn gọn
 
 ## Quản lý config (Leader only)
 
-```bash
-cd C:\Users\ttei8\Desktop\Project\Search
-bash push-config.sh
+> **Không cần clone local các role repo.** GitHub Actions tự động sync khi Leader push.
+
+### Auto-sync (khuyến nghị)
+
+Mỗi khi push thay đổi trong `.claude/` hoặc `templates/` lên `workflow-ai`, GitHub Actions sẽ tự động sync xuống 4 repo con.
+
+```
+Sửa .claude/  →  git push  →  GitHub Actions sync → member git pull
 ```
 
-Sync `.claude/` xuống 4 role repos. Member chỉ cần `git pull` để nhận.
+Theo dõi kết quả tại: https://github.com/GSU26SE55/workflow-ai/actions
 
-**Yêu cầu — folders phải tồn tại trên máy Leader:**
-```
-C:\Users\ttei8\Desktop\Project\GSU26SE55\
-├── backend\
-├── frontend\
-├── mobile\
-└── ai-module\
-```
+### Manual trigger
+
+Nếu cần sync ngay mà không có thay đổi file:
+1. Vào https://github.com/GSU26SE55/workflow-ai/actions
+2. Chọn **"Sync config to sub-repos"**
+3. Nhấn **Run workflow**
 
 ---
 
