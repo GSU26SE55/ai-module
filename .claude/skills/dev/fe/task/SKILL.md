@@ -122,7 +122,23 @@ npx expo export --platform web 2>/dev/null || npx tsc --noEmit
 ```
 
 > Phải pass cả lint lẫn build mới được commit. Không bỏ qua warning TypeScript.
-### Bước 7 — Cập nhật Jira
+```
+
+**Mobile:**
+```bash
+npx expo lint
+npx expo export --platform web 2>/dev/null || npx tsc --noEmit
+```
+
+> Phải pass cả lint lẫn build mới được commit. Không bỏ qua warning TypeScript.
+
+### Bước 7 — Commit
+```bash
+git add <files cụ thể>
+git commit -m "feat(KAN-XX): mô tả ngắn"
+```
+
+### Bước 8 — Cập nhật Jira
 Chuyển ticket sang **IN PROGRESS**.
 
 ---
