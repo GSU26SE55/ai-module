@@ -111,24 +111,38 @@ Claude Code merge `settings.local.json` với `.mcp.json` khi khởi động —
 pip install pre-commit
 pre-commit install
 pre-commit install --hook-type commit-msg
+pre-commit install --hook-type pre-push
 ```
 
-Chạy trong folder repo. Làm **1 lần** — hook tự chạy mỗi lần commit.
+Chạy trong folder repo. Làm **1 lần** — hook tự chạy mỗi lần commit / push.
+
+> `--hook-type pre-push` là bắt buộc — thiếu dòng này thì hook chặn push thẳng lên main sẽ không hoạt động.
 
 ---
 
-### Bước 6 — Verify MCP
+### Bước 6 — Mở Claude Code và verify
 
-Mở Claude Code:
+> **Quan trọng:** Claude Code phải được mở từ **bên trong folder repo** — không phải từ Desktop hay thư mục tuỳ ý. Claude Code đọc `.claude/` trong thư mục hiện tại để load đúng rules, hooks và skills của dự án. Mở sai thư mục → không có lệnh `/kltn-*`.
+
 ```bash
+# BE Dev
+cd ~/Documents/GSU26SE55/backend
+claude
+
+# FE Dev
+cd ~/Documents/GSU26SE55/frontend
+claude
+
+# Đang làm task role phụ (ví dụ BE làm task FE)
+cd ~/Documents/GSU26SE55/frontend   # cd vào repo của role đang làm
 claude
 ```
 
-Gõ `/mcp` — phải thấy `jira: connected` (và `context7`, `playwright` nếu có).
+Sau khi Claude Code mở, gõ `/mcp` — phải thấy `jira: connected` (và `context7`, `playwright` nếu có).
 
 Nếu `jira: disconnected` → kiểm tra lại token ở Bước 4.
 
-Gõ `/kltn` để xem toàn bộ lệnh.
+Gõ `/` để xem danh sách lệnh Claude Code. Xem bảng **Danh sách lệnh** ở cuối trang để biết các lệnh `/kltn-*` của dự án.
 
 ---
 
@@ -193,7 +207,7 @@ Mở `~/.claude/settings.json` (file global của Claude Code), thêm block `mcp
 ```bash
 pip install pre-commit
 for repo in backend frontend mobile ai-module; do
-  cd $repo && pre-commit install && pre-commit install --hook-type commit-msg && cd ..
+  cd $repo && pre-commit install && pre-commit install --hook-type commit-msg && pre-commit install --hook-type pre-push && cd ..
 done
 ```
 
@@ -368,7 +382,7 @@ git push origin fix/ten-thay-doi
 cd workflow-ai
 git add .claude/
 git commit -m "chore: mô tả thay đổi"
-git push org-workflow main   # trigger GitHub Actions
+git push org-workflow main --no-verify   # trigger GitHub Actions (--no-verify bypass pre-push hook)
 ```
 
 Theo dõi Actions tại: https://github.com/GSU26SE55/workflow-ai/actions

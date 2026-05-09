@@ -28,7 +28,7 @@ fi
 
 # Không await UpdateAsync/DeleteAsync (void methods)
 if [[ -f "$FILE_PATH" ]]; then
-  if grep -qE 'await\s+.*\.(UpdateAsync|DeleteAsync)\(' "$FILE_PATH"; then
+  if grep -qE 'await\s+[^;]*\.(UpdateAsync|DeleteAsync)\s*\(' "$FILE_PATH"; then
     WARNINGS="${WARNINGS}⚠️ Found 'await UpdateAsync/DeleteAsync' in '$FILE_PATH'. These are void — remove await.\n"
   fi
 fi

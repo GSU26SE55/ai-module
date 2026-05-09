@@ -9,7 +9,8 @@ if [[ "$FILE_PATH" != *.cs ]] || [[ ! -f "$FILE_PATH" ]]; then exit 0; fi
 # Skip generated files
 if echo "$FILE_PATH" | grep -qE '\.Designer\.cs$|\.g\.cs$|Migrations/'; then exit 0; fi
 
-DECLARED_NS=$(grep -m1 '^namespace ' "$FILE_PATH" | sed 's/namespace //;s/[;{]//g' | tr -d '[:space:]')
+NS_LINE=$(grep -m1 -E '^(global )?namespace ' "$FILE_PATH")
+DECLARED_NS=$(echo "$NS_LINE" | sed 's/^global //;s/namespace //;s/[;{]//g' | tr -d '[:space:]')
 
 if [[ -z "$DECLARED_NS" ]]; then exit 0; fi
 

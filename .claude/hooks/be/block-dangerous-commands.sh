@@ -22,10 +22,12 @@ if echo "$COMMAND" | grep -qiE 'database\s+drop|DROP\s+DATABASE|DROP\s+TABLE'; t
   exit 2
 fi
 
-if echo "$COMMAND" | grep -qE 'git\s+push' && \
-   echo "$COMMAND" | grep -qE '(--force|-f)\b' && \
-   echo "$COMMAND" | grep -qE '\b(main|master)\b'; then
-  echo "BLOCKED: Force push to main/master is not allowed." >&2
+if echo "$COMMAND" | grep -qE 'git\s+push\b' && \
+   echo "$COMMAND" | grep -qE '\s(main|master)(\s|$)'; then
+  echo "BLOCKED: Không được push trực tiếp lên main/master." >&2
+  echo "  → Tạo branch: git checkout -b feature/KAN-XX-mo-ta" >&2
+  echo "  → Push branch: git push origin feature/KAN-XX-mo-ta" >&2
+  echo "  → Mở PR trên GitHub để merge vào main." >&2
   exit 2
 fi
 

@@ -93,12 +93,7 @@
             "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/be/validate-namespace.sh",
             "timeout": 5,
             "statusMessage": "Validating namespace..."
-          }
-        ]
-      },
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
+          },
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/be/check-dbcontext-update.sh",
@@ -110,45 +105,25 @@
             "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/be/check-di-registration.sh",
             "timeout": 5,
             "statusMessage": "Checking DI registration..."
-          }
-        ]
-      },
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
+          },
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/be/check-build.sh",
             "timeout": 60,
             "statusMessage": "Building .NET project..."
-          }
-        ]
-      },
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
+          },
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/fe/post-edit-feedback.sh",
             "timeout": 10,
             "statusMessage": "Checking FE code patterns..."
-          }
-        ]
-      },
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
+          },
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/fe/check-build.sh",
             "timeout": 60,
             "statusMessage": "TypeScript type check..."
-          }
-        ]
-      },
-      {
-        "matcher": "Edit|Write",
-        "hooks": [
+          },
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/ai/check-ruff.sh",

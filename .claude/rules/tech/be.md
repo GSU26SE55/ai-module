@@ -138,6 +138,8 @@ await _unitOfWork.Batteries.UpdateAsync(entity);         // WRONG — UpdateAsyn
 await _unitOfWork.Batteries.DeleteAsync(entity);         // WRONG — DeleteAsync là VOID
 ```
 
+> **Dự án GSU26SE55 KHÔNG cấu hình global query filter (`HasQueryFilter`).** Vì vậy LUÔN LUÔN thêm `.Where(x => !x.IsDeleted)` trong mọi query. Không bao giờ bỏ qua filter này.
+
 **Transaction pattern:**
 ```csharp
 await _unitOfWork.BeginTransactionAsync();
@@ -252,36 +254,7 @@ _unitOfWork.Batteries.DeleteAsync(battery);  // NO await
 await _unitOfWork.CommitTransactionAsync();
 ```
 
-**Global soft-delete filter (khuyến nghị dùng trong DbContext):**
-
-Nếu DbContext có cấu hình `HasQueryFilter`, `.Where(x => !x.IsDeleted)` được tự động áp dụng — không cần lặp trong từng query.
-
-```csharp
-// ApplicationDbContext.cs — OnModelCreating
-protected override void OnModelCreating(ModelBuilder modelBuilder)
-{
-    // Auto filter IsDeleted cho mọi entity kế thừa AuditableEntity
-    foreach (var entityType in modelBuilder.Model.GetEntityTypes())
-    {
-        if (typeof(AuditableEntity).IsAssignableFrom(entityType.ClrType))
-        {
-            var parameter = Expression.Parameter(entityType.ClrType, "e");
-            var body = Expression.Equal(
-                Expression.Property(parameter, nameof(AuditableEntity.IsDeleted)),
-                Expression.Constant(false));
-            entityType.SetQueryFilter(Expression.Lambda(body, parameter));
-        }
-    }
-}
-
-// Khi global filter đã cấu hình: bỏ .Where(x => !x.IsDeleted) trong query
-var query = _unitOfWork.Batteries.GetAllAsync();  // ✅ filter IsDeleted tự động
-
-// Truy vấn KÈM bản đã xóa (cố ý): dùng IgnoreQueryFilters()
-var allIncludeDeleted = _unitOfWork.Batteries.GetAllAsync().IgnoreQueryFilters();
-```
-
-> Nếu codebase **chưa** cấu hình global filter: giữ nguyên `.Where(x => !x.IsDeleted)` trong mọi query — bắt buộc, không được bỏ.
+**Quy tắc bắt buộc:** LUÔN filter `.Where(x => !x.IsDeleted)` trong mọi query (dự án không dùng global query filter).
 
 ---
 

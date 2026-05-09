@@ -19,7 +19,7 @@ fi
 
 # Hardcode API URL — bỏ qua: localhost, test/spec file, dòng comment, VITE_ env usage
 if ! echo "$FILE_PATH" | grep -qE '\.(test|spec)\.(ts|tsx)$'; then
-  if grep -E '"https?://[^"]*"' "$FILE_PATH" | grep -qvE 'localhost|127\.0\.0\.1|0\.0\.0\.0|^\s*(//|/?\*)|VITE_'; then
+  if grep -E '"https?://[^"]*"' "$FILE_PATH" | grep -qvE 'localhost|127\.0\.0\.1|0\.0\.0\.0|^\s*(//|/?\*)|import\.meta\.env\.VITE_'; then
     WARNINGS="${WARNINGS}⚠️ Hardcoded URL in '$FILE_PATH'. Use env.VITE_API_BASE_URL instead.\n"
   fi
 fi

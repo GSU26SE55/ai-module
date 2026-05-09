@@ -18,8 +18,18 @@
 | Input features | 3 | voltage, current, temperature |
 | Normalization | MinMaxScaler [0, 1] | Fit trên train set, lưu scaler.pkl để dùng lại |
 | SOH target | capacity_current / capacity_nominal × 100 | NASA: nominal = 2.0 Ah |
-| Train / Val / Test | 70 / 15 / 15 | Chia theo battery ID, không theo timestep |
+| Train / Val / Test | 70 / 15 / 15 | Chia theo battery ID, không theo timestep — xem bảng bên dưới |
 | Random seed | 42 | Bắt buộc mọi script (train, preprocess) |
+
+**Train/Val/Test split — NASA Ames (cố định, không thay đổi):**
+
+| Split | Battery IDs | Ghi chú |
+|-------|-------------|---------|
+| Train | B0005, B0006, B0007 | ~70% data |
+| Val   | B0018 (70% đầu timestep) | ~15% data |
+| Test  | B0018 (30% cuối timestep) | ~15% data |
+
+> Chia theo battery ID trước, sau đó chia timestep cho B0018 (val/test). KHÔNG được xáo trộn ngẫu nhiên.
 
 **Metric đánh giá:**
 - SOH regression: MAE < 2%, RMSE < 3%

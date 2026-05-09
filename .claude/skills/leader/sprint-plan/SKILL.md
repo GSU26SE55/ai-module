@@ -11,16 +11,14 @@ Khi leader gõ `/kltn-sprint` hoặc "lên kế hoạch sprint", "phân công sp
 ## Quy trình thực hiện
 
 ### Bước 1 — Fetch Jira tickets chưa assign hoặc To Do
- <!-- kiểm tra .env trước khi thực hiện lấy mcp jira -->
-```bash
-AUTH="$JIRA_EMAIL:$JIRA_API_TOKEN"
-BASE="https://fpt-team-d7rg7yak.atlassian.net"
 
-# Lấy tickets To Do + unassigned
-curl -s -u "$AUTH" -H "Accept: application/json" -H "Content-Type: application/json" \
-  -X POST "$BASE/rest/api/3/search/jql" \
-  -d '{"jql":"project=KAN AND status=\"To Do\" ORDER BY priority DESC","maxResults":100,"fields":["summary","status","assignee","duedate","issuetype","priority","labels"]}'
+Dùng Jira MCP (credentials đã cấu hình trong `settings.local.json` → không cần env var):
+
 ```
+jira_search: project = KAN AND status = "To Do" ORDER BY priority DESC
+```
+
+Lấy các fields: summary, status, assignee, duedate, issuetype, priority, labels.
 
 ### Bước 2 — Phân loại tickets theo domain
 
