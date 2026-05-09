@@ -107,29 +107,13 @@ services/       ← Axios API calls
 - Page có role restriction đã wrap `RoleRoute` (Admin / Manager / Staff)
 - Responsive đúng (Web)
 
-### Bước 6 — Lint & Build
-
-**Web:**
-```bash
-npm run lint
-npm run build
-```
-
-**Mobile:**
-```bash
-npx expo lint
-npx expo export --platform web 2>/dev/null || npx tsc --noEmit
-```
-
-> Phải pass cả lint lẫn build mới được commit. Không bỏ qua warning TypeScript.
-
-### Bước 7 — Commit
+### Bước 6 — Commit
 ```bash
 git add <files cụ thể>
 git commit -m "feat(KAN-XX): mô tả ngắn"
 ```
 
-### Bước 8 — Cập nhật Jira
+### Bước 7 — Cập nhật Jira
 Chuyển ticket sang **IN PROGRESS**.
 
 ---
