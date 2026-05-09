@@ -11,7 +11,7 @@
    ```bash
    git status && git log main...HEAD --oneline
    ```
-   Không có: `.env`, `node_modules`, file build (`.next/`, `dist/`, `.expo/`)
+   Không có: `.env`, `node_modules`, file build (`dist/`, `.expo/`)
 
 2. **Commit logs**
    ```bash

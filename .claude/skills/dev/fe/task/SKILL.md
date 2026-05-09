@@ -41,7 +41,6 @@ Phân tích ticket và viết file plan tại `logs/KAN-XX/plan.md` với nội 
 ```
 
 > **DỪNG LẠI — chờ user xác nhận ("ok", "approve", "tiến hành") trước khi làm bất cứ bước nào tiếp theo.**
-> Ticket Large phải hỏi Leader sau khi được approve.
 > **TUYỆT ĐỐI KHÔNG CODE khi chưa có xác nhận. Không có ngoại lệ, dù ticket nhỏ đến đâu.**
 
 ### Bước 3 — Tạo branch
@@ -53,21 +52,34 @@ git checkout -b feature/KAN-XX-ten-tinh-nang
 
 **Web (ReactJS) — Feature-based + Shared:**
 ```
-features/<tên-feature>/
-  pages/        ← route entry: layout + gọi hook, không có logic
-  components/   ← UI components của feature này
-  hooks/        ← TanStack Query (useQuery / useMutation)
-  services/     ← Axios API calls qua axiosInstance (KHÔNG fetch trong component)
-  schemas/      ← Zod schema cho form validation
-  types/        ← TypeScript types của feature
-
-shared/
-  components/layout/   ← AppLayout, AuthLayout, Sidebar, Header
-  components/common/   ← LoadingSpinner, ErrorBoundary, EmptyState
-  components/ui/       ← shadcn generated components (Button, Input, Form, Dialog, Table...)
-  lib/axios.ts         ← Axios instance (không tạo instance mới)
-  stores/sessionStore  ← Zustand auth state (không tạo store mới cho auth)
-  types/api.types.ts   ← ResponseData<T>, PaginationResponse<T>
+src/
+├── config/
+│   └── env.ts                   ← Zod-validate import.meta.env khi boot
+├── router/
+│   ├── index.tsx                ← createBrowserRouter — toàn bộ route tree
+│   ├── ProtectedRoute.tsx       ← redirect /login nếu chưa auth
+│   └── RoleRoute.tsx            ← redirect /unauthorized nếu sai role
+├── features/<tên-feature>/
+│   ├── pages/                   ← route entry: layout + gọi hook, không có logic
+│   ├── components/              ← UI components của feature này
+│   ├── hooks/                   ← useQuery / useMutation (TanStack Query)
+│   ├── services/                ← Axios API calls qua axiosInstance
+│   ├── schemas/                 ← Zod schema cho form validation
+│   └── types/                   ← TypeScript types của feature
+└── shared/
+    ├── components/
+    │   ├── layout/              ← AppLayout, AuthLayout, Sidebar, Header
+    │   ├── common/              ← LoadingSpinner, ErrorBoundary, EmptyState
+    │   └── ui/                  ← shadcn generated components
+    ├── context/
+    │   └── authContext.tsx      ← AuthProvider: hydrate sessionStore từ cookie khi boot
+    ├── lib/
+    │   └── axios.ts             ← Axios instance + interceptors (không tạo instance mới)
+    ├── stores/
+    │   └── sessionStore.ts      ← Zustand: token, user, setToken, logout
+    └── types/
+        ├── api.types.ts         ← ResponseData<T>, PaginationResponse<T>, ErrorEntity
+        └── common.types.ts      ← BaseFilterPagination, shared query types
 ```
 
 **Không đặt file mới vào `shared/` trừ khi dùng ở ≥ 2 feature khác nhau.**
@@ -90,7 +102,9 @@ services/       ← Axios API calls
 - Loading + error state đã xử lý
 - UI primitive import từ `shared/components/ui`, không tự custom lại component shadcn đã có
 - Không hardcode URL / token
-- Route cần auth đã có protected wrapper
+- Route mới đã khai báo trong `router/index.tsx`
+- Page cần auth đã wrap `ProtectedRoute`
+- Page có role restriction đã wrap `RoleRoute` (Admin / Manager / Staff)
 - Responsive đúng (Web)
 
 ### Bước 6 — Lint & Build

@@ -16,13 +16,15 @@ Ví dụ: `/kltn-member Minh`, `/kltn-member SE170310`
 
 Mapping tên → MSSV → Jira displayName:
 
-| Tên gọi | MSSV | Jira displayName |
-|---------|------|-----------------|
-| Duy | SE184821 | Nguyễn Phúc Duy |
-| Thắng | SE180445 | Bùi Phước Thắng |
-| Thái | SE183923 | Mai Hồng Thái |
-| Trí | SE183109 | Trần Minh Trí |
-| Minh | SE170310 | Nguyễn Nhật Minh |
+| Tên gọi | MSSV | Jira displayName | Role chính | Role phụ |
+|---------|------|-----------------|------------|----------|
+| Duy | SE184821 | Nguyễn Phúc Duy | BE | FE, AI |
+| Thắng | SE180445 | Bùi Phước Thắng | BE | FE, AI |
+| Thái | SE183923 | Mai Hồng Thái | BE | FE, AI |
+| Trí | SE183109 | Trần Minh Trí | FE (Leader) | BE, AI |
+| Minh | SE170310 | Nguyễn Nhật Minh | FE | BE, AI |
+
+> **AI là role phụ chung** — mọi thành viên đều có thể được assign ticket AI module khi cần.
 
 ### Bước 2 — Fetch tickets của thành viên
   <!-- kiểm tra .env trước khi thực hiện lấy mcp jira -->

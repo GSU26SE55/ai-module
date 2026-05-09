@@ -42,7 +42,6 @@ Phân tích ticket và viết file plan tại `logs/KAN-XX/plan.md` với nội 
 ```
 
 > **DỪNG LẠI — chờ user xác nhận ("ok", "approve", "tiến hành") trước khi làm bất cứ bước nào tiếp theo.**
-> Ticket Large phải hỏi Leader sau khi được approve.
 > **TUYỆT ĐỐI KHÔNG CODE khi chưa có xác nhận. Không có ngoại lệ, dù ticket nhỏ đến đâu.**
 
 ### Bước 3 — Tạo branch

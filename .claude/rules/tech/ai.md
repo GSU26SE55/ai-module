@@ -10,9 +10,211 @@
 | Serving | FastAPI | REST endpoint cho BE gọi |
 | Dataset | NASA Ames (ưu tiên) | CALCE backup |
 
+## Model Spec (bắt buộc thống nhất giữa train và inference)
+
+| Tham số | Giá trị | Ghi chú |
+|---------|---------|---------|
+| Window size | 30 timestep | 30 chu kỳ đo liên tiếp |
+| Input features | 3 | voltage, current, temperature |
+| Normalization | MinMaxScaler [0, 1] | Fit trên train set, lưu scaler.pkl để dùng lại |
+| SOH target | capacity_current / capacity_nominal × 100 | NASA: nominal = 2.0 Ah |
+| Train / Val / Test | 70 / 15 / 15 | Chia theo battery ID, không theo timestep |
+| Random seed | 42 | Bắt buộc mọi script (train, preprocess) |
+
+**Metric đánh giá:**
+- SOH regression: MAE < 2%, RMSE < 3%
+- Anomaly classification: F1-score > 0.80
+
+## Model Architecture (bắt buộc nhất quán train & inference)
+
+### 1. LSTM/CNN-LSTM — SOH Prediction
+
+```python
+import torch.nn as nn
+
+class SOHPredictor(nn.Module):
+    """
+    Input:  (batch, 30, 3)  — 30 timestep, 3 features [voltage, current, temp]
+    Output: (batch, 1)      — SOH% trong khoảng [0, 100]
+    """
+    def __init__(self):
+        super().__init__()
+        # CNN block — trích xuất local pattern
+        self.conv1 = nn.Conv1d(in_channels=3, out_channels=32, kernel_size=3, padding=1)
+        self.relu  = nn.ReLU()
+        self.pool  = nn.MaxPool1d(kernel_size=2)          # (batch, 32, 15)
+
+        # LSTM block — học temporal dependency
+        self.lstm  = nn.LSTM(input_size=32, hidden_size=64,
+                             num_layers=2, batch_first=True,
+                             dropout=0.2)                 # dropout giữa layers
+
+        # FC head
+        self.fc1   = nn.Linear(64, 32)
+        self.fc2   = nn.Linear(32, 1)
+        self.dropout = nn.Dropout(0.2)
+
+    def forward(self, x):                                 # x: (batch, 30, 3)
+        x = x.permute(0, 2, 1)                           # → (batch, 3, 30) cho Conv1d
+        x = self.pool(self.relu(self.conv1(x)))           # → (batch, 32, 15)
+        x = x.permute(0, 2, 1)                           # → (batch, 15, 32) cho LSTM
+        _, (h_n, _) = self.lstm(x)
+        x = h_n[-1]                                       # hidden state lớp cuối
+        x = self.dropout(self.relu(self.fc1(x)))
+        return self.fc2(x).squeeze(-1)                    # → (batch,)
+
+# Training config (BẮT BUỘC)
+OPTIMIZER  = "Adam"
+LR         = 1e-3
+LOSS       = "MSELoss"
+EPOCHS     = 50
+PATIENCE   = 10          # early stopping
+BATCH_SIZE = 32
+```
+
+### 2. Isolation Forest — Anomaly Detection
+
+```python
+from sklearn.ensemble import IsolationForest
+
+# Hyperparameters (BẮT BUỘC)
+CONTAMINATION = 0.1     # ước tính 10% data là bất thường (NASA dataset)
+N_ESTIMATORS  = 100
+RANDOM_STATE  = 42      # BẮT BUỘC — seed cố định
+
+iso_forest = IsolationForest(
+    contamination=CONTAMINATION,
+    n_estimators=N_ESTIMATORS,
+    random_state=RANDOM_STATE,
+)
+iso_forest.fit(X_train_features)  # fit trên train set, KHÔNG fit lại trên production
+
+# Mapping score → classification
+def classify_anomaly(score: float, soh: float) -> str:
+    """
+    score: IsolationForest decision_function (âm = bất thường hơn)
+    soh:   SOH% từ LSTM
+    """
+    if score > -0.1:            # ngưỡng bình thường
+        return "Normal"
+    elif score > -0.3 or soh >= 80:
+        return "Degrading"
+    else:
+        return "Failed"
+
+# Lưu model sau khi train
+import joblib
+joblib.dump(iso_forest, "models/weights/isolation_forest.pkl")
+# isolation_forest.pkl PHẢI commit vào Git (như scaler.pkl)
+```
+
+---
+
+## Inference Latency SLA
+
+| Priority ticket | Yêu cầu inference | Lý do |
+|-----------------|------------------|-------|
+| P1 Critical (4h SLA) | **< 100ms** | Alert phải real-time |
+| P2/P3 batch | < 500ms | Acceptable cho batch check |
+
+**Benchmark bắt buộc trước khi merge AI module:**
+```python
+import time
+
+def benchmark_inference(model, scaler, sample_input, n_runs=100):
+    latencies = []
+    for _ in range(n_runs):
+        start = time.perf_counter()
+        # inference pipeline
+        x = scaler.transform(sample_input)
+        x_tensor = torch.tensor(x, dtype=torch.float32).unsqueeze(0)
+        with torch.no_grad():
+            soh = model(x_tensor).item()
+        latencies.append((time.perf_counter() - start) * 1000)  # ms
+
+    avg_ms = sum(latencies) / len(latencies)
+    assert avg_ms < 100, f"Inference quá chậm: {avg_ms:.1f}ms > 100ms threshold"
+    print(f"Avg inference latency: {avg_ms:.1f}ms ✅")
+
+# Chạy trong tests/test_inference.py trước khi /kltn-ship
+```
+
+**FastAPI health endpoint** — trả latency metrics để monitor:
+```python
+@router.get("/health")
+async def health():
+    return {
+        "status": "ok",
+        "model_version": "1.0.0",
+        "scaler_loaded": scaler is not None,
+        "lstm_loaded": soh_model is not None,
+        "isolation_forest_loaded": iso_model is not None,
+    }
+```
+
+---
+
+## Model Artifact Management
+
+### Đường dẫn chuẩn (bắt buộc nhất quán giữa training và inference)
+
+```
+ai-module/
+└── models/
+    └── weights/
+        ├── scaler.pkl                    # MinMaxScaler — fit trên train set
+        ├── soh_lstm_v{major}.{minor}.pth # LSTM/CNN-LSTM weights
+        └── isolation_forest_v{major}.{minor}.pkl  # Isolation Forest
+```
+
+### Versioning strategy
+
+| Sprint | Phiên bản | Ghi chú |
+|--------|-----------|---------|
+| Sprint 4 | v1.0 | Model baseline — NASA dataset |
+| Sprint 5 | v1.1 | Tuning hyperparameter / thêm data |
+| Sprint 6+ | v1.x | Cải thiện metric |
+
+**Quy tắc:**
+- Tăng minor version (`v1.0 → v1.1`) khi retrain cùng architecture nhưng khác data/hyperparameter
+- Tăng major version (`v1.x → v2.0`) khi thay đổi architecture (e.g., thêm attention layer)
+- `scaler.pkl` **không có version** — luôn đi kèm model mới nhất (refit khi retrain)
+- Cả 3 artifacts **phải commit vào Git** cùng 1 commit khi update
+
+### Load artifacts khi inference (FastAPI startup)
+
+```python
+# main.py — load 1 lần khi khởi động, không load lại per-request
+import joblib
+import torch
+
+scaler = joblib.load("models/weights/scaler.pkl")
+soh_model = SOHPredictor()
+soh_model.load_state_dict(torch.load("models/weights/soh_lstm_v1.0.pth", map_location="cpu"))
+soh_model.eval()
+iso_model = joblib.load("models/weights/isolation_forest_v1.0.pkl")
+```
+
+### Git LFS (nếu model file > 100MB)
+
+```bash
+# Cài Git LFS nếu weights vượt 100MB
+git lfs install
+git lfs track "models/weights/*.pth"
+git lfs track "models/weights/*.pkl"
+git add .gitattributes
+```
+
+> Với PyTorch LSTM nhỏ (< 50MB) và Isolation Forest (< 5MB): commit trực tiếp vào Git — không cần LFS cho scope capstone.
+
+---
+
 ## Nguyên tắc
 
 - Không thêm ML framework mới — chỉ PyTorch + scikit-learn
-- Target accuracy thực tế: 85–90%, không overpromise 99%+
+- Target metric: MAE < 2% SOH / RMSE < 3% / F1 > 0.80 anomaly — không dùng "accuracy 85–90%" chung chung
 - Output bắt buộc: Classification (Normal / Degrading / Failed) + SOH % + confidence score
 - IoT data pipeline chỉ thêm Sprint 8 nếu core model xong
+- Scaler (MinMaxScaler) phải được lưu tại `models/weights/scaler.pkl` sau khi train — load lại khi inference, không fit lại trên production data
+- `scaler.pkl` và `isolation_forest.pkl` phải được commit vào Git — inference cần cùng artifacts với training
+- Inference latency **PHẢI** benchmark và đạt < 100ms trước khi merge

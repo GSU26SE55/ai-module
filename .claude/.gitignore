@@ -1,0 +1,11 @@
+# File này được sync xuống tất cả sub-repos cùng với .claude/
+# Bảo vệ mỗi sub-repo không commit nhầm config local/private
+
+# Ghi chú cá nhân của từng thành viên — không commit
+CLAUDE.local.md
+
+# Settings private (MCP tokens, API keys cá nhân) — không commit
+settings.local.json
+
+# Logs sinh ra trong quá trình làm việc — không commit
+*.log

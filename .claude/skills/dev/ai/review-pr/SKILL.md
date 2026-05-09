@@ -41,6 +41,7 @@
 
 ### FastAPI Endpoint
 - [ ] Input/output schema được define bằng Pydantic?
+- [ ] `get_model` dependency lấy từ `request.app.state.model`?
 - [ ] Model load 1 lần lúc startup, không load mỗi request?
 - [ ] Xử lý lỗi khi input không hợp lệ?
 

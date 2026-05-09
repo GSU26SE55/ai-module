@@ -1,67 +1,16 @@
-# Memory — Thông tin dự án Capstone
+# Memory — Ngữ cảnh bổ sung GSU26SE55
 
-## Dự án: Solar Lithium-ion Battery Maintenance Management System
-
-- **Mã dự án:** GSU26SE55
-- **Thời gian:** 11/5/2026 – 6/9/2026 (8 sprint + Final Phase)
-- **GVHD:** Trương Long (longt5@fe.edu.vn)
+> File này chứa thông tin **không** có trong rules/tech/ hay CLAUDE.md.
+> Team + kiến trúc: xem CLAUDE.md | Tech rules: xem rules/tech/*.md
 
 ---
 
-## Thành viên nhóm
+## Timeline chi tiết (8 Sprints)
 
-| # | Tên | MSSV | Vai trò |
-|---|-----|------|---------|
-| 1 | Nguyễn Phúc Duy | SE184821 | BE Dev |
-| 2 | Bùi Phước Thắng | SE180445 | BE Dev |
-| 3 | Mai Hồng Thái | SE183923 | BE Dev |
-| 4 | Trần Minh Trí | SE183109 | FE Dev |
-| 5 | Nguyễn Nhật Minh | SE170310 | FE Dev |
-
----
-
-## Kiến trúc hệ thống
-
-### 1. Mobile App (React Native / Expo)
-- Giám sát thông số pin real-time: điện áp, dòng điện, nhiệt độ, dung lượng
-- Hiển thị lịch sử dữ liệu + dự đoán AI
-- Cảnh báo bất thường tự động
-- Tạo và theo dõi support ticket
-
-### 2. Web App (ReactJS)
-- **Admin:** quản lý tài khoản, quản lý pin (thực thể chung — mỗi pin có thông số + ngưỡng riêng, không có "loại pin"), định nghĩa SLA
-- **Manager:** giám sát hệ thống, theo dõi ticket, báo cáo hiệu suất
-- **Staff:** truy cập ticket được giao, cập nhật trạng thái, ghi nhật ký bảo trì
-- **SLA theo ITIL:** Level 1 → Level 2 → Level 3 (escalation)
-
-### 3. AI Module
-- Phân loại trạng thái pin: Normal / Degrading / Failed
-- Phát hiện bất thường (Isolation Forest, Autoencoder)
-- Dự đoán State of Health (SOH) — mô hình LSTM, CNN-LSTM
-- Benchmarking các mô hình
-
----
-
-## Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Backend | ASP.NET Core Web API (.NET) |
-| Frontend | ReactJS |
-| Mobile | React Native (Expo) |
-| AI/ML | LSTM, CNN-LSTM (time-series) |
-| Database | PostgreSQL / TimescaleDB |
-| Cache | Redis |
-| DevOps | Docker, GitHub Actions (CI/CD) |
-
----
-
-## Timeline (8 Sprints)
-
-| Sprint | Thời gian | Nội dung |
-|--------|-----------|----------|
+| Sprint | Thời gian | Nội dung chính |
+|--------|-----------|----------------|
 | Sprint 1 | 11/5 – 1/6 | Tài liệu + thiết kế hệ thống |
-| Sprint 2 | 2/6 – 4/6 | Setup BE/FE + authentication |
+| Sprint 2 | 2/6 – 4/6 | Setup BE/FE/Mobile + authentication |
 | Sprint 3 | 5/6 – 22/6 | Core battery data APIs |
 | Sprint 4 | 23/6 – 6/7 | Ticket management system |
 | Sprint 5 | 7/7 – 20/7 | SLA system implementation |
@@ -72,12 +21,28 @@
 
 ---
 
-## Dataset công khai sử dụng
+## Dataset công khai
 
-- NASA Ames Battery Aging Dataset (18650 cells)
-- CALCE CS2 Battery Dataset (prismatic cells)
-- MIT/Stanford Fast-Charging Dataset (124 cells)
-- Oxford Battery Degradation Dataset
+| Dataset | Cells | Ưu tiên | Ghi chú |
+|---------|-------|---------|---------|
+| NASA Ames Battery Aging | 18650 | **Ưu tiên 1** | nominal = 2.0 Ah |
+| CALCE CS2 | Prismatic | Backup | — |
+| MIT/Stanford Fast-Charging | 124 cells | Tùy chọn | — |
+| Oxford Battery Degradation | — | Tùy chọn | — |
+
+---
+
+## Roster team
+
+| Tên | MSSV | Role chính | Role phụ | Jira displayName |
+|-----|------|------------|----------|-----------------|
+| Nguyễn Phúc Duy | SE184821 | BE | FE, AI | Nguyễn Phúc Duy |
+| Bùi Phước Thắng | SE180445 | BE | FE, AI | Bùi Phước Thắng |
+| Mai Hồng Thái | SE183923 | BE | FE, AI | Mai Hồng Thái |
+| Trần Minh Trí | SE183109 | FE (Leader) | BE, AI | Trần Minh Trí |
+| Nguyễn Nhật Minh | SE170310 | FE | BE, AI | Nguyễn Nhật Minh |
+
+> AI là role phụ **chung toàn team** — ai cũng có thể được assign task AI khi cần.
 
 ---
 
@@ -89,8 +54,8 @@
 
 ---
 
-## Ghi chú
+## Ghi chú triển khai
 
-- IoT module là **tùy chọn** — chỉ triển khai nếu còn nguồn lực
-- Ưu tiên 60–70% cho core software trước
-- Phương pháp: Agile/Scrum, sprint 2 tuần
+- IoT module là **tùy chọn** — chỉ triển khai Sprint 8 nếu core software đã xong
+- Ưu tiên 60–70% effort cho core software trước
+- GVHD: Trương Long (longt5@fe.edu.vn)

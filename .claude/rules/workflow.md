@@ -54,7 +54,7 @@ Nội dung plan.md phải có:
 |------|--------------------|--------------------------|
 | Small | < 2 giờ | Code luôn |
 | Medium | 2 – 4 giờ | Code luôn |
-| Large | > 4 giờ | **Hỏi leader trước khi code** |
+| Large | > 4 giờ | Code luôn sau khi user xác nhận plan |
 
 > **TUYỆT ĐỐI KHÔNG CODE khi chưa có file `logs/KAN-XX/plan.md` được user xác nhận (reply "ok", "approve", "tiến hành", hoặc tương đương). Không có ngoại lệ.**
 
@@ -82,6 +82,34 @@ Một ticket được coi là **Done** khi đủ cả 3 điều kiện:
 |------------|--------|
 | Cần biết task của sprint | `/kltn-sprint` hoặc fetch Jira |
 | Không chắc scope ticket | Hỏi leader, không tự expand |
+
+---
+
+## Test Coverage Targets
+
+| Layer | Tool | Minimum coverage | CI fail nếu |
+|-------|------|-----------------|-------------|
+| BE (unit + integration) | `dotnet test --collect:"XPlat Code Coverage"` | ≥ 80% line coverage | < 80% |
+| FE (component + hook) | `npm run test -- --coverage` | ≥ 70% line coverage | < 70% |
+| AI (training + inference) | `pytest --cov=src --cov-report=term` | ≥ 85% line coverage | < 85% |
+
+**Test bắt buộc cho mỗi ticket:**
+- BE: Unit test cho CommandHandler + QueryHandler (mock UnitOfWork)
+- BE: Integration test cho endpoint (TestServer + real DB / in-memory)
+- FE: Unit test cho hook (`useQuery`, `useMutation`) + component render
+- AI: Unit test cho `preprocess`, `train`, `infer` functions + latency benchmark
+
+**Chạy local trước `/kltn-ship`:**
+```bash
+# BE
+dotnet test --no-build --verbosity minimal
+
+# FE
+npm run test -- --watchAll=false --coverage
+
+# AI
+pytest tests/ -v --cov=src
+```
 
 ---
 

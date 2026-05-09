@@ -9,16 +9,16 @@ Làm việc trên Jira ticket được chỉ định.
 **Bước 2 — Đọc context**
 Fetch Jira ticket: `$ARGUMENTS`
 
-**Bước 3 — Lập Implementation Plan (bắt buộc)**
-Trước khi code, trình bày plan gồm:
+**Bước 3 — Lập Implementation Plan & viết plan.md (bắt buộc)**
+Viết file `logs/KAN-XX/plan.md` (thay KAN-XX bằng ticket ID thực tế) với nội dung:
 - **Scope:** Ticket yêu cầu làm gì, output mong đợi là gì
 - **Files:** Danh sách file sẽ tạo mới / chỉnh sửa
 - **Approach:** Mô tả ngắn thuật toán, data flow, hoặc API design
 - **Edge cases:** Các trường hợp cần xử lý đặc biệt
 - **Estimate:** Small / Medium / Large theo ngưỡng:
-  - **Small** (< 2 giờ) : code luôn
-  - **Medium** (2–4 giờ) : code luôn
-  - **Large** (> 4 giờ) :Yêu cầu apprvoed trước khi code
+  - **Small** (< 2 giờ): code luôn
+  - **Medium** (2–4 giờ): code luôn
+  - **Large** (> 4 giờ): code luôn sau khi user xác nhận plan
 
 Chờ xác nhận plan (hoặc người dùng gõ "ok" / "proceed") trước khi bắt đầu code.
 

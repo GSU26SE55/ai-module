@@ -13,6 +13,8 @@
    ```
    Không có: model weight files lớn (`.pt`, `.pth` > 50MB → dùng Git LFS hoặc link download), raw dataset, notebook checkpoint
 
+   Phải có: `models/weights/scaler.pkl` đã được commit (file nhỏ, bắt buộc commit cùng code)
+
 2. **Commit logs**
    ```bash
    git add logs/KAN-XX/
@@ -28,7 +30,7 @@
    ```bash
    gh pr create \
      --title "feat(KAN-XX): [tóm tắt]" \
-     --body "## Ticket\nKAN-XX\n\n## Thay đổi\n- \n\n## Kết quả model\n| Metric | Giá trị |\n|--------|--------|\n| MAE    |        |\n| RMSE   |        |\n\n## Test\n- [ ] FastAPI endpoint chạy được\n- [ ] Kết quả reproducible (chạy lại ra cùng số)\n- [ ] BE có thể gọi endpoint thành công"
+     --body "## Ticket\nKAN-XX\n\n## Thay đổi\n- \n\n## Kết quả model\n| Metric | Giá trị | Target |\n|--------|---------|--------|\n| MAE    |         | < 2%   |\n| RMSE   |         | < 3%   |\n| F1     |         | > 0.80 |\n\n## Test\n- [ ] FastAPI endpoint chạy được (uvicorn)\n- [ ] Kết quả reproducible (chạy lại ra cùng số)\n- [ ] scaler.pkl được commit tại models/weights/\n- [ ] BE có thể gọi endpoint thành công (CORS OK)"
    ```
 
 5. **Cập nhật Jira** — chuyển sang IN REVIEW, paste link PR + tóm tắt metric vào comment

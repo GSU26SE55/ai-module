@@ -25,9 +25,9 @@ curl -s -u "$AUTH" -H "Accept: application/json" -H "Content-Type: application/j
 ### Bước 2 — Phân loại tickets theo domain
 
 Phân nhóm tickets:
-- **BE tasks**: API, database, auth, business logic → assign cho BE Devs (Duy, Thắng, Thái)
+- **BE tasks**: API, database, auth, business logic → assign cho BE Devs (Thắng, Thái)
 - **FE tasks**: Web UI, component, routing → assign cho FE Devs (Trí, Minh)
-- **AI tasks**: Model, prediction endpoint → assign ưu tiên cho người có kiến thức ML nhất trong BE team
+- **AI tasks**: Model, training pipeline, prediction endpoint → assign cho **Nguyễn Phúc Duy** (BE Dev / AI Dev)
 - **Cross-cutting**: Docs, deploy, testing → phân đều
 
 ### Bước 3 — Đề xuất phân công
@@ -44,7 +44,7 @@ Xuất đề xuất dạng bảng:
 
 | Ticket | Tóm tắt | Đề xuất assign | Lý do | Deadline |
 |--------|---------|----------------|-------|---------|
-| KAN-XX | ...     | Nguyễn Phúc Duy | BE task, ít workload nhất | DD/MM |
+| KAN-XX | ...     | Nguyễn Phúc Duy | AI task — phụ trách AI module | DD/MM |
 ```
 
 ### Bước 4 — Tạo file sprint plan
@@ -59,8 +59,7 @@ Xuất kế hoạch sprint trong conversation:
 
 ## Phân công
 
-### Nguyễn Phúc Duy (BE)
-- [ ] KAN-XX: [tóm tắt] — due DD/MM
+### Nguyễn Phúc Duy (BE Dev / AI Dev)
 - [ ] KAN-XX: [tóm tắt] — due DD/MM
 
 ### Bùi Phước Thắng (BE)

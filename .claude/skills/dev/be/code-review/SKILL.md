@@ -52,4 +52,3 @@ Sau khi có kết quả, lưu vào:
 logs/KAN-XX/review.md
 ```
 Nếu folder chưa tồn tại → tạo mới.
-

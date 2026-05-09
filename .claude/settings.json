@@ -1,13 +1,169 @@
 {
+  "enabledMcpjsonServers": ["context7", "playwright", "jira"],
+
   "permissions": {
     "allow": [
       "WebSearch",
-"Bash(curl:*)",
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__get-library-docs",
+      "mcp__playwright__browser_navigate",
+      "mcp__playwright__browser_snapshot",
+      "mcp__playwright__browser_click",
+      "mcp__playwright__browser_screenshot",
+      "mcp__playwright__browser_fill",
+      "mcp__playwright__browser_close",
+      "Bash(curl:*)",
       "Bash(git:*)",
       "Bash(gh:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(chmod:*)",
+      "Bash(mkdir:*)",
+      "Bash(cat:*)",
+      "Bash(ls:*)",
+      "Bash(cp:*)",
+      "Bash(mv:*)",
+      "Bash(dotnet:*)",
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(node:*)",
+      "Bash(python:*)",
+      "Bash(python3:*)",
+      "Bash(pip:*)",
+      "Bash(pip3:*)",
+      "Bash(ruff:*)",
+      "Bash(uvicorn:*)",
+      "Bash(pytest:*)",
+      "mcp__jira__jira_create_ticket",
       "mcp__jira__jira_create_subtask",
+      "mcp__jira__jira_get_ticket",
+      "mcp__jira__jira_get_issue_types",
+      "mcp__jira__jira_get_boards",
+      "mcp__jira__jira_get_sprints",
       "mcp__jira__jira_search",
-      "mcp__jira__jira_get_ticket"
+      "mcp__jira__jira_search_users",
+      "mcp__jira__jira_get_myself",
+      "mcp__jira__jira_transition",
+      "mcp__jira__jira_add_comment",
+      "mcp__jira__jira_update_ticket",
+      "mcp__jira__jira_add_worklog",
+      "mcp__jira__jira_delete_ticket"
     ]
+  },
+
+  "hooks": {
+
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/be/block-dangerous-commands.sh",
+            "timeout": 5,
+            "statusMessage": "Checking command safety..."
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/be/protect-sensitive-files.sh",
+            "timeout": 5,
+            "statusMessage": "Checking file safety..."
+          }
+        ]
+      }
+    ],
+
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/be/post-edit-feedback.sh",
+            "timeout": 10,
+            "statusMessage": "Checking BE code patterns..."
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/be/validate-namespace.sh",
+            "timeout": 5,
+            "statusMessage": "Validating namespace..."
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/be/check-dbcontext-update.sh",
+            "timeout": 5,
+            "statusMessage": "Checking entity registration..."
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/be/check-di-registration.sh",
+            "timeout": 5,
+            "statusMessage": "Checking DI registration..."
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/be/check-build.sh",
+            "timeout": 60,
+            "statusMessage": "Building .NET project..."
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/fe/post-edit-feedback.sh",
+            "timeout": 10,
+            "statusMessage": "Checking FE code patterns..."
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/fe/check-build.sh",
+            "timeout": 60,
+            "statusMessage": "TypeScript type check..."
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/ai/check-ruff.sh",
+            "timeout": 15,
+            "statusMessage": "Ruff lint + format check..."
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/ai/check-random-seed.sh",
+            "timeout": 5,
+            "statusMessage": "Checking random seed in training script..."
+          }
+        ]
+      }
+    ]
+
   }
 }

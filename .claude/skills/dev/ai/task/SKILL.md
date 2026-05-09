@@ -31,23 +31,23 @@
    - Size: Small / Medium / Large
    - Thời gian: X giờ
    ```
-   > **DỪNG LẠI — chờ user xác nhận ("ok", "approve", "tiến hành") trước khi code.**
-   > **TUYỆT ĐỐI KHÔNG CODE khi chưa có xác nhận. Không có ngoại lệ, dù ticket nhỏ đến đâu.**
+   > **DỪNG LẠI — chờ user xác nhận ("ok", "approve", "tiến hành") trước khi code. Không có ngoại lệ, dù ticket nhỏ đến đâu.**
 
-3. **Tạo branch** — `feature/KAN-XX-ten-tinh-nang`
+3. **Tạo branch** — `feature/KAN-XX-slug-ngan` (ví dụ: `feature/KAN-12-soh-lstm-model`)
 4. **Implement** theo đúng cấu trúc:
-   - `data/` — script xử lý dataset (NASA/CALCE/MIT)
-   - `models/` — định nghĩa model (PyTorch)
-   - `train/` — training script
+   - `data/` — script xử lý dataset (NASA/CALCE/MIT), window_size=30, seed=42
+   - `models/` — định nghĩa model (PyTorch), lưu `scaler.pkl` cùng model weights
+   - `train/` — training script, seed=42, không dùng test set
    - `api/` — FastAPI endpoint phục vụ BE gọi
-4. **Tự kiểm tra** trước commit (xem `/code-review`)
-5. **Commit** — `feat(KAN-XX): mô tả ngắn`
-6. **Cập nhật Jira** — chuyển sang IN PROGRESS
+5. **Tự kiểm tra** trước commit (xem checklist `/kltn-reviewcode`)
+6. **Commit** — `feat(KAN-XX): mô tả ngắn`
+7. **Cập nhật Jira** — chuyển sang IN PROGRESS
 
 ## Không được
-- Train model mà không set `random_seed` (kết quả không reproducible)
+- Train model mà không set `random_seed = 42` (kết quả không reproducible)
 - Dùng test data trong quá trình training (data leakage)
-- Overpromise accuracy — target thực tế capstone: **85–90%**, không phải 99%+
+- Fit scaler trên val/test set — chỉ fit trên train, lưu lại `scaler.pkl`
+- Overpromise accuracy — target: MAE < 2% SOH, F1 > 0.80 anomaly
 - Thêm model thứ 3+ mà chưa có approval (focus: LSTM/CNN-LSTM + 1 anomaly model)
 
 ## Stack AI

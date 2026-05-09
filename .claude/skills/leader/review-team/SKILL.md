@@ -65,3 +65,15 @@ Tổng: X | Done: X | In Progress: X | To Do: X | Blocked: X
 |-|-|
 | **Jira** | https://fpt-team-d7rg7yak.atlassian.net/jira/software/projects/KAN/boards/2 |
 | **Output** | Xuất trong conversation |
+
+## Roster team
+
+| Tên | MSSV | Role chính | Role phụ |
+|-----|------|------------|----------|
+| Nguyễn Phúc Duy | SE184821 | BE | FE, AI |
+| Bùi Phước Thắng | SE180445 | BE | FE, AI |
+| Mai Hồng Thái | SE183923 | BE | FE, AI |
+| Trần Minh Trí | SE183109 | FE (Leader) | BE, AI |
+| Nguyễn Nhật Minh | SE170310 | FE | BE, AI |
+
+Khi xuất báo cáo theo thành viên, ghi rõ role chính trong cột **Ghi chú** nếu thành viên đang làm task ngoài role chính.
