@@ -138,7 +138,8 @@ Role phụ:   FE, AI    ← có thể dùng skills/dev/fe/ và skills/dev/ai/
 | `/kltn-reviewcode` | ✅ | ✅ | ✅ | Theo role của ticket |
 | `/kltn-test` | ✅ | ✅ | ✅ | Không dùng Playwright/screenshot |
 | `/kltn-ship` | ✅ | ✅ | ✅ | |
-| `/kltn-reviewpr` | ✅ | ✅ | ✅ | |
+| `/kltn-reviewpr` | ✅ | ✅ | ✅ | Reviewer chạy — chỉ approve/request-changes |
+| `/kltn-complete` | ✅ | ✅ | ✅ | Author chạy sau khi PR được approve |
 | `/scaffold-crud` | ✅ | ✅ | 🔶 | FE dùng khi làm task BE phụ |
 | `/scaffold-entity` | ✅ | ✅ | 🔶 | |
 | `/scaffold-cqrs-command` | ✅ | ✅ | 🔶 | |
@@ -184,11 +185,11 @@ Leader sync về sub-repo qua `bash sync-claude.sh` (subtree) + `push-to-org.sh`
 ## Nguyên tắc hoạt động
 
 - **Rules** — quy tắc bất biến, không ai được bỏ qua khi code
-- **Dev workflow** — quy trình chuẩn: `/kltn-task` → code → `/kltn-reviewcode` → `/kltn-test` → `/kltn-ship`
+- **Dev workflow** — quy trình chuẩn: `/kltn-task` → code → `/kltn-reviewcode` → `/kltn-test` → `/kltn-ship` → [reviewer] `/kltn-reviewpr` → [author] `/kltn-complete`
 - **BE scaffold** — tạo boilerplate nhanh: `/scaffold-crud Service Entity` (full CRUD 1 lệnh)
 - **Leader skills** — tracking và planning, không can thiệp vào flow coding của dev
 - **Hooks** — tự động chạy sau mỗi edit .cs: build check, namespace validate, anti-pattern warning
-- **Log files** — `/kltn-reviewcode` ghi `logs/KAN-XX/review.md`, `/kltn-test` ghi `logs/KAN-XX/test.md`; `/kltn-ship` commit cả folder `logs/KAN-XX/` lên branch trước khi tạo PR
+- **Log files** — `/kltn-reviewcode` ghi `logs/KAN-XX/review.md`, `/kltn-test` ghi `logs/KAN-XX/test.md`; `/kltn-ship` commit cả folder `logs/KAN-XX/` lên branch trước khi tạo PR; `/kltn-complete` tạo `logs/KAN-XX/handoff.md` rồi push → merge
 - Sprint plan và leader report (`/kltn-team`, `/kltn-member`) xuất trong conversation — không lưu file
 
 ## BE Scaffold Workflow (mới)

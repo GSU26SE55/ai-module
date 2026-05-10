@@ -279,9 +279,12 @@ code...
 
 /kltn-ship KAN-XX           ← Claude tạo PR + update Jira → IN REVIEW
 
-/kltn-reviewpr KAN-XX       ← Review PR của đồng đội → APPROVE hoặc REQUEST CHANGES
+# --- Đồng đội (reviewer) chạy ---
+/kltn-reviewpr KAN-XX       ← Review PR → APPROVE hoặc REQUEST CHANGES
+                            ← Nếu REQUEST CHANGES: author sửa, push lại, báo reviewer review lại
 
-Merge trên GitHub UI        ← sau khi có ≥ 1 approve
+# --- Author chạy sau khi được APPROVE ---
+/kltn-complete KAN-XX       ← Tạo handoff file → push lên branch → merge PR → Jira Done
 ```
 
 ---
@@ -295,8 +298,9 @@ Merge trên GitHub UI        ← sau khi có ≥ 1 approve
 | `/kltn-task KAN-XX` | Bắt đầu ticket — đọc Jira, phân tích, lên plan |
 | `/kltn-reviewcode` | Review code trước khi test |
 | `/kltn-test KAN-XX` | Test sau khi reviewcode PASS |
-| `/kltn-ship KAN-XX` | Tạo PR + update Jira |
-| `/kltn-reviewpr KAN-XX` | Review PR của đồng đội |
+| `/kltn-ship KAN-XX` | Tạo PR + update Jira → IN REVIEW |
+| `/kltn-reviewpr KAN-XX` | **[Reviewer]** Review PR → APPROVE hoặc REQUEST CHANGES |
+| `/kltn-complete KAN-XX` | **[Author]** Sau khi PR APPROVE: handoff → push → merge → Jira Done |
 
 ### Scaffold BE (tạo boilerplate nhanh)
 

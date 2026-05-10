@@ -14,11 +14,14 @@ Hiển thị toàn bộ commands của dự án GSU26SE55.
 | `/kltn-reviewcode` | Review code trước khi ship — xuất PASS / FAIL |
 | `/kltn-test KAN-XX` | Kiểm thử sau khi reviewcode PASS — xuất PASS / FAIL |
 | `/kltn-ship KAN-XX` | Tạo PR + cập nhật Jira sang IN REVIEW |
-| `/kltn-reviewpr KAN-XX` | Review PR của đồng đội — APPROVE hoặc REQUEST CHANGES |
+| `/kltn-reviewpr KAN-XX` | Review PR của đồng đội — APPROVE hoặc REQUEST CHANGES (chỉ reviewer) |
+| `/kltn-complete KAN-XX` | Sau khi PR được APPROVE: tạo handoff → push → merge → update Jira (chỉ author) |
 
 **Luồng chuẩn (bắt buộc với MỌI ticket):**
 ```
-/kltn-task KAN-XX → plan (xác nhận) → code → /kltn-reviewcode → /kltn-test KAN-XX → /kltn-ship KAN-XX
+[Author]   /kltn-task KAN-XX → plan (xác nhận) → code → /kltn-reviewcode → /kltn-test KAN-XX → /kltn-ship KAN-XX
+[Reviewer] /kltn-reviewpr KAN-XX → APPROVE hoặc REQUEST CHANGES
+[Author]   /kltn-complete KAN-XX → handoff → merge → Jira Done
 ```
 
 **Estimate size:**

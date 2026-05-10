@@ -1,4 +1,4 @@
-Review PR của đồng đội trước khi approve merge.
+Review PR của đồng đội trước khi approve hoặc request changes.
 
 Ticket/PR: `$ARGUMENTS`
 
@@ -17,12 +17,9 @@ gh pr list --search "$ARGUMENTS in:title" --json number,title,url,headRefName
 gh pr view $ARGUMENTS --json number,title,url,headRefName,state
 ```
 
-Từ output trên, ghi nhớ 3 giá trị để dùng xuyên suốt các bước sau:
+Từ output trên, ghi nhớ để dùng xuyên suốt:
 - `$PR_NUMBER` — số PR nguyên (ví dụ: `42`)
-- `$BRANCH_NAME` — headRefName (ví dụ: `feature/KAN-12-battery-crud`)
 - `$TICKET_ID` — ticket ID trích từ branch hoặc title (ví dụ: `KAN-12`)
-
-> Dùng `$PR_NUMBER` cho tất cả `gh` command, không dùng `$ARGUMENTS` trực tiếp.
 
 **Bước 3 — Lấy diff và review**
 ```bash
@@ -32,7 +29,7 @@ Chạy checklist theo role skill file (Bước 1), xuất kết quả:
 
 ```
 ## BÁO CÁO PR REVIEW — KAN-XX — YYYY-MM-DD
-### Reviewer: [tên bạn]
+### Reviewer: [tên bạn từ CLAUDE.local.md]
 ### TÓM TẮT
 [1–2 câu về PR]
 
@@ -57,65 +54,12 @@ Chạy checklist theo role skill file (Bước 1), xuất kết quả:
 ```bash
 gh pr review $PR_NUMBER --request-changes --body "[mô tả vấn đề cần sửa]"
 ```
-Không merge. Chờ author sửa và push lại.
+Dừng ở đây. Thông báo author sửa và push lại, rồi tag reviewer để review lại.
 
 ---
 
-**Nếu KẾT LUẬN = APPROVE** — thực hiện tuần tự các bước sau:
-
-**Bước 4 — Tạo handoff TRƯỚC khi merge (commit lên feature branch)**
+**Nếu KẾT LUẬN = APPROVE:**
 ```bash
-git fetch origin
-git checkout $BRANCH_NAME
-git pull origin $BRANCH_NAME
+gh pr review $PR_NUMBER --approve --body "LGTM ✅ — [1 câu tóm tắt]"
 ```
-
-Dùng Edit tool cập nhật `logs/$TICKET_ID/plan.md`:
-- `Status: SHIPPED` → `Status: MERGED`
-- `Cập nhật lần cuối` → ngày hôm nay
-
-Dùng Write tool tạo `logs/$TICKET_ID/handoff.md`:
-
-```markdown
-# HANDOFF — KAN-XX: [Tên ticket]
-
-## Thông tin
-- **Người thực hiện:** [author từ git log]
-- **Reviewer:** [tên reviewer từ CLAUDE.local.md]
-- **Ngày merge:** YYYY-MM-DD
-- **Status:** MERGED ✅
-- **PR:** [URL PR từ Bước 2]
-- **Branch đã xóa:** feature/KAN-XX-ten-tinh-nang
-
-## Tiến độ Steps
-[Copy nguyên ## Steps từ plan.md — tất cả phải [x]]
-
-## Những gì đã làm
-[Tóm tắt từ danh sách "Các file sẽ tạo/sửa" trong plan.md]
-
-## Kết quả
-- reviewcode: PASS
-- test: PASS
-- PR: merged vào main
-
-## Ghi chú
-[Bất kỳ thông tin quan trọng nào cần lưu lại cho tham khảo sau]
-```
-
-```bash
-git add logs/$TICKET_ID/
-git commit -m "docs($TICKET_ID): ticket merged — thêm handoff file"
-git push origin $BRANCH_NAME
-```
-
-**Bước 5 — Approve & Merge PR**
-```bash
-git checkout main
-gh pr review $PR_NUMBER --approve --body "LGTM ✅"
-gh pr merge $PR_NUMBER --merge --delete-branch
-git pull origin main
-```
-
-**Bước 6 — Cập nhật Jira → Done**
-Dùng `mcp__jira__jira_transition` để chuyển ticket sang **Done**.
-Dùng `mcp__jira__jira_add_comment` để add comment: "PR merged và approved bởi [tên reviewer] — [ngày hôm nay]."
+Dừng ở đây. Author sẽ chạy `/kltn-complete $TICKET_ID` để tạo handoff và merge.
