@@ -145,22 +145,44 @@ const queryClient = new QueryClient({
 
 Override per-query khi cần:
 
-| Data type | staleTime | Lý do |
-|-----------|-----------|-------|
-| Ticket queue (manager) | `30_000` (30s) | Thay đổi thường xuyên |
-| SLA countdown | `0` | Luôn fresh — render realtime bằng `setInterval` |
-| Battery config | `1000 * 60 * 10` (10 phút) | Ít thay đổi |
-| Dashboard stats | `1000 * 60` (1 phút) | Balanced |
-| User list (admin) | `1000 * 60 * 5` (5 phút) | Ít thay đổi |
+| Data type | staleTime | refetchInterval | Lý do |
+|-----------|-----------|-----------------|-------|
+| Ticket queue (manager) | `30_000` (30s) | — | Thay đổi thường xuyên |
+| SLA countdown | `0` | `30_000` (30s) | Đồng bộ deadline từ server mỗi 30s |
+| Battery config | `1000 * 60 * 10` (10 phút) | — | Ít thay đổi |
+| Dashboard stats | `1000 * 60` (1 phút) | — | Balanced |
+| User list (admin) | `1000 * 60 * 5` (5 phút) | — | Ít thay đổi |
 
 ```tsx
-// Ví dụ override per-query
+// Ticket queue — refetch 30s
 const { data: tickets } = useQuery({
   queryKey: ['tickets', filters],
   queryFn: () => ticketService.getList(filters),
-  staleTime: 30_000,  // override: 30s
+  staleTime: 30_000,
 });
+
+// SLA countdown — pattern đúng
+// staleTime: 0 + refetchInterval: 30s đảm bảo deadline được đồng bộ từ server mỗi 30s.
+// setInterval dùng để update UI countdown (hiển thị giây đếm ngược) giữa các lần refetch.
+const { data: ticket } = useQuery({
+  queryKey: ['ticket', id],
+  queryFn: () => ticketService.getById(id),
+  staleTime: 0,
+  refetchInterval: 30_000,  // ← quan trọng: không có cái này, TanStack Query không tự refetch
+});
+
+// Local countdown display — đếm ngược từ deadline server
+const [remaining, setRemaining] = useState<number>(0);
+useEffect(() => {
+  if (!ticket?.slaDeadline) return;
+  const update = () => setRemaining(new Date(ticket.slaDeadline).getTime() - Date.now());
+  update();
+  const id = setInterval(update, 1000);
+  return () => clearInterval(id);
+}, [ticket?.slaDeadline]);
 ```
+
+> **Lưu ý:** `staleTime: 0` không tự refetch theo interval — chỉ đánh dấu data là stale ngay khi fetch. Phải dùng `refetchInterval` để có auto-refetch thực sự. `setInterval` chỉ dùng cho UI countdown (giây đếm ngược) dựa trên deadline đã lấy từ server.
 
 ---
 

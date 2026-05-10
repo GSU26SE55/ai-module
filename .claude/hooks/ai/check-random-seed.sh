@@ -19,7 +19,7 @@ if [[ $IS_SEED_FILE -eq 0 ]]; then exit 0; fi
 
 # Check for seed setting
 HAS_SEED=0
-if grep -qE "random\.seed|np\.random\.seed|torch\.manual_seed|set_seed|SEED\s*=" "$FILE_PATH"; then
+if grep -qE "random\.seed|np\.random\.seed|torch\.manual_seed|set_seed|[Ss][Ee][Ee][Dd]\s*=" "$FILE_PATH"; then
   HAS_SEED=1
 fi
 

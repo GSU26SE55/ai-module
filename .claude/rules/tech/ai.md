@@ -188,8 +188,30 @@ ai-module/
 **Quy tắc:**
 - Tăng minor version (`v1.0 → v1.1`) khi retrain cùng architecture nhưng khác data/hyperparameter
 - Tăng major version (`v1.x → v2.0`) khi thay đổi architecture (e.g., thêm attention layer)
-- `scaler.pkl` **không có version** — luôn đi kèm model mới nhất (refit khi retrain)
+- `scaler.pkl` lưu kèm metadata version để phát hiện mismatch với model
 - Cả 3 artifacts **phải commit vào Git** cùng 1 commit khi update
+
+### Lưu artifacts sau khi train (bắt buộc kèm metadata)
+
+```python
+import joblib
+
+# Lưu scaler kèm metadata — giúp phát hiện version mismatch lúc inference
+joblib.dump({
+    "scaler": scaler,
+    "version": "1.0",
+    "trained_on": ["B0005", "B0006", "B0007"],  # battery IDs dùng để fit
+    "features": ["voltage", "current", "temperature"],
+}, "models/weights/scaler.pkl")
+
+# Lưu LSTM model
+torch.save({
+    "model_state_dict": soh_model.state_dict(),
+    "version": "1.0",
+    "window_size": 30,
+    "input_features": 3,
+}, "models/weights/soh_lstm_v1.0.pth")
+```
 
 ### Load artifacts khi inference (FastAPI startup)
 
@@ -198,12 +220,27 @@ ai-module/
 import joblib
 import torch
 
-scaler = joblib.load("models/weights/scaler.pkl")
+SCALER_VERSION = "1.0"
+MODEL_VERSION  = "1.0"
+
+scaler_artifact = joblib.load("models/weights/scaler.pkl")
+assert scaler_artifact["version"] == SCALER_VERSION, (
+    f"Scaler version mismatch: expected {SCALER_VERSION}, got {scaler_artifact['version']}"
+)
+scaler = scaler_artifact["scaler"]
+
+checkpoint = torch.load("models/weights/soh_lstm_v1.0.pth", map_location="cpu")
+assert checkpoint["version"] == MODEL_VERSION, (
+    f"Model version mismatch: expected {MODEL_VERSION}, got {checkpoint['version']}"
+)
 soh_model = SOHPredictor()
-soh_model.load_state_dict(torch.load("models/weights/soh_lstm_v1.0.pth", map_location="cpu"))
+soh_model.load_state_dict(checkpoint["model_state_dict"])
 soh_model.eval()
+
 iso_model = joblib.load("models/weights/isolation_forest_v1.0.pkl")
 ```
+
+> **Tại sao cần metadata?** Nếu `scaler.pkl` được refit (v1.1) nhưng `soh_lstm_v1.0.pth` không được update, inference sẽ ra kết quả sai mà không có error. Version assertion bắt lỗi này ngay khi startup thay vì âm thầm predict sai.
 
 ### Git LFS (nếu model file > 100MB)
 

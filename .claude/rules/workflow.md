@@ -41,20 +41,7 @@ Nội dung plan.md phải có:
 ## Approach
 [Mô tả cách implement: thuật toán, data flow, API design]
 
-## Dependencies & Edge Cases
-- Dependency: ...
-- Edge case: ...
-
-## Ước tính
-- Size: Small / Medium / Large
-- Thời gian: X giờ
 ```
-
-| Size | Thời gian ước tính | Hành động sau khi approve |
-|------|--------------------|--------------------------|
-| Small | < 2 giờ | Code luôn |
-| Medium | 2 – 4 giờ | Code luôn |
-| Large | > 4 giờ | Code luôn sau khi user xác nhận plan |
 
 > **TUYỆT ĐỐI KHÔNG CODE khi chưa có file `logs/KAN-XX/plan.md` được user xác nhận (reply "ok", "approve", "tiến hành", hoặc tương đương). Không có ngoại lệ.**
 
@@ -85,18 +72,17 @@ Một ticket được coi là **Done** khi đủ cả 3 điều kiện:
 
 ---
 
-## Test Coverage Targets
+## Quality Gates trước `/kltn-ship`
 
-| Layer | Tool | Minimum coverage | CI fail nếu |
-|-------|------|-----------------|-------------|
+| Layer | Kiểm tra | Tiêu chí PASS | CI fail nếu |
+|-------|----------|--------------|-------------|
 | BE (unit + integration) | `dotnet test --collect:"XPlat Code Coverage"` | ≥ 80% line coverage | < 80% |
-| FE (component + hook) | `npm run test -- --coverage` | ≥ 70% line coverage | < 70% |
+| FE | `tsc --noEmit` + `eslint --max-warnings=0` + `npm run build` | Build & lint không lỗi | bất kỳ lỗi nào |
 | AI (training + inference) | `pytest --cov=src --cov-report=term` | ≥ 85% line coverage | < 85% |
 
-**Test bắt buộc cho mỗi ticket:**
-- BE: Unit test cho CommandHandler + QueryHandler (mock UnitOfWork)
-- BE: Integration test cho endpoint (TestServer + real DB / in-memory)
-- FE: Unit test cho hook (`useQuery`, `useMutation`) + component render
+**Bắt buộc cho mỗi ticket:**
+- BE: Unit test cho CommandHandler + QueryHandler (mock UnitOfWork) + Integration test endpoint
+- FE: Type check sạch + lint 0 warning + build thành công
 - AI: Unit test cho `preprocess`, `train`, `infer` functions + latency benchmark
 
 **Chạy local trước `/kltn-ship`:**
@@ -104,8 +90,10 @@ Một ticket được coi là **Done** khi đủ cả 3 điều kiện:
 # BE
 dotnet test --no-build --verbosity minimal
 
-# FE
-npm run test -- --watchAll=false --coverage
+# FE — không có test suite, chỉ build + lint
+npx tsc --noEmit
+npx eslint . --max-warnings=0
+npm run build
 
 # AI
 pytest tests/ -v --cov=src

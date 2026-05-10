@@ -9,8 +9,8 @@ if [[ ! -f "$FILE_PATH" ]]; then exit 0; fi
 
 # Check ruff is installed
 if ! command -v ruff &>/dev/null; then
-  echo '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"ruff not installed — run: pip install ruff"}}'
-  exit 0
+  echo "ruff not installed — run: pip install ruff" >&2
+  exit 2
 fi
 
 LINT_OUTPUT=$(ruff check "$FILE_PATH" 2>&1)

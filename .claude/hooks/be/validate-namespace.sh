@@ -24,6 +24,8 @@ if [[ -z "$REL_PATH" ]]; then exit 0; fi
 
 EXPECTED_NS=$(dirname "$REL_PATH" | tr '/' '.')
 
+if [[ "$EXPECTED_NS" == "." ]]; then exit 0; fi
+
 if [[ "$DECLARED_NS" != "$EXPECTED_NS" ]]; then
   echo "{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"⚠️ NAMESPACE MISMATCH in $(basename "$FILE_PATH"): declared '$DECLARED_NS' but expected '$EXPECTED_NS'. Fix namespace to match folder path.\"}}"
 fi

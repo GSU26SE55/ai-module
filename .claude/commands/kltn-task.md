@@ -1,85 +1,100 @@
 Làm việc trên Jira ticket được chỉ định.
 
-**Bước 0 — Kiểm tra plan hiện tại (quan trọng khi mở conversation mới)**
+**Bước 0 — Kiểm tra plan hiện tại**
 
-Trước tiên, dùng Read tool đọc `logs/$ARGUMENTS/plan.md`:
+Đọc `logs/$ARGUMENTS/plan.md`:
 
-
-- **Nếu file tồn tại** → đọc trường `Status` trong `## Metadata`, sau đó: 
+- **Nếu tồn tại** → đọc `Status`:
 
   | Status | Hành động |
   |--------|-----------|
-  | `PLANNING` | Hiện lại plan + danh sách Steps. Hỏi user có approve không. Nếu approve → đổi Status → `IN_PROGRESS`, cập nhật `Cập nhật lần cuối`, bắt đầu từ Bước 1 trong Steps. |
-  | `IN_PROGRESS` | Đọc `## Steps`, tìm bước đầu tiên chưa hoàn thành (`- [ ]`). Tóm tắt: "Đã xong X/Y bước. Tiếp tục Bước Z: [mô tả]". Hỏi user có tiếp tục không. |
-  | `REVIEWING` | Thông báo: "Ticket đang chờ review — chạy `/kltn-reviewcode` để tiếp tục." Dừng lại. |
-  | `TESTING` | Thông báo: "Review đã PASS — chạy `/kltn-test $ARGUMENTS` để tiếp tục." Dừng lại. |
-  | `SHIPPED` | Thông báo: "Ticket đã ship, đang chờ PR review." Dừng lại. |
-  | `MERGED` | Thông báo: "Ticket đã done và merged vào main." Dừng lại. |
+  | `PLANNING` | Hiện plan + Steps. Hỏi chọn **[1] Execute** hoặc **[2] Chat about**. Nếu Execute → `IN_PROGRESS` + bắt đầu Bước 4. |
+  | `IN_PROGRESS` | Tìm `- [ ]` đầu tiên. Tóm tắt "Xong X/Y bước. Tiếp tục Bước Z". Hỏi tiếp tục không. |
+  | `REVIEWING` | "Chạy `/kltn-reviewcode` để tiếp tục." Dừng. |
+  | `TESTING` | "Chạy `/kltn-test $ARGUMENTS` để tiếp tục." Dừng. |
+  | `SHIPPED` | "Đang chờ PR review." Dừng. |
+  | `MERGED` | "Ticket đã done." Dừng. |
 
-  **Dừng sau mỗi status — không tự tiếp tục. Chờ user chỉ dẫn.**
+  **Dừng sau mỗi status — chờ user chỉ dẫn.**
 
-- **Nếu file chưa tồn tại** → tiếp tục Bước 1 bên dưới.
+- **Nếu chưa tồn tại** → tiếp tục Bước 1.
 
 ---
 
-**Bước 1 — Xác định role của bạn**
-Đọc CLAUDE.local.md. Nếu có **Dev Role** → dùng Dev Role. Nếu chỉ có Role → dùng Role đó.
-- BE → `.claude/skills/dev/be/task/SKILL.md`
-- FE → `.claude/skills/dev/fe/task/SKILL.md`
-- AI → `.claude/skills/dev/ai/task/SKILL.md`
+**Bước 1 — Xác định role**
+
+Đọc `CLAUDE.local.md`. Dùng **Dev Role** nếu có, ngược lại dùng Role:
+- BE → `rules/tech/be.md`
+- FE → `rules/tech/fe.md`
+- AI → `rules/tech/ai.md`
 
 **Bước 2 — Đọc context**
+
 Fetch Jira ticket: `$ARGUMENTS`
 
-**Bước 3 — Lập Implementation Plan & viết plan.md (bắt buộc)**
-Viết file `logs/$ARGUMENTS/plan.md` với nội dung:
+**Bước 3 — Viết plan.md**
+
+Tạo `logs/$ARGUMENTS/plan.md`:
 
 ```markdown
 # Plan — KAN-XX: [Tên ticket]
 
 ## Metadata
-- **Status:** PLANNING
-- **Ngày tạo:** YYYY-MM-DD
-- **Cập nhật lần cuối:** YYYY-MM-DD
+- **Status:** PLANNING | **Role:** BE/FE/AI | **Ngày:** YYYY-MM-DD
 
 ## Mục tiêu
-[Ticket yêu cầu làm gì, output mong đợi là gì]
+[1–3 dòng: ticket yêu cầu gì, output mong đợi]
 
-## Các file sẽ tạo/sửa
-| File | Hành động | Mô tả |
-|------|-----------|-------|
+## Files
+| File | Action | Ghi chú |
+|------|--------|---------|
 | path/to/file | create/modify | ... |
 
 ## Approach
-[Mô tả cách implement: thuật toán, data flow, API design]
-
-## Dependencies & Edge Cases
-- Dependency: ...
-- Edge case: ...
-
-## Ước tính
-- Size: Small / Medium / Large
-- Thời gian: X giờ
+[Data flow / API design — tối đa 5 bullet]
 
 ## Steps
-- [ ] Bước 1: [mô tả bước đầu tiên]
-- [ ] Bước 2: [mô tả bước tiếp theo]
-- [ ] Bước 3: [...]
+- [ ] Bước 1: ...
+- [ ] Bước 2: ...
 ```
 
-> Steps được chia từ "Các file sẽ tạo/sửa" — mỗi bước là 1 đơn vị logic có thể hoàn thành độc lập (VD: tạo entity, tạo handler, tạo controller, viết test...).
+**Step template theo role (dùng làm khung, điều chỉnh theo ticket):**
 
-**DỪNG LẠI** — chờ user xác nhận ("ok", "approve", "tiến hành") trước khi code.
+| BE (Clean Architecture) | FE (Feature-based) | AI (FastAPI) |
+|-------------------------|--------------------|--------------|
+| Entity + Enum | Types (`*.types.ts`) | Preprocess |
+| DTO + Response | Service (`*.service.ts`) | Model / training |
+| Command + Handler | Hook(s) (`use*.ts`) | Inference |
+| Query + Handler | Component + Page | FastAPI endpoint |
+| Controller | Unit test | Unit test + latency |
+| Unit test (mock UoW) | | |
+| Migration | | |
 
-Khi user xác nhận → dùng Edit tool cập nhật plan.md:
-- `Status: PLANNING` → `Status: IN_PROGRESS`
-- `Cập nhật lần cuối` → ngày hôm nay
+> BE: dùng scaffold khi phù hợp — `/scaffold-entity`, `/scaffold-dto`, `/scaffold-cqrs-command`, `/scaffold-cqrs-query`, `/scaffold-controller`, `/scaffold-crud`, `/run-migration`
+> AI: dùng `/scaffold-fastapi-endpoint`
 
-**Bước 4 — Thực hiện theo đúng skill file của role**
-Tạo branch, implement từng bước trong `## Steps` theo thứ tự:
+**DỪNG — hiện plan và hỏi user chọn:**
 
-> Sau khi hoàn thành mỗi bước → dùng Edit tool trong plan.md:
+```
+Plan đã sẵn sàng. Bạn muốn:
+  [1] Execute   — bắt đầu implement ngay
+  [2] Chat about — thảo luận / chỉnh sửa plan trước
+```
+
+- Nếu user chọn **1 / Execute / ok / approve / tiến hành** → cập nhật plan.md: `Status: PLANNING → IN_PROGRESS`, `Ngày` → hôm nay → tiếp tục Bước 4.
+- Nếu user chọn **2 / Chat about** → trả lời câu hỏi / cập nhật plan theo góp ý → hiện lại 2 option trên. Lặp lại cho đến khi user chọn Execute.
+
+---
+
+**Bước 4 — Implement**
+
+Tạo branch `feature/KAN-XX-slug-ngan`. Thực hiện từng Step theo thứ tự:
+
+> Sau mỗi bước hoàn thành:
 > `- [ ] Bước N: ...` → `- [x] Bước N: ... — YYYY-MM-DD`
-> `Cập nhật lần cuối` → ngày hôm nay
+> Cập nhật `Ngày` trong Metadata.
 
-Không bỏ qua bước nào. Không đánh dấu done khi chưa thực sự xong.
+Không bỏ qua bước. Không đánh dấu done khi chưa thực sự xong.
+
+> ⛔ **KHÔNG chạy `git commit` hay `git push` trong `/kltn-task`.**
+> Toàn bộ git operations (commit → push → PR) chỉ được thực hiện khi chạy `/kltn-ship KAN-XX`.
