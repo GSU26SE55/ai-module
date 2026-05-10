@@ -48,7 +48,6 @@ Hệ thống agent hỗ trợ dự án Capstone **Solar Lithium-ion Battery Main
 ├── rules/                 ← quy tắc — mọi người đều follow
 │   ├── workflow.md        ← quy trình làm việc & git flow
 │   ├── design.md          ← kiến trúc hệ thống 3-layer
-│   ├── tech-defaults.md   ← tech stack mặc định
 │   └── tech/
 │       ├── be.md          ← BE rules đầy đủ (14 rules, load khi edit .cs)
 │       ├── fe.md          ← FE rules
@@ -57,7 +56,8 @@ Hệ thống agent hỗ trợ dự án Capstone **Solar Lithium-ion Battery Main
 ├── agents/                ← sub-agent chuyên dụng (leader dùng)
 │   ├── researcher.md      ← thu thập & tổng hợp thông tin
 │   ├── reviewer.md        ← kiểm tra chất lượng & khuyến nghị
-│   └── tester.md          ← kiểm thử BE/FE/Mobile/AI trước khi merge
+│   ├── tester.md          ← kiểm thử BE/FE/Mobile/AI trước khi merge
+│   └── debugger.md        ← debug có cấu trúc 6-phase (reproduce → fix → verify)
 └── skills/
     ├── leader/            ← CHỈ LEADER dùng
     │   ├── review-team.md   ← /kltn-team    — tracking toàn team
@@ -67,6 +67,7 @@ Hệ thống agent hỗ trợ dự án Capstone **Solar Lithium-ion Battery Main
         ├── be/            ← BE Dev dùng
         │   ├── task.md              ← /kltn-task KAN-XX
         │   ├── code-review.md       ← /kltn-reviewcode
+        │   ├── test.md              ← /kltn-test KAN-XX
         │   ├── ship.md              ← /kltn-ship KAN-XX
         │   ├── review-pr.md         ← /kltn-reviewpr KAN-XX
         │   ├── scaffold-entity.md   ← /scaffold-entity Service Entity
@@ -80,9 +81,9 @@ Hệ thống agent hỗ trợ dự án Capstone **Solar Lithium-ion Battery Main
         │   ├── scaffold-integration-event.md ← /scaffold-integration-event EventName
         │   └── scaffold-unit-tests.md    ← /scaffold-unit-tests Service Entity
         ├── fe/            ← FE Dev dùng
-        │   ├── task.md, code-review.md, ship.md, review-pr.md
+        │   ├── task.md, code-review.md, test.md, ship.md, review-pr.md
         └── ai/            ← AI Dev dùng
-            ├── task.md, code-review.md, ship.md, review-pr.md
+            ├── task.md, code-review.md, test.md, ship.md, review-pr.md
             └── scaffold-fastapi-endpoint.md ← /scaffold-fastapi-endpoint <name>
 ```
 
@@ -117,7 +118,7 @@ Role phụ:   FE, AI    ← có thể dùng skills/dev/fe/ và skills/dev/ai/
 | **rules/** (đọc) | ✅ | ✅ | ✅ | Mọi người đọc tất cả |
 | `/kltn-task` | ✅ | ✅ | ✅ | Theo role của ticket |
 | `/kltn-reviewcode` | ✅ | ✅ | ✅ | Theo role của ticket |
-| `/kltn-test` | ✅ | ✅ | ✅ | |
+| `/kltn-test` | ✅ | ✅ | ✅ | Không dùng Playwright/screenshot |
 | `/kltn-ship` | ✅ | ✅ | ✅ | |
 | `/kltn-reviewpr` | ✅ | ✅ | ✅ | |
 | `/scaffold-crud` | ✅ | ✅ | 🔶 | FE dùng khi làm task BE phụ |
@@ -169,7 +170,8 @@ Leader sync về sub-repo qua `bash sync-claude.sh` (subtree) + `push-to-org.sh`
 - **BE scaffold** — tạo boilerplate nhanh: `/scaffold-crud Service Entity` (full CRUD 1 lệnh)
 - **Leader skills** — tracking và planning, không can thiệp vào flow coding của dev
 - **Hooks** — tự động chạy sau mỗi edit .cs: build check, namespace validate, anti-pattern warning
-- Kết quả review và sprint plan xuất trong conversation — không lưu file ngoài
+- **Log files** — `/kltn-reviewcode` ghi `logs/KAN-XX/review.md`, `/kltn-test` ghi `logs/KAN-XX/test.md`; `/kltn-ship` commit cả folder `logs/KAN-XX/` lên branch trước khi tạo PR
+- Sprint plan và leader report (`/kltn-team`, `/kltn-member`) xuất trong conversation — không lưu file
 
 ## BE Scaffold Workflow (mới)
 

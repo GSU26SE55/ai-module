@@ -101,7 +101,7 @@ Tạo (hoặc mở) file `.claude/settings.local.json` trong folder repo của b
 }
 ```
 
-Claude Code merge `settings.local.json` với `.mcp.json` khi khởi động — bạn sẽ thấy đủ 3 MCP: `context7`, `playwright`, `jira`.
+Claude Code merge `settings.local.json` với `.mcp.json` khi khởi động — bạn sẽ thấy đủ 2 MCP: `context7`, `jira`.
 
 ---
 
@@ -138,7 +138,7 @@ cd ~/Documents/GSU26SE55/frontend   # cd vào repo của role đang làm
 claude
 ```
 
-Sau khi Claude Code mở, gõ `/mcp` — phải thấy `jira: connected` (và `context7`, `playwright` nếu có).
+Sau khi Claude Code mở, gõ `/mcp` — phải thấy `jira: connected` (và `context7` nếu có).
 
 Nếu `jira: disconnected` → kiểm tra lại token ở Bước 4.
 
@@ -331,9 +331,6 @@ Merge trên GitHub UI        ← sau khi có ≥ 1 approve
 # Context7 — tra docs
 dùng context7 tìm cách dùng IMediator trong MediatR .NET
 dùng context7 tìm cách dùng useMutation trong TanStack Query v5
-
-# Playwright — test UI
-dùng playwright mở localhost:3000, đăng nhập admin, chụp ảnh trang dashboard
 ```
 
 ---

@@ -1,6 +1,6 @@
 Kiểm tra toàn bộ trạng thái team. Chỉ dành cho Leader.
 
-Thực hiện đúng theo `.claude/skills/leader/review-team.md`:
+Thực hiện đúng theo `.claude/skills/leader/review-team/SKILL.md`:
 1. Fetch Jira REST API → tracking report toàn team
 2. Xuất báo cáo theo format reviewer:
 ```

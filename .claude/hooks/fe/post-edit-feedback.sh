@@ -12,8 +12,11 @@ if [[ ! -f "$FILE_PATH" ]]; then exit 0; fi
 
 WARNINGS=""
 
-# console.log còn sót lại — bỏ qua dòng comment
-if grep -E 'console\.(log|warn|error|debug)\(' "$FILE_PATH" | grep -qvE '^\s*(//|/?\*)'; then
+# console.log còn sót lại — bỏ qua dòng comment thuần và inline comment
+CONSOLE_HITS=$(grep -E 'console\.(log|warn|error|debug)\(' "$FILE_PATH" \
+  | grep -vE '^\s*(//|/?\*)' \
+  | grep -vE '//.*console\.(log|warn|error|debug)')
+if [[ -n "$CONSOLE_HITS" ]]; then
   WARNINGS="${WARNINGS}⚠️ console.log found in '$FILE_PATH' — remove before shipping.\n"
 fi
 

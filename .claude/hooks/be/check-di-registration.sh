@@ -10,6 +10,7 @@ if ! echo "$FILE_PATH" | grep -qE '/(Interfaces|Services)/'; then exit 0; fi
 
 INTERFACE=$(grep -oE 'public interface [A-Z][A-Za-z0-9]+' "$FILE_PATH" | head -1 | sed 's/public interface //')
 if [[ -z "$INTERFACE" ]]; then exit 0; fi
+INTERFACE=$(echo "$INTERFACE" | tr -d '"\\/')
 
 SERVICE_DIR=$(echo "$FILE_PATH" | grep -oE '.*/services/[^/]+' || echo "$FILE_PATH" | grep -oE '.*/shared/[^/]+')
 if [[ -z "$SERVICE_DIR" ]]; then exit 0; fi

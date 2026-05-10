@@ -11,6 +11,7 @@ if ! grep -q 'AuditableEntity' "$FILE_PATH"; then exit 0; fi
 
 ENTITY_NAME=$(grep -oE 'public class [A-Za-z0-9]+' "$FILE_PATH" | head -1 | sed 's/public class //')
 if [[ -z "$ENTITY_NAME" ]]; then exit 0; fi
+ENTITY_NAME=$(echo "$ENTITY_NAME" | tr -d '"\\/')
 
 SERVICE_DIR=$(echo "$FILE_PATH" | grep -oE '.*/services/[^/]+')
 if [[ -z "$SERVICE_DIR" ]]; then exit 0; fi
