@@ -11,11 +11,29 @@ Hệ thống agent hỗ trợ dự án Capstone **Solar Lithium-ion Battery Main
 **Timeline:** 8 sprint, từ 11/5/2026 → 6/9/2026
 
 **Hệ thống gồm 3 phần:**
-- Mobile App (React Native/Expo) — giám sát pin real-time
+- Mobile App (React Native/Expo) — giám sát pin real-time, Customer dùng
 - Web App (ReactJS) — quản lý Admin/Manager/Staff + SLA ticket theo ITIL
-- AI Module — phân loại trạng thái pin, dự đoán SOH bằng LSTM/CNN-LSTM
+- AI Module (FastAPI + PyTorch) — phân loại trạng thái pin, dự đoán SOH bằng LSTM/CNN-LSTM
 
+> Core business flow (4 role · 6 phase · ticket state machine · SLA): [docs/core-business-flow.md](docs/core-business-flow.md)
 > Chi tiết đầy đủ xem tại: [memory.md](memory.md)
+
+---
+
+## Microservices BE
+
+| Service | Chức năng chính | Ghi chú |
+|---------|----------------|---------|
+| UserService | Auth (JWT/refresh), User CRUD, role management, OTP activate | Phát sinh `UserCreatedEvent` |
+| BatteryService | Battery CRUD, sensor readings (TimescaleDB), threshold config, assign cho Customer | Phát sinh `BatteryAnomalyDetectedEvent` |
+| TicketService | Ticket lifecycle, SLA timer, maintenance log, comment, escalation | Consume `BatteryAnomalyDetectedEvent` để auto-tạo ticket |
+| NotificationService | Push notification (Expo), email (invite/reset/alert) | Consume các event từ services khác |
+
+**Ticket states:** `NEW → OPEN → ASSIGNED → IN_PROGRESS → RESOLVED → CLOSED_PENDING_RATE → CLOSED`
+Ngoài ra: `ESCALATED` (từ P1/P2 breach hoặc Staff request) · `CLOSED_REJECTED` (Manager từ chối ngoài scope)
+
+**SLA theo priority (Manager gán, không thay đổi trong vòng đời ticket):**
+- P1 Critical: 4h · P2 High: 24h · P3 Standard: 72h
 
 ---
 

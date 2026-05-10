@@ -113,7 +113,7 @@ flowchart TB
     A3 -.setup xong.-> C1
     A3 -.-> S1
     C3 --> M1
-    C3 --> C4
+    C3 -->|nhận ticket ID| C4
     S3 --> C2
     S6 -.SLA breach.-> M7
     M3 --> T1
@@ -249,10 +249,11 @@ stateDiagram-v2
     note right of ESCALATED
         Trigger:
         (1) Staff không xử lý nổi
-        (2) SLA sắp breach (80%)
-        (3) SLA đã breach
-        → SLA timer PAUSE khi vào ESCALATED
-        → RESUME khi reassign về ASSIGNED
+        (2) SLA 80% warning — P1/P2
+        (3) SLA breach — P1/P2 auto-ESCALATED
+             P3: chỉ notify Manager, không đổi state
+        SLA timer PAUSE khi ESCALATED
+        RESUME khi reassign → ASSIGNED
     end note
 ```
 
@@ -285,7 +286,7 @@ flowchart TB
         P2w --> P2a
         P2a -->|Breach 100%| P2b[🔺 Manager reassign<br/>Senior nếu cần]
         P2b -->|Resolved| P2ok
-        P2b -->|Vẫn fail| P2cr[🔺 Escalate → P1 resources]
+        P2b -->|Vẫn fail| P2cr[🔺 Reassign Senior Staff<br/>quy trình tương tự P1<br/>priority vẫn giữ P2]
     end
 
     subgraph track3["🟢 P3 — Standard · SLA: 72 giờ"]
@@ -311,6 +312,7 @@ Admin chỉ hoạt động mạnh ở **Phase 1 (Setup)** và **giám sát đị
 | **Task chính** | User CRUD · Battery config · SLA rules · Audit log |
 | **Tần suất** | Setup 1 lần + cập nhật khi có yêu cầu |
 | **Quyền đặc biệt** | Disable account · Reset password · Restore DB |
+| **2FA** | Bắt buộc cho Admin · Manager/Staff/Customer dùng email + password (không 2FA) |
 
 ```mermaid
 flowchart TD
@@ -425,7 +427,7 @@ flowchart TD
     Escalate[🔺 Escalation Decision] --> ED3{Priority hiện tại}
     ED3 -->|P1| ED4[🚨 Critical Incident<br/>Notify Admin + All-hands]
     ED3 -->|P2| ED5[Escalate Tier-2<br/>Reassign Senior Staff + notify Admin]
-    ED3 -->|P3| ED6[Manager review<br/>Reassign nếu cần]
+    ED3 -->|P3| ED6[Manager review<br/>Reassign nếu cần<br/>⚠️ ticket không vào ESCALATED]
     ED4 --> Wait
     ED5 --> Wait
     ED6 --> Wait
@@ -474,7 +476,7 @@ flowchart TD
     WaitR -->|Timeout 24h| Remind[Nhắc Customer lần 2]
     WaitR -->|Reply| Read
     Remind -->|Reply| Read
-    Remind -->|Vẫn không reply 24h| NoReply[Escalate / đóng ticket<br/>Customer không phản hồi]
+    Remind -->|Vẫn không reply 24h| NoReply[Request Escalation<br/>lý do: Customer không phản hồi<br/>→ Manager quyết định đóng CLOSED_REJECTED]
     NoReply --> EscSend
 
     Diag -->|Đủ info| Hypo[Đưa giả thuyết nguyên nhân]
@@ -559,7 +561,7 @@ flowchart TD
     AlertFlow --> AS{Hành động}
     AS -->|Đóng alert| Idle
     AS -->|Tạo ticket| CreateT
-    AS -->|Đã tự xử lý| Dismiss[Mark as resolved<br/>by self]
+    AS -->|Đã tự xử lý| Dismiss[Dismiss alert<br/>+ log vào audit_logs<br/>type: self-resolved]
     Dismiss --> Home
 
     CreateT[Tạo Ticket] --> CT1[Chọn loại sự cố<br/>Charging · Overheat · No power ...]
@@ -577,6 +579,8 @@ flowchart TD
     TS -->|Staff hỏi| Reply[Trả lời comment<br/>+ ảnh bổ sung]
     TS -->|IN_PROGRESS lâu| ChaseCheck{Quá SLA?}
     TS -->|RESOLVED| ReviewRes
+    TS -->|CLOSED_REJECTED| Rejected[Xem lý do từ chối<br/>Liên hệ hotline nếu cần]
+    Rejected --> Home
 
     ChaseCheck -->|Có| Chase[Nhắc qua comment<br/>hoặc liên hệ hotline]
     ChaseCheck -->|Chưa| Track
