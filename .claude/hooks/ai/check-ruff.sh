@@ -7,10 +7,10 @@ FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
 if [[ "$FILE_PATH" != *.py ]]; then exit 0; fi
 if [[ ! -f "$FILE_PATH" ]]; then exit 0; fi
 
-# Check ruff is installed
+# Check ruff is installed — warn only, do not block editing
 if ! command -v ruff &>/dev/null; then
-  echo "ruff not installed — run: pip install ruff" >&2
-  exit 2
+  echo '{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":"⚠️ ruff not installed — linting skipped. Run: pip install ruff"}}'
+  exit 0
 fi
 
 LINT_OUTPUT=$(ruff check "$FILE_PATH" 2>&1)

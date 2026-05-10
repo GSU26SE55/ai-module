@@ -8,15 +8,12 @@ Dùng Edit tool cập nhật `logs/$ARGUMENTS/plan.md`:
 - `Cập nhật lần cuối` → ngày hôm nay
 
 **Bước 2 — Xác định scope và chạy test**
-Xác định role từ CLAUDE.local.md → đọc skill tương ứng:
+Xác định role từ CLAUDE.local.md → đọc và thực hiện đúng theo skill tương ứng:
 - BE → `.claude/skills/dev/be/test/SKILL.md`
 - FE → `.claude/skills/dev/fe/test/SKILL.md`
 - AI → `.claude/skills/dev/ai/test/SKILL.md`
 
-Thực hiện đúng theo tester agent (`.claude/agents/tester.md`):
-1. Chuẩn bị test data (không dùng production data)
-2. Chạy test cases: happy path → edge cases → auth/role → error handling
-3. Chạy coverage check theo target của role
+> Nếu ticket liên quan nhiều layer (ví dụ BE + AI) → spawn `.claude/agents/tester.md` để test cross-service thay vì inline.
 
 **Bước 3 — Xuất báo cáo**
 ```

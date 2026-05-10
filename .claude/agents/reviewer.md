@@ -192,5 +192,5 @@ Nguồn: Medium blog — Độ tin cậy: Thấp
 Lý do: không phải peer-reviewed, không rõ dataset size, không có code
 → Loại khỏi phân tích. Yêu cầu Researcher tìm paper từ IEEE/arXiv thay thế.
 
-Target thực tế theo rule tech/ai.md: 85–90% — không overpromise.
+Target thực tế theo `rules/tech/ai.md`: MAE < 2% SOH, RMSE < 3%, F1 > 0.80 cho anomaly — không dùng "accuracy 85–90%" chung chung.
 ```

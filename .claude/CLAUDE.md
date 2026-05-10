@@ -44,7 +44,7 @@ Ngoài ra: `ESCALATED` (từ P1/P2 breach hoặc Staff request) · `CLOSED_REJEC
 ├── CLAUDE.md              ← file này — bộ não dự án
 ├── CLAUDE.local.md        ← ghi chú cá nhân, không push lên Git
 ├── settings.json          ← permissions + hooks (commit được)
-├── settings.local.json    ← MCP servers + settings private
+├── settings.local.json    ← permissions + hooks private (không commit)
 ├── memory.md              ← thông tin dự án chi tiết
 ├── hooks/                 ← safety gates + quality checks theo role
 │   ├── be/                         ← hooks cho BE role repo (.cs files)
@@ -67,7 +67,7 @@ Ngoài ra: `ESCALATED` (từ P1/P2 breach hoặc Staff request) · `CLOSED_REJEC
 │   ├── workflow.md        ← quy trình làm việc & git flow
 │   ├── design.md          ← kiến trúc hệ thống 3-layer
 │   └── tech/
-│       ├── be.md          ← BE rules đầy đủ (14 rules, load khi edit .cs)
+│       ├── be.md          ← BE rules đầy đủ (15 rules, load khi edit .cs)
 │       ├── fe.md          ← FE rules
 │       ├── mobile.md      ← Mobile rules
 │       └── ai.md          ← AI rules
@@ -196,7 +196,7 @@ Leader sync về sub-repo qua `bash sync-claude.sh` (subtree) + `push-to-org.sh`
 
 ```
 Nhận ticket cần thêm entity mới:
-1. /scaffold-crud BatteryService Battery     ← tạo 14 files + migration
+1. /scaffold-crud BatteryService Battery     ← tạo 16 files + migration
    hoặc từng bước:
    /scaffold-entity → /scaffold-dto → /scaffold-cqrs-command → ... → /run-migration
 

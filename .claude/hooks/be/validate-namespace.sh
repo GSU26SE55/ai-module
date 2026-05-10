@@ -15,9 +15,22 @@ DECLARED_NS=$(echo "$NS_LINE" | sed 's/^global //;s/namespace //;s/[;{]//g' | tr
 if [[ -z "$DECLARED_NS" ]]; then exit 0; fi
 
 # Derive expected namespace from path: .../src/ServiceName.Layer/Folder/Sub/File.cs
+# Also supports: .../shared/, .../services/, .../ServiceName.Api/, .../ServiceName.Application/,
+#                .../ServiceName.Domain/, .../ServiceName.Infrastructure/
 REL_PATH=$(echo "$FILE_PATH" | sed -n 's|.*/src/||p')
 if [[ -z "$REL_PATH" ]]; then
   REL_PATH=$(echo "$FILE_PATH" | sed -n 's|.*/shared/||p')
+fi
+if [[ -z "$REL_PATH" ]]; then
+  REL_PATH=$(echo "$FILE_PATH" | sed -n 's|.*/services/[^/]*/||p')
+fi
+# Fallback: match from any known layer folder (Api/Application/Domain/Infrastructure)
+if [[ -z "$REL_PATH" ]]; then
+  REL_PATH=$(echo "$FILE_PATH" | grep -oP '(?<=(Api|Application|Domain|Infrastructure)/).+')
+  LAYER=$(echo "$FILE_PATH" | grep -oP '[^/]+(Api|Application|Domain|Infrastructure)(?=/)' | tail -1)
+  if [[ -n "$REL_PATH" && -n "$LAYER" ]]; then
+    REL_PATH="${LAYER}/${REL_PATH}"
+  fi
 fi
 
 if [[ -z "$REL_PATH" ]]; then exit 0; fi

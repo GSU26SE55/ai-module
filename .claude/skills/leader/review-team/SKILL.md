@@ -10,24 +10,20 @@ Khi người dùng gõ `/kltn-team` hoặc yêu cầu "review team", "kiểm tra
 
 ## Quy trình thực hiện
 
-### Bước 1 — Fetch Jira Board qua REST API
-  <!-- kiểm tra .env trước khi thực hiện lấy mcp jira -->
-**Gọi Jira REST API v3:**
+### Bước 1 — Fetch Jira Board qua MCP
 
-```bash
-AUTH="$JIRA_EMAIL:$JIRA_API_TOKEN"
-BASE="https://fpt-team-d7rg7yak.atlassian.net"
+Dùng Jira MCP (credentials đã cấu hình trong `~/.claude/settings.json`):
 
-RESULT=$(curl -s -u "$AUTH" -H "Accept: application/json" -H "Content-Type: application/json" \
-  -X POST "$BASE/rest/api/3/search/jql" \
-  -d '{"jql":"project=KAN ORDER BY duedate ASC","maxResults":100,"fields":["summary","status","assignee","duedate","issuetype"]}')
 ```
-> Dùng endpoint `/rest/api/3/search/jql` (POST). API Token lưu trong memory, không hardcode.
+jira_search: project = KAN ORDER BY duedate ASC
+fields: summary, status, assignee, duedate, issuetype
+maxResults: 100
+```
 
 Thu thập:
-- Tasks theo status (To Do / PROCESS / Done / Blocked)
+- Tasks theo status (To Do / In Progress / Done / Blocked)
 - Assignee, deadline, issuetype
-- Tasks overdue + tasks chưa assign
+- Tasks overdue (duedate < today) + tasks chưa assign
 
 ### Bước 2 — Xuất báo cáo
 
@@ -44,10 +40,10 @@ Tổng: X | Done: X | In Progress: X | To Do: X | Blocked: X
 | Thành viên | Done | In Progress | Blocked | Ghi chú |
 |------------|------|-------------|---------|---------|
 
-### CẢNH BÁO
+### RỦI RO & LƯU Ý
 - Overdue: [danh sách]
 - Blocked: [danh sách]
-- Không có activity: [danh sách]
+- Không có activity > 3 ngày: [danh sách]
 
 ### KHUYẾN NGHỊ
 - Ngay lập tức (24–48h): ...

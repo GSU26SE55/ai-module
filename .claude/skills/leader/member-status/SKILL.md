@@ -27,15 +27,13 @@ Mapping tên → MSSV → Jira displayName:
 > **AI là role phụ chung** — mọi thành viên đều có thể được assign ticket AI module khi cần.
 
 ### Bước 2 — Fetch tickets của thành viên
-  <!-- kiểm tra .env trước khi thực hiện lấy mcp jira -->
-```bash
-AUTH="$JIRA_EMAIL:$JIRA_API_TOKEN"
-BASE="https://fpt-team-d7rg7yak.atlassian.net"
 
-# Thay [DISPLAY_NAME] bằng tên Jira của thành viên
-curl -s -u "$AUTH" -H "Accept: application/json" -H "Content-Type: application/json" \
-  -X POST "$BASE/rest/api/3/search/jql" \
-  -d '{"jql":"project=KAN AND assignee=\"[DISPLAY_NAME]\" ORDER BY duedate ASC","maxResults":50,"fields":["summary","status","duedate","issuetype","updated"]}'
+Dùng Jira MCP (credentials đã cấu hình trong `~/.claude/settings.json`):
+
+```
+jira_search: project = KAN AND assignee = "[Jira displayName]" ORDER BY duedate ASC
+fields: summary, status, duedate, issuetype, updated
+maxResults: 50
 ```
 
 ### Bước 3 — Xuất báo cáo cá nhân

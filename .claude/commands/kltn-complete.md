@@ -69,11 +69,42 @@ git push origin $BRANCH_NAME
 **Bước 5 — Merge PR**
 ```bash
 gh pr merge $PR_NUMBER --merge --delete-branch
+```
+
+Nếu lệnh trên **thất bại**, dừng ngay và thực hiện recovery:
+
+```
+❌ GH PR MERGE THẤT BẠI — Recovery steps:
+1. Kiểm tra lý do:
+   gh pr view $PR_NUMBER --json state,mergeable,mergeStateStatus
+
+2. Nếu merge conflict → resolve conflict trên branch, push lại, rồi thử lại:
+   git checkout $BRANCH_NAME
+   git merge main   # hoặc rebase
+   # ... fix conflict ...
+   git push origin $BRANCH_NAME
+   gh pr merge $PR_NUMBER --merge --delete-branch
+
+3. Nếu branch protection rule chưa pass (CI fail) → chờ CI xanh rồi thử lại.
+
+4. Khôi phục trạng thái plan.md về SHIPPED (vì merge chưa thực sự xảy ra):
+   - Mở logs/$TICKET_ID/plan.md
+   - Đổi Status: MERGED → Status: SHIPPED
+   - Commit: git add logs/$TICKET_ID/plan.md && git commit -m "docs($TICKET_ID): revert status — merge failed"
+   - Push: git push origin $BRANCH_NAME
+
+5. Không cập nhật Jira (Bước 6) khi merge chưa thành công.
+```
+
+Nếu merge **thành công**:
+```bash
 git checkout main
 git pull origin main
 ```
 
 **Bước 6 — Cập nhật Jira → Done**
+*(Chỉ thực hiện sau khi Bước 5 thành công)*
+
 Dùng `mcp__jira__jira_transition` để chuyển ticket `$TICKET_ID` sang **Done**.
 Dùng `mcp__jira__jira_add_comment` để add comment:
 "PR #$PR_NUMBER merged vào main. Reviewer: [tên reviewer]. Ngày: [hôm nay]. Handoff tại `logs/$TICKET_ID/handoff.md`."

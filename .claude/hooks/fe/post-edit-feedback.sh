@@ -40,11 +40,14 @@ if echo "$FILE_PATH" | grep -qE '/(pages|components)/'; then
 fi
 
 # Cross-feature import (features/A import từ features/B)
+# Bắt cả relative path ('../features/...') lẫn path alias ('@/features/...' hoặc '~/features/...')
 FEATURE_NAME=$(echo "$FILE_PATH" | grep -oE 'features/[^/]+' | head -1 | cut -d'/' -f2)
 if [[ -n "$FEATURE_NAME" ]]; then
-  CROSS=$(grep -oE "from\s+['\"][^'\"]*features/[a-zA-Z0-9_-]+" "$FILE_PATH" 2>/dev/null | grep -v "features/$FEATURE_NAME" | head -1)
+  CROSS=$(grep -oE "from\s+['\"](@|~|\.\.?)?/?[^'\"]*features/[a-zA-Z0-9_-]+" "$FILE_PATH" 2>/dev/null \
+    | grep -v "features/$FEATURE_NAME" | head -1)
   if [[ -n "$CROSS" ]]; then
-    WARNINGS="${WARNINGS}⚠️ Cross-feature import in '$FILE_PATH' (→ $(echo "$CROSS" | grep -oE 'features/[a-zA-Z0-9_-]+')). Use shared/ instead.\n"
+    TARGET=$(echo "$CROSS" | grep -oE 'features/[a-zA-Z0-9_-]+')
+    WARNINGS="${WARNINGS}⚠️ Cross-feature import in '$FILE_PATH' (→ $TARGET). Use shared/ instead. Note: ESLint no-restricted-imports is the authoritative guard.\n"
   fi
 fi
 

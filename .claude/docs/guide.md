@@ -79,11 +79,11 @@ Role phụ: FE, AI   (hoặc BE, AI)
 
 ### Bước 4 — Cấu hình Jira MCP
 
-> **Tại sao không để trong `.mcp.json`?**
-> `.mcp.json` được commit lên Git (shared với team) → không được chứa credentials.
-> `.claude/settings.local.json` đã có trong `.gitignore` → an toàn để lưu token.
+> **Lưu ý:** Jira MCP phải được cấu hình ở **user scope** (`~/.claude/settings.json`), KHÔNG phải `settings.local.json`.
+> `settings.local.json` chỉ dùng cho permissions/hooks — Claude Code từ chối field `mcpServers` ở đây.
+> `~/.claude/settings.json` nằm ngoài mọi Git repo → an toàn, không bao giờ bị commit.
 
-Tạo (hoặc mở) file `.claude/settings.local.json` trong folder repo của bạn:
+Mở file `~/.claude/settings.json` (tạo mới nếu chưa có), thêm block `mcpServers`:
 
 ```json
 {
@@ -101,7 +101,9 @@ Tạo (hoặc mở) file `.claude/settings.local.json` trong folder repo của b
 }
 ```
 
-Claude Code merge `settings.local.json` với `.mcp.json` khi khởi động — bạn sẽ thấy đủ 2 MCP: `context7`, `jira`.
+> Nếu `~/.claude/settings.json` đã có các field khác (theme, model, v.v.), chỉ thêm block `"mcpServers"` vào — không xóa phần còn lại.
+
+Claude Code load user scope trước → bạn sẽ thấy đủ 3 MCP: `context7`, `jira`, (playwright disabled).
 
 ---
 
@@ -362,7 +364,7 @@ Ticket chỉ được coi là **Done** khi đủ cả 3:
 
 ## Cập nhật config / skills
 
-> Mọi thay đổi `.claude/` phải đi qua `workflow-ai` → Leader review → mới sync xuống.  
+> Mọi thay đổi `.claude/` phải đi qua `workflow-ai` → Leader review → mới sync xuống.
 > **Không sửa trực tiếp trong role repo** — sẽ bị ghi đè khi Actions sync.
 
 ### Member — đề xuất thay đổi

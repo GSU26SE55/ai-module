@@ -12,7 +12,7 @@ Khi leader gõ `/kltn-sprint` hoặc "lên kế hoạch sprint", "phân công sp
 
 ### Bước 1 — Fetch Jira tickets chưa assign hoặc To Do
 
-Dùng Jira MCP (credentials đã cấu hình trong `settings.local.json` → không cần env var):
+Dùng Jira MCP (credentials đã cấu hình trong `~/.claude/settings.json`):
 
 ```
 jira_search: project = KAN AND status = "To Do" ORDER BY priority DESC

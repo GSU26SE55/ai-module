@@ -63,7 +63,7 @@ Controller → Service → Repository → DB → Migration → Config
 ```
 - Lỗi 500: check Application logs (`dotnet run` output)
 - Lỗi 401/403: check JWT middleware, `[Authorize]` attribute, role claim
-- Lỗi 400: check FluentValidation rules
+- Lỗi 400: check `ValidateAsync()` trong Command (custom `IValidatable<T>`), kiểm tra `ValidationBehavior` pipeline có trả về `ListErrors` không
 - Lỗi EF Core: check migration, DbSet registration, query syntax
 
 **FE:**
