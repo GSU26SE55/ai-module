@@ -36,8 +36,7 @@ Nếu có role phụ → hỏi issue này thuộc role nào để chọn đúng 
 **Bước 1 — Lấy milestone đang mở**
 
 ```bash
-gh milestone list --repo "GSU26SE55/$REPO" --state open --json title,dueOn \
-  --jq '.[] | "\(.title) (due: \(.dueOn // "no date"))"'
+gh api repos/GSU26SE55/$REPO/milestones --jq '.[] | select(.state=="open") | "\(.title) (due: \(.due_on // "no date"))"'
 ```
 
 Ghi nhớ `$SPRINT_NAME` (milestone có due date sớm nhất).
