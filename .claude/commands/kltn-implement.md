@@ -30,12 +30,12 @@ Issue number: `$ARGUMENTS`
 
 ---
 
-**Bước 1 — Xác định role**
+**Bước 1 — Xác định role và đọc skill**
 
 Đọc `CLAUDE.local.md`. Dùng **Dev Role** nếu có, ngược lại dùng Role:
-- BE → `rules/tech/be.md`
-- FE → `rules/tech/fe.md`
-- AI → `rules/tech/ai.md`
+- BE → `.claude/skills/dev/be/implement/SKILL.md`
+- FE → `.claude/skills/dev/fe/implement/SKILL.md`
+- AI → `.claude/skills/dev/ai/implement/SKILL.md`
 
 ---
 
