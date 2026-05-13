@@ -91,7 +91,7 @@ Chạy trong folder repo. Làm **1 lần** — hook tự chạy mỗi lần comm
 
 ### Bước 5 — Cài RTK (token saver cho Claude Code)
 
-RTK nén output của các lệnh (build, test, git, gh...) trước khi gửi vào Claude — giảm 60–90% token tiêu thụ. Đã được cấu hình sẵn trong `workflow-ai/CLAUDE.md`; Claude Code tự dùng `rtk` prefix khi chạy commands, không cần làm thêm gì.
+RTK nén output của các lệnh (build, test, git, gh...) trước khi gửi vào Claude — giảm 60–90% token tiêu thụ.
 
 **macOS:**
 ```bash
@@ -109,9 +109,19 @@ curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/instal
 2. Giải nén → copy `rtk.exe` vào một thư mục trong PATH (ví dụ `C:\Tools\`)
 3. Thêm thư mục đó vào System PATH nếu chưa có
 
+**Sau khi cài — bật global hook (bắt buộc):**
+```bash
+rtk init -g --auto-patch
+```
+
+Lệnh này thêm hook vào `~/.claude/settings.json` để RTK **tự động wrap mọi lệnh Bash** của Claude Code trên toàn máy — không cần Claude phải nhớ dùng `rtk` prefix. Làm **1 lần duy nhất**, có hiệu lực cho tất cả project.
+
+> Nếu Claude Code đang mở: **restart lại** để hook có hiệu lực.
+
 Kiểm tra:
 ```bash
-rtk --version   # in ra phiên bản
+rtk --version                                        # in ra phiên bản
+grep "rtk hook claude" ~/.claude/settings.json       # phải thấy 1 dòng kết quả
 ```
 
 ---
@@ -133,9 +143,12 @@ cd ~/Documents/GSU26SE55/ai-module && claude
 
 Kiểm tra sau khi mở:
 ```bash
-gh auth status                                      # ✓ Logged in
-gh issue list --repo GSU26SE55/backend --limit 5    # thấy issues → OK
-rtk --version                                       # ✓ RTK installed
+gh auth status                                       # ✓ Logged in
+rtk --version                                        # ✓ RTK installed
+
+# Kiểm tra issues theo repo của mình:
+gh issue list --repo GSU26SE55/backend --limit 5     # BE Dev (Duy / Thắng / Thái)
+gh issue list --repo GSU26SE55/frontend --limit 5    # FE Dev (Minh)
 ```
 
 Gõ `/kltn-guide` để xem hướng dẫn sử dụng.
@@ -231,7 +244,7 @@ done
 
 ### Bước 8L — Cài RTK
 
-Tương tự Member — xem **Bước 5** ở trên (macOS / Windows / WSL). Đã cấu hình sẵn, không cần làm thêm gì.
+Tương tự Member — xem **Bước 5** ở trên (macOS / Windows / WSL), bao gồm cả bước `rtk init -g --auto-patch` và restart Claude Code.
 
 ---
 

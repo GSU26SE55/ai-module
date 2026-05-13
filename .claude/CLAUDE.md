@@ -206,6 +206,7 @@ Leader sync về sub-repo qua `bash push-config.sh` (push workflow-ai lên org, 
 - **BE scaffold** — tạo boilerplate nhanh: `/scaffold-crud Service Entity` (full CRUD 1 lệnh)
 - **Leader skills** — tracking và planning, không can thiệp vào flow coding của dev
 - **Hooks** — tự động chạy sau mỗi edit .cs: build check, namespace validate, anti-pattern warning
+- **RTK** — global hook trong `~/.claude/settings.json` tự động wrap mọi lệnh Bash qua `rtk` trước khi chạy; giảm 60–90% token. Mọi thành viên phải chạy `rtk init -g --auto-patch` 1 lần sau khi cài RTK (xem `docs/setup.md`)
 - **Log files** — `/kltn-reviewcode` ghi `logs/GH-[number]/review.md`, `/kltn-test` ghi `logs/GH-[number]/test.md`; `/kltn-ship` commit cả folder `logs/GH-[number]/` lên branch trước khi tạo PR; `/kltn-complete` tạo `logs/GH-[number]/handoff.md` rồi push → merge
 - Sprint plan và leader report (`/kltn-team`, `/kltn-member`) xuất trong conversation — không lưu file
 

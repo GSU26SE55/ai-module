@@ -150,9 +150,11 @@ dùng context7 tìm cách dùng useMutation trong TanStack Query v5
 
 ## RTK — Token Saver
 
-RTK đã được cấu hình sẵn trong project (`CLAUDE.md` ở root). Claude Code tự dùng `rtk` prefix khi chạy commands — không cần làm gì thêm.
+RTK chạy tự động nhờ global hook trong `~/.claude/settings.json` — khi Claude Code gọi bất kỳ lệnh Bash nào, hook tự wrap qua `rtk` trước khi thực thi, không cần làm gì thêm.
 
-**Các lệnh hàng ngày bạn nên dùng trực tiếp trong terminal:**
+> Nếu bạn mới setup máy và chưa có hook này: xem Bước 5 trong `/kltn-setup`.
+
+**Khi bạn tự gõ lệnh trong terminal** (ngoài Claude Code), thêm `rtk` prefix để tiết kiệm token tương tự:
 
 | Lệnh | Thay vì | Tiết kiệm |
 |------|---------|-----------|
