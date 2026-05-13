@@ -1,89 +1,168 @@
 # Skill: /kltn-sprint
 
 ## Mô tả
-Lên kế hoạch sprint: fetch toàn bộ Jira tickets, phân công cho từng thành viên theo role, tạo file sprint plan làm context checkpoint cho cả team.
+Lên kế hoạch sprint: fetch GitHub Issues từ 4 sub-repos, phân công cho từng thành viên theo role, tạo issues mới nếu cần, xuất kế hoạch sprint trong conversation.
 
 ## Kích hoạt
 Khi leader gõ `/kltn-sprint` hoặc "lên kế hoạch sprint", "phân công sprint", "plan sprint [N]".
 
 ---
 
+## Mapping role → repo (cố định)
+
+| Role | Repo |
+|------|------|
+| BE | `GSU26SE55/backend` |
+| FE | `GSU26SE55/frontend` |
+| Mobile | `GSU26SE55/mobile` |
+| AI | `GSU26SE55/ai-module` |
+
+---
+
 ## Quy trình thực hiện
 
-### Bước 1 — Fetch Jira tickets chưa assign hoặc To Do
+### Bước 1 — Xác định sprint hiện tại
 
-Dùng Jira MCP (credentials đã cấu hình trong `~/.claude/settings.json`):
+Nếu không có argument → hỏi Leader sprint nào đang cần plan (ví dụ: "Sprint 3").
+Ghi nhớ `$SPRINT_NAME` = "Sprint N".
 
-```
-jira_search: project = KAN AND status = "To Do" ORDER BY priority DESC
-```
+---
 
-Lấy các fields: summary, status, assignee, duedate, issuetype, priority, labels.
+### Bước 2 — Fetch GitHub Issues từ tất cả repos
 
-### Bước 2 — Phân loại tickets theo domain
-
-Phân nhóm tickets:
-- **BE tasks**: API, database, auth, business logic → assign cho BE Devs (Thắng, Thái)
-- **FE tasks**: Web UI, component, routing → assign cho FE Devs (Trí, Minh)
-- **AI tasks**: Model, training pipeline, prediction endpoint → assign cho **Nguyễn Phúc Duy** (BE Dev / AI Dev)
-- **Cross-cutting**: Docs, deploy, testing → phân đều
-
-### Bước 3 — Đề xuất phân công
-
-Dựa trên:
-- Workload hiện tại của từng người (số tickets In Progress)
-- Skill phù hợp với ticket
-- Deadline của ticket
-
-Xuất đề xuất dạng bảng:
-
-```
-## ĐỀ XUẤT PHÂN CÔNG — Sprint [N]
-
-| Ticket | Tóm tắt | Đề xuất assign | Lý do | Deadline |
-|--------|---------|----------------|-------|---------|
-| GH-XX | ...     | Nguyễn Phúc Duy | AI task — phụ trách AI module | DD/MM |
+```bash
+for REPO in backend frontend mobile ai-module; do
+  echo "=== GSU26SE55/$REPO ==="
+  gh issue list \
+    --repo "GSU26SE55/$REPO" \
+    --milestone "$SPRINT_NAME" \
+    --state open \
+    --json number,title,labels,assignees,createdAt \
+    --limit 50
+done
 ```
 
-### Bước 4 — Tạo file sprint plan
+---
 
-Xuất kế hoạch sprint trong conversation:
+### Bước 3 — Phân tích và đề xuất
 
-```markdown
-# Sprint N Plan — [DD/MM/YYYY]
+Từ danh sách issues:
+1. Phân loại theo role dựa trên label `role: *`
+2. Xem assignees → ai đang nhận task nào
+3. Ước lượng workload cân bằng dựa trên số lượng + priority
+4. Phát hiện task thiếu assignee hoặc thiếu label
 
-## Mục tiêu sprint
-[Từ Jira sprint goal hoặc suy ra từ tickets]
+Phân nhóm theo thành viên:
+- **BE tasks** (backend repo) → Nguyễn Phúc Duy, Bùi Phước Thắng, Mai Hồng Thái
+- **FE tasks** (frontend repo) → Trần Minh Trí, Nguyễn Nhật Minh
+- **AI tasks** (ai-module repo) → Nguyễn Phúc Duy (BE Dev / AI Dev)
+- **Mobile tasks** (mobile repo) → phân đều nếu cần
 
-## Phân công
+---
 
-### Nguyễn Phúc Duy (BE Dev / AI Dev)
-- [ ] GH-XX: [tóm tắt] — due DD/MM
+### Bước 4 — Tạo issues mới (nếu cần)
 
-### Bùi Phước Thắng (BE)
+```bash
+# BE task → backend repo
+gh issue create \
+  --repo "GSU26SE55/backend" \
+  --title "[BE] Tên task ngắn gọn" \
+  --body "$(cat <<'EOF'
+## Mục tiêu
+[Mô tả task]
+
+## Acceptance Criteria
 - [ ] ...
-
-### Mai Hồng Thái (BE)
-- [ ] ...
-
-### Trần Minh Trí (FE)
-- [ ] ...
-
-### Nguyễn Nhật Minh (FE)
-- [ ] ...
-
-## Rủi ro
-- [Tickets nào có deadline gấp]
-- [Thành viên nào có nhiều task nhất]
 
 ## Ghi chú
-- File này là checkpoint — /kltn-implement và /kltn-member đọc file này để tránh re-fetch Jira
+[Technical notes nếu có]
+EOF
+)" \
+  --label "status: init,role: BE,type: feat,priority: P3: Standard (72h)" \
+  --milestone "$SPRINT_NAME" \
+  --assignee "github-username"
+
+# FE task → frontend repo
+gh issue create \
+  --repo "GSU26SE55/frontend" \
+  --title "[FE] Tên task ngắn gọn" \
+  --body "..." \
+  --label "status: init,role: FE,type: feat,priority: P3: Standard (72h)" \
+  --milestone "$SPRINT_NAME" \
+  --assignee "github-username"
+
+# AI task → ai-module repo
+gh issue create \
+  --repo "GSU26SE55/ai-module" \
+  --title "[AI] Tên task ngắn gọn" \
+  --body "..." \
+  --label "status: init,role: AI,type: feat,priority: P3: Standard (72h)" \
+  --milestone "$SPRINT_NAME" \
+  --assignee "github-username"
+
+# Mobile task → mobile repo
+gh issue create \
+  --repo "GSU26SE55/mobile" \
+  --title "[Mobile] Tên task ngắn gọn" \
+  --body "..." \
+  --label "status: init,role: Mobile,type: feat,priority: P3: Standard (72h)" \
+  --milestone "$SPRINT_NAME" \
+  --assignee "github-username"
+```
+
+> **Label bắt buộc khi tạo issue:**
+> - `status: init` — task được giao, chưa bắt đầu
+> - `role: BE` / `role: FE` / `role: Mobile` / `role: AI`
+> - `type: feat` / `type: fix` / `type: refactor` / `type: test` / `type: docs`
+> - `priority: P1: Critical (4h)` / `priority: P2: High (24h)` / `priority: P3: Standard (72h)`
+
+> Issues được tạo tự động xuất hiện trên Sprint Board nhờ `add-to-project.yml` workflow trong mỗi sub-repo.
+
+---
+
+### Bước 5 — Xuất kế hoạch sprint trong conversation
+
+```
+## KẾ HOẠCH SPRINT [N] — YYYY-MM-DD
+
+### Tổng quan
+- Tổng tasks: X | BE: X | FE: X | Mobile: X | AI: X
+- Milestone due: [date]
+
+### Phân công
+
+| Issue | Repo | Tên | Role | Priority | Assignee |
+|-------|------|-----|------|----------|----------|
+| #12 (backend) | backend | ... | BE | P2 | Duy |
+| #8 (frontend) | frontend | ... | FE | P3 | Minh |
+
+### Cân bằng workload
+| Thành viên | Số task | P1 | P2 | P3 |
+|------------|---------|----|----|-----|
+| Duy        | 3       | 0  | 1  | 2  |
+| Thắng      | 2       | 0  | 2  | 0  |
+
+### Cần chú ý
+- Task #XXX chưa có assignee
+- [Rủi ro hoặc dependency giữa tasks]
+```
+
+---
+
+### Bước 6 — Hướng dẫn dev bắt đầu
+
+```
+Các thành viên:
+1. Vào GitHub Project GSU26SE55 → tab "My items" → xem issue được assign
+2. cd vào repo tương ứng (backend / frontend / mobile / ai-module)
+3. Chạy: /kltn-implement [issue-number]
+   Ví dụ: /kltn-implement 12
 ```
 
 ---
 
 ## Nguyên tắc
 
-- **Không tự assign mà không hỏi** — Đây là đề xuất, leader xác nhận trước khi tạo file.
+- **Không tự assign mà không hỏi** — Đây là đề xuất, leader xác nhận trước khi tạo issue.
 - **Cân bằng workload** — Không để 1 người carry cả sprint.
-- **File sprint là context anchor** — Sau khi tạo, các session `/kltn-implement` đọc file này thay vì fetch Jira lại.
+- **Kế hoạch xuất trong conversation** — Không lưu file; dev dùng `gh issue list` để xem lại.
