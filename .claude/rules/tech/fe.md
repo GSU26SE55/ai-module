@@ -230,3 +230,7 @@ export default [
 - Không tạo Axios instance mới — dùng `shared/lib/axios.ts`
 - Không dùng `localStorage` để lưu token — chỉ dùng cookie qua `js-cookie`
 - Không thêm package mới nếu stack hiện tại đủ giải quyết — hỏi Leader trước
+
+**Simplicity First:** Chỉ tạo component, hook, hoặc service mà issue yêu cầu — không extract abstraction sớm, không thêm props "phòng hờ".
+
+**Surgical Changes:** Chỉ sửa files trong plan.md. Không refactor component lân cận, không đổi tên biến, không format lại file ngoài scope task.

@@ -70,6 +70,22 @@ Một ticket được coi là **Done** khi đủ cả 3 điều kiện:
 
 ---
 
+## Nguyên tắc viết code
+
+**Simplicity First — Chỉ viết code được yêu cầu:**
+- Implement đúng những gì issue mô tả — không thêm feature "phòng hờ"
+- Không thêm abstraction, interface, hoặc layer nếu issue không yêu cầu
+- Không thêm error handling cho cases chưa xảy ra trong scope
+- Tự hỏi: "Senior dev có nghĩ cái này overcomplicated không?" — nếu có, đơn giản lại
+
+**Surgical Changes — Chỉ touch những gì cần thiết:**
+- Chỉ sửa files được liệt kê trong `plan.md`
+- Không refactor code lân cận trừ khi changes của bạn làm nó obsolete
+- Không rename biến, format lại file, hoặc xóa dead code ngoài scope task
+- Không thay đổi code style của người khác khi đang làm task khác
+
+---
+
 ## Phase 3 — Review (leader, cuối sprint hoặc khi cần)
 
 - Cả team: `/kltn-team`

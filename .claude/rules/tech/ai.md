@@ -265,3 +265,7 @@ git add .gitattributes
 - Scaler (MinMaxScaler) phải được lưu tại `models/weights/scaler.pkl` sau khi train — load lại khi inference, không fit lại trên production data
 - `scaler.pkl` và `isolation_forest.pkl` phải được commit vào Git — inference cần cùng artifacts với training
 - Inference latency **PHẢI** benchmark và đạt < 100ms trước khi merge
+
+**Simplicity First:** Chỉ implement model/endpoint mà issue yêu cầu — không thêm hyperparameter tuning, architecture variant, hoặc preprocessing step chưa được approve.
+
+**Surgical Changes:** Chỉ sửa files trong plan.md. Không refactor training script, không đổi hyperparameter, không thay đổi data split ngoài scope task.

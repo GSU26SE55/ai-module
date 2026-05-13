@@ -457,3 +457,11 @@ migrationBuilder.AlterColumn<int>("status", "batteries", nullable: false, defaul
 - Private fields: `_camelCase`
 - Parameters: camelCase
 - Routes: `api/batteries`, `api/battery-readings` (lowercase, plural, kebab-case)
+
+---
+
+## Nguyên tắc viết code
+
+**Simplicity First:** Chỉ tạo Command/Query/Entity mà issue yêu cầu — không thêm overload, optional param, hoặc business rule "phòng hờ".
+
+**Surgical Changes:** Chỉ sửa files trong plan.md. Không refactor handler khác, không thêm index DB, không đổi naming convention ngoài scope task.

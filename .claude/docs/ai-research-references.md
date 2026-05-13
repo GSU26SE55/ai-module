@@ -150,3 +150,71 @@ Theo `rules/tech/ai.md` và benchmark từ research:
 - IEEE Xplore: tìm "predictive maintenance ITSM integration" — bị paywall khi fetch
 - Springer LNCS: "AI-driven incident management IoT" — bị paywall
 - GitHub dataset: https://github.com/NahuelCostaCortez/PVDiagnosis (Nature Comms 2023)
+
+---
+
+## GitHub Repos tham khảo — AI Module Implementation
+
+> Nghiên cứu thực hiện: 2026-05-13 | Researcher + Reviewer agents
+
+### Tier 1 — Dùng ngay
+
+#### A. huzaifi18/RUL_prediction ⭐ PRIMARY MODEL
+- **URL:** https://github.com/huzaifi18/RUL_prediction
+- **Stars:** 118 | **License:** MIT
+- **Dataset:** NASA (thư mục `data/NASA` verified)
+- **Model:** MC-SCNN-LSTM (Multi-Channel Separate CNN + LSTM)
+- **Metric:** RMSE=0.0276, MAE=0.0220, MAPE=1.42% (cải thiện 61% vs baseline)
+- **Paper:** DOI:10.1145/3575882.3575903
+- **Dùng để:** Architecture CNN-LSTM đa kênh, training pipeline, comparative baseline
+
+#### B. mayankbaluni/Battery_Remaining_Useful_Life ⭐ PRIMARY MODEL
+- **URL:** https://github.com/mayankbaluni/Battery_Remaining_Useful_Life
+- **Stars:** 19 | **License:** Không rõ ⚠️ — chỉ dùng như reference, không copy code
+- **Dataset:** NASA (voltage/current/temperature)
+- **Model:** Multi-branch 1D CNN + LSTM → concatenate → FC (PyTorch)
+- **Metric:** MAE=0.022, RMSE=0.027 (cải thiện 56% vs LSTM baseline)
+- **Dùng để:** Architecture reference, training loop pattern
+- **⚠️ Lưu ý:** RMSE=0.027 trên scale 0-1 = 2.7% — document normalization convention ngay từ đầu
+
+#### C. anirudhkhatry/SOH-prediction-using-NASA-Dataset ⭐ DATA PIPELINE
+- **URL:** https://github.com/anirudhkhatry/SOH-prediction-using-NASA-Dataset
+- **Stars:** 31
+- **Dataset:** NASA **B0005, B0006, B0007, B0018** — chính xác 4 battery dự án dùng
+- **Model:** SVM (không dùng)
+- **Dùng để:** `mat2json.py` + `util.py` — data loading từ .mat files, tiết kiệm 2-3 ngày data engineering
+
+### Tier 2 — Hỗ trợ
+
+| Repo | URL | Dùng để |
+|------|-----|---------|
+| alishbaimran/Attention-based-CNN-BiLSTM | https://github.com/alishbaimran/Attention-based-CNN-BiLSTM-Battery-SOH-Prediction | Attention mechanism (Sprint 5+), data exploration notebook |
+| Sa1f27/predictive-maintenance-mlops | https://github.com/Sa1f27/predictive-maintenance-mlops | FastAPI project structure, Dockerfile, MLflow — strip ML model, giữ serving pattern |
+| rapidrabbit76/FastAPI-DL-Micro-Batching | https://github.com/rapidrabbit76/FastAPI-Deep-Learning-Model-Micro-Batching-Serving | PyTorch + FastAPI async inference pattern |
+
+### Khoảng trống phải tự implement (không có repo mẫu)
+
+1. **Isolation Forest cho battery** — tự build features: capacity fade per cycle, voltage plateau duration, charging time deviation
+2. **3-class output (Normal/Degrading/Failed)** — define threshold: SOH > 80% → Normal, 60-80% → Degrading, < 60% → Failed
+3. **Confidence score calibration** — IsolationForest anomaly score → % dùng Platt scaling
+4. **FastAPI + PyTorch + NASA end-to-end** — ghép Tier 2 (serving) + Tier 1 A/B (model) + Tier 1 C (data)
+5. **Inference latency benchmark** — tự đo với `time.perf_counter()`, batch_size=1; xem xét ONNX nếu > 100ms
+
+### Lộ trình tích hợp
+
+```
+Sprint 1 (trước 25/5):
+  → Clone Repo C: copy mat2json.py + util.py → data pipeline B0005-B0018
+  → Implement MC-SCNN-LSTM từ Repo A (PyTorch, input: batch×30×3, output: SOH%)
+  → Fork Repo Sa1f27: strip domain, giữ FastAPI structure + Dockerfile
+
+Sprint 2-3 (26/5 → 22/6):
+  → Implement Isolation Forest (tự build — không có repo mẫu)
+  → Ghép pipeline: data → model → FastAPI → benchmark latency < 100ms
+  → Calibrate anomaly score → confidence %
+
+Sprint 4+ (nếu MAE chưa đạt):
+  → Thử Attention từ alishbaimran (benchmark latency BiLSTM trước khi commit)
+  → ONNX export nếu latency > 100ms (giảm 30-50%)
+  → MLflow tracking (pattern từ Sa1f27)
+```
