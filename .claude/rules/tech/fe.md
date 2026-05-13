@@ -23,11 +23,43 @@
 
 ```bash
 npm install zod react-hook-form @hookform/resolvers sonner js-cookie jwt-decode next-themes recharts date-fns
-npm install -D @types/js-cookie
+npm install -D @types/js-cookie prettier
 
 # shadcn/ui setup
 npx shadcn@latest init
 npx shadcn@latest add button input label form card dialog dropdown-menu table badge avatar separator sheet skeleton
+```
+
+## Prettier — Code Formatting
+
+Cấu hình `.prettierrc` chuẩn dự án:
+
+```json
+{
+  "semi": true,
+  "singleQuote": true,
+  "tabWidth": 2,
+  "trailingComma": "es5",
+  "printWidth": 100,
+  "bracketSpacing": true,
+  "arrowParens": "avoid"
+}
+```
+
+`.prettierignore`:
+```
+node_modules/
+dist/
+.next/
+src/shared/components/ui/
+```
+
+> `src/shared/components/ui/` bị ignore vì là code generate từ shadcn — không format tay.
+
+Chạy format trước khi commit:
+```bash
+npx prettier --write "src/**/*.{ts,tsx}"
+npx prettier --check "src/**/*.{ts,tsx}"  # CI check
 ```
 
 ---
@@ -186,6 +218,47 @@ useEffect(() => {
 ```
 
 > **Lưu ý:** `staleTime: 0` không tự refetch theo interval — chỉ đánh dấu data là stale ngay khi fetch. Phải dùng `refetchInterval` để có auto-refetch thực sự. `setInterval` chỉ dùng cho UI countdown (giây đếm ngược) dựa trên deadline đã lấy từ server.
+
+### Retry Behavior — Query thất bại
+
+Default `retry: 1` (1 lần retry khi network error). Sau khi hết retry, query chuyển sang `status: 'error'` — **không loop vô tận**.
+
+Override cho từng trường hợp quan trọng:
+
+```tsx
+// SLA countdown — critical query, retry nhiều hơn
+const { data: ticket } = useQuery({
+  queryKey: QUERY_KEY.tickets.detail(id),
+  queryFn: () => ticketService.getById(id),
+  staleTime: 0,
+  refetchInterval: 30_000,
+  retry: 3,                // retry 3 lần trước khi báo lỗi
+  retryDelay: attemptIndex => Math.min(1000 * 2 ** attemptIndex, 10_000), // exponential backoff
+});
+
+// Ticket queue — không retry quá nhiều (data thay đổi liên tục)
+const { data: tickets } = useQuery({
+  queryKey: QUERY_KEY.tickets.list(filters),
+  queryFn: () => ticketService.getList(filters),
+  staleTime: 30_000,
+  retry: 1,  // default
+});
+```
+
+**Xử lý error state khi retry hết:**
+```tsx
+const { data, isError, error, refetch } = useQuery({ ... });
+
+if (isError) {
+  return (
+    <div>
+      <p>Không tải được dữ liệu. <button onClick={() => refetch()}>Thử lại</button></p>
+    </div>
+  );
+}
+```
+
+> `refetchInterval` **tự dừng** khi query ở `status: 'error'` — không refetch khi đã fail. Muốn tiếp tục refetch dù error: thêm `refetchIntervalInBackground: true` và `retryOnMount: true`.
 
 ### Query Key Convention — `shared/utils/queryKeys.ts`
 

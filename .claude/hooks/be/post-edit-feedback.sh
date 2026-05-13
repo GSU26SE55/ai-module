@@ -55,6 +55,18 @@ if echo "$FILE_PATH" | grep -qE "(Query|Get).*Handler"; then
   fi
 fi
 
+# CommandHandler dùng AnyAsync() phải có !x.IsDeleted trong predicate
+# Tránh trường hợp check trùng lặp bỏ qua soft-deleted records (vd: duplicate name check)
+if echo "$FILE_PATH" | grep -qE "Command.*Handler|Handler.*Command"; then
+  if [[ -f "$FILE_PATH" ]]; then
+    if grep -q "AnyAsync(" "$FILE_PATH"; then
+      if ! grep -qE 'AnyAsync\([^)]*IsDeleted|!.*IsDeleted' "$FILE_PATH"; then
+        WARNINGS="${WARNINGS}⚠️ CommandHandler '$FILE_PATH' dùng AnyAsync() nhưng predicate có thể thiếu !x.IsDeleted. Kiểm tra lại: AnyAsync(x => ... && !x.IsDeleted).\n"
+      fi
+    fi
+  fi
+fi
+
 # Controller không nên có business logic — chỉ gọi _mediator.Send()
 if echo "$FILE_PATH" | grep -q "Controller"; then
   if [[ -f "$FILE_PATH" ]]; then

@@ -217,19 +217,35 @@ torch.save({
 
 ```python
 # main.py — load 1 lần khi khởi động, không load lại per-request
+import os
 import joblib
 import torch
 
 SCALER_VERSION = "1.0"
 MODEL_VERSION  = "1.0"
 
-scaler_artifact = joblib.load("models/weights/scaler.pkl")
+SCALER_PATH      = "models/weights/scaler.pkl"
+LSTM_PATH        = f"models/weights/soh_lstm_v{MODEL_VERSION}.pth"
+ISO_FOREST_PATH  = f"models/weights/isolation_forest_v{MODEL_VERSION}.pkl"
+
+# ⚠️ Kiểm tra file tồn tại TRƯỚC khi load — cho phép báo lỗi rõ ràng thay vì traceback cryptic
+for path, label in [
+    (SCALER_PATH,     "MinMaxScaler"),
+    (LSTM_PATH,       "LSTM model"),
+    (ISO_FOREST_PATH, "Isolation Forest"),
+]:
+    assert os.path.exists(path), (
+        f"[STARTUP] {label} artifact not found at '{path}'. "
+        f"Run training script and commit all artifacts in models/weights/ before starting."
+    )
+
+scaler_artifact = joblib.load(SCALER_PATH)
 assert scaler_artifact["version"] == SCALER_VERSION, (
     f"Scaler version mismatch: expected {SCALER_VERSION}, got {scaler_artifact['version']}"
 )
 scaler = scaler_artifact["scaler"]
 
-checkpoint = torch.load("models/weights/soh_lstm_v1.0.pth", map_location="cpu")
+checkpoint = torch.load(LSTM_PATH, map_location="cpu")
 assert checkpoint["version"] == MODEL_VERSION, (
     f"Model version mismatch: expected {MODEL_VERSION}, got {checkpoint['version']}"
 )
@@ -237,7 +253,7 @@ soh_model = SOHPredictor()
 soh_model.load_state_dict(checkpoint["model_state_dict"])
 soh_model.eval()
 
-iso_model = joblib.load("models/weights/isolation_forest_v1.0.pkl")
+iso_model = joblib.load(ISO_FOREST_PATH)
 ```
 
 > **Tại sao cần metadata?** Nếu `scaler.pkl` được refit (v1.1) nhưng `soh_lstm_v1.0.pth` không được update, inference sẽ ra kết quả sai mà không có error. Version assertion bắt lỗi này ngay khi startup thay vì âm thầm predict sai.

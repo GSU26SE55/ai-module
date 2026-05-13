@@ -122,10 +122,9 @@ Ngoài ra: `ESCALATED` (từ P1/P2 breach hoặc Staff request) · `CLOSED_REJEC
         │   ├── test/SKILL.md        ← /kltn-test [issue-number]
         │   ├── ship/SKILL.md        ← /kltn-ship [issue-number]
         │   └── review-pr/SKILL.md   ← /kltn-reviewpr [issue-number]
-        ├── ai/            ← AI Dev dùng
-        │   ├── implement/SKILL.md, code-review/SKILL.md, test/SKILL.md, ship/SKILL.md, review-pr/SKILL.md
-        │   └── scaffold-fastapi-endpoint/SKILL.md ← /scaffold-fastapi-endpoint <name>
-        └── task/SKILL.md                      ← /kltn-task (tất cả role)
+        └── ai/            ← AI Dev dùng
+            ├── implement/SKILL.md, code-review/SKILL.md, test/SKILL.md, ship/SKILL.md, review-pr/SKILL.md
+            └── scaffold-fastapi-endpoint/SKILL.md ← /scaffold-fastapi-endpoint <name>
 ```
 
 ---

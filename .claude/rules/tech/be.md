@@ -400,6 +400,88 @@ dotnet ef database update -p ../ServiceName.Infrastructure -s .
 - Auto-migrate on startup (`db.Database.Migrate()`)
 - DbContext tên `ApplicationDbContext` (mỗi service)
 
+### TimescaleDB — Sensor Readings API Contract
+
+Sensor readings (voltage, current, temperature) lưu trong TimescaleDB hypertable. Quy ước API:
+
+**Entity:**
+```csharp
+public class SensorReading : AuditableEntity
+{
+    public Guid BatteryId { get; set; }
+    public Battery? Battery { get; set; }
+    public DateTime Timestamp { get; set; }    // UTC — partition key cho TimescaleDB
+    public double Voltage { get; set; }        // V
+    public double Current { get; set; }        // A
+    public double Temperature { get; set; }    // °C
+}
+```
+
+**Pagination — cursor-based (không dùng offset cho time-series):**
+```csharp
+// Query: GET /api/batteries/{id}/readings?from=2026-01-01T00:00:00Z&to=2026-01-02T00:00:00Z&limit=100&cursor=lastTimestamp
+public class SensorReadingGetListQuery : IRequest<SensorReadingGetListResponse>
+{
+    public Guid BatteryId { get; set; }
+    public DateTime? From { get; set; }    // UTC filter từ
+    public DateTime? To { get; set; }      // UTC filter đến
+    public int Limit { get; set; } = 100;  // max 1000
+    public DateTime? Cursor { get; set; }  // timestamp của record cuối trang trước
+}
+```
+
+**Response shape:**
+```json
+{
+  "isSuccess": true,
+  "data": {
+    "items": [
+      {
+        "timestamp": "2026-01-01T00:00:00Z",
+        "voltage": 3.72,
+        "current": 1.50,
+        "temperature": 25.3
+      }
+    ],
+    "nextCursor": "2026-01-01T00:01:40Z",
+    "hasMore": true,
+    "totalCount": null
+  }
+}
+```
+
+> **Không dùng offset pagination** cho sensor readings — TimescaleDB có thể có hàng triệu rows, offset sẽ full scan. Dùng cursor (timestamp) để scroll hiệu quả.
+
+> `totalCount` luôn `null` cho time-series — đếm full count rất tốn kém. FE chỉ dùng `hasMore`.
+
+**Aggregation endpoint (dashboard/chart):**
+```
+GET /api/batteries/{id}/readings/aggregate?from=...&to=...&interval=1h
+```
+
+- `interval`: `1m`, `5m`, `15m`, `1h`, `1d` — TimescaleDB `time_bucket()`
+- Response trả AVG(voltage), AVG(current), AVG(temperature) theo bucket
+- FE dùng endpoint này cho chart, không dùng raw readings để vẽ
+
+**QueryHandler pattern cho sensor readings:**
+```csharp
+var query = _unitOfWork.SensorReadings.GetAllAsync()
+    .Where(x => !x.IsDeleted && x.BatteryId == request.BatteryId);
+
+if (request.From.HasValue)   query = query.Where(x => x.Timestamp >= request.From.Value);
+if (request.To.HasValue)     query = query.Where(x => x.Timestamp <= request.To.Value);
+if (request.Cursor.HasValue) query = query.Where(x => x.Timestamp > request.Cursor.Value);
+
+var items = await query
+    .OrderBy(x => x.Timestamp)
+    .Take(request.Limit + 1)  // lấy thêm 1 để biết còn trang sau không
+    .ToListAsync();
+
+bool hasMore = items.Count > request.Limit;
+if (hasMore) items.RemoveAt(items.Count - 1);
+DateTime? nextCursor = hasMore ? items.Last().Timestamp : null;
+```
+
 ---
 
 ## 14. Migration Checklist ⚠️

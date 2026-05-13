@@ -36,7 +36,9 @@ Nếu có role phụ → hỏi issue này thuộc role nào để chọn đúng 
 **Bước 1 — Lấy milestone đang mở**
 
 ```bash
-gh api repos/GSU26SE55/$REPO/milestones --jq '.[] | select(.state=="open") | "\(.title) (due: \(.due_on // "no date"))"'
+# Sort theo due_on tăng dần, lấy milestone sớm nhất
+gh api repos/GSU26SE55/$REPO/milestones \
+  --jq '[.[] | select(.state=="open")] | sort_by(.due_on) | first | "\(.title) (due: \(.due_on // "no date"))"'
 ```
 
 Ghi nhớ `$SPRINT_NAME` (milestone có due date sớm nhất).
@@ -53,7 +55,7 @@ Cần biết để tạo issue:
 1. Tiêu đề: (ví dụ: "Add Battery CRUD API")
 2. Mô tả ngắn: task này làm gì? (1–2 câu, có thể để trống nếu chưa rõ)
 3. Type: feat / fix / refactor / test / docs / chore  [default: feat]
-4. Priority: P1 Critical (4h) / P2 High (24h) / P3 Standard (72h)  [default: P3]
+4. Priority: P1: Critical (4h) / P2: High (24h) / P3: Standard (72h)  [default: P3: Standard (72h)]
 5. Assign cho ai? GitHub username  [default: @$MY_LOGIN]
 6. Sprint:  [default: $SPRINT_NAME]
 ```
@@ -65,13 +67,16 @@ Cần biết để tạo issue:
 **Bước 3 — Kiểm tra trùng lặp**
 
 ```bash
+# Dùng vài keyword chính từ title thay vì full title để tránh lỗi ký tự đặc biệt
 gh issue list \
   --repo "GSU26SE55/$REPO" \
   --state open \
-  --search "$TITLE" \
+  --search "$KEYWORD1 $KEYWORD2" \
   --json number,title \
   --limit 5
 ```
+
+> Dùng 2–3 từ khóa chính từ title, không dùng toàn bộ chuỗi để tránh lỗi ký tự đặc biệt hoặc space.
 
 Nếu có issue tương tự → cho user xem và xác nhận có muốn tạo mới không.
 
@@ -92,6 +97,9 @@ Hiện summary và chờ user gõ "ok":
 
   Mô tả: $DESCRIPTION (hoặc "(chưa có — sẽ cập nhật sau khi plan)")
 
+⚠️  Các label trên phải được tạo sẵn trên repo trước khi chạy lệnh này.
+    Nếu chưa có → yêu cầu user cho phép tạo.
+
 Gõ "ok" để tạo.
 ```
 
@@ -102,15 +110,16 @@ Gõ "ok" để tạo.
 **Bước 5 — Tạo issue**
 
 ```bash
+# Lưu ý: không dùng <<'EOF' (single-quote) vì sẽ không expand biến
 gh issue create \
   --repo "GSU26SE55/$REPO" \
   --title "[$ROLE] $TITLE" \
-  --body "$(cat <<'EOF'
+  --body "$(cat <<EOF
 ## Mô tả
 $DESCRIPTION
 
 ---
-> Context chi tiết (plan, approach, AC) sẽ được cập nhật sau khi chạy `/kltn-plan $ISSUE_NUMBER`.
+> Context chi tiết (plan, approach, AC) sẽ được cập nhật sau khi chạy \`/kltn-plan <issue-number>\`.
 EOF
 )" \
   --label "status: init,role: $ROLE,type: $TYPE,priority: $PRIORITY" \

@@ -17,13 +17,17 @@ Issue number: `$ARGUMENTS`
 **Bước 0 — Kiểm tra plan hiện tại**
 
 Đọc `logs/GH-$ARGUMENTS/plan.md`:
-- **Nếu tồn tại** → Hiện nội dung plan đã có. Hỏi:
-  ```
-  Plan đã tồn tại (Status: [status]).
-  [1] Dùng plan này → chạy /kltn-implement $ARGUMENTS để bắt đầu code
-  [2] Cập nhật plan — thay đổi approach hoặc scope
-  ```
-  Nếu chọn 1 → Dừng. Nếu chọn 2 → tiếp tục Bước 1.
+- **Nếu tồn tại** → Hiện nội dung plan đã có. Kiểm tra `Status`:
+
+  | Status | Hành động |
+  |--------|-----------|
+  | `PLANNING` | Hỏi: **[1] Dùng plan này** → chạy `/kltn-implement $ARGUMENTS` / **[2] Cập nhật plan** → tiếp tục Bước 1 |
+  | `IN_PROGRESS` | Nhắc "Plan đang được implement. Chạy `/kltn-implement $ARGUMENTS` để tiếp tục." Dừng. |
+  | `REVIEWING` | Nhắc "Đang chờ review. Chạy `/kltn-reviewcode $ARGUMENTS`." Dừng. |
+  | `TESTING` | Nhắc "Đang ở giai đoạn test. Chạy `/kltn-test $ARGUMENTS`." Dừng. |
+  | `SHIPPED` | Nhắc "Đang chờ PR merge." Dừng. |
+  | `MERGED` | Nhắc "Task đã hoàn thành." Dừng. |
+
 - **Nếu chưa tồn tại** → Tiếp tục Bước 1.
 
 ---
@@ -137,6 +141,7 @@ Tạo `logs/GH-$ARGUMENTS/plan.md`:
 | [Mô tả outcome cụ thể] | [Lệnh / bước kiểm tra] |
 
 ## Steps
+[Dùng bảng template bên dưới theo role — mỗi dòng là 1 checkbox]
 - [ ] Bước 1: ...
 - [ ] Bước 2: ...
 
@@ -144,7 +149,7 @@ Tạo `logs/GH-$ARGUMENTS/plan.md`:
 [Tóm tắt những điểm đã hỏi và câu trả lời — để reviewer hiểu context]
 ```
 
-> **Step template theo role:**
+> **Step template theo role** — chọn cột theo role, mỗi dòng là 1 checkbox trong Steps:
 >
 > | BE | FE | AI |
 > |----|----|----|
@@ -168,7 +173,7 @@ Plan cho GH-$ARGUMENTS đã sẵn sàng.
 [2] Chỉnh sửa → nêu điểm cần thay đổi
 ```
 
-- User chọn **1 / approve / ok / tiến hành** → thực hiện Bước 7.
+- User chọn **1 / approve / ok / yes / y / tiến hành** → thực hiện Bước 7.
 - User chọn **2 / chỉnh sửa** → cập nhật plan theo góp ý → hiện lại. Lặp cho đến khi approve.
 
 ---
@@ -177,7 +182,9 @@ Plan cho GH-$ARGUMENTS đã sẵn sàng.
 
 ```bash
 # Update body của issue với plan chi tiết (thay thế placeholder)
-gh issue edit $ARGUMENTS --body "## 📋 Plan — GH-$ARGUMENTS
+# Lưu ý: dùng <<EOF (không có single-quote) để biến được expand
+gh issue edit $ARGUMENTS --body "$(cat <<EOF
+## 📋 Plan — GH-$ARGUMENTS
 
 **Dev:** [tên từ CLAUDE.local.md]
 **Ngày lập plan:** $(date +%Y-%m-%d)
@@ -205,7 +212,9 @@ gh issue edit $ARGUMENTS --body "## 📋 Plan — GH-$ARGUMENTS
 [copy từ plan.md]
 
 ---
-> Plan đầy đủ (bao gồm files, câu hỏi đã giải đáp): \`logs/GH-$ARGUMENTS/plan.md\`"
+> Plan đầy đủ (bao gồm files, câu hỏi đã giải đáp): \`logs/GH-$ARGUMENTS/plan.md\`
+EOF
+)"
 
 # Chuyển label status: init → status: implementing
 gh issue edit $ARGUMENTS \
@@ -231,7 +240,8 @@ Nếu scope, approach, hoặc files thay đổi so với plan đã approve (do p
 2. **Sync lại body của issue ngay sau khi xác nhận thay đổi:**
 
 ```bash
-gh issue edit $ARGUMENTS --body "$(cat <<'EOF'
+# Lưu ý: dùng <<EOF (không có single-quote) để biến được expand
+gh issue edit $ARGUMENTS --body "$(cat <<EOF
 [nội dung plan mới — copy từ plan.md đã cập nhật]
 EOF
 )"
