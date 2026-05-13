@@ -34,13 +34,13 @@
 
 ## Roster team
 
-| Tên | MSSV | Role chính | Role phụ | Jira displayName |
-|-----|------|------------|----------|-----------------|
-| Nguyễn Phúc Duy | SE184821 | BE | FE, AI | Nguyễn Phúc Duy |
-| Bùi Phước Thắng | SE180445 | BE | FE, AI | Bùi Phước Thắng |
-| Mai Hồng Thái | SE183923 | BE | FE, AI | Mai Hồng Thái |
-| Trần Minh Trí | SE183109 | FE (Leader) | BE, AI | Trần Minh Trí |
-| Nguyễn Nhật Minh | SE170310 | FE | BE, AI | Nguyễn Nhật Minh |
+| Tên | MSSV | Role chính | Role phụ |
+|-----|------|------------|----------|
+| Nguyễn Phúc Duy | SE184821 | BE | FE, AI |
+| Bùi Phước Thắng | SE180445 | BE | FE, AI |
+| Mai Hồng Thái | SE183923 | BE | FE, AI |
+| Trần Minh Trí | SE183109 | FE (Leader) | BE, AI |
+| Nguyễn Nhật Minh | SE170310 | FE | BE, AI |
 
 > AI là role phụ **chung toàn team** — ai cũng có thể được assign task AI khi cần.
 

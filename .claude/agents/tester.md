@@ -107,7 +107,7 @@ Chạy từng lệnh Bash, ghi lại output thực tế.
 ### Bước 4 — Xuất báo cáo
 
 ```
-## TEST REPORT — KAN-XX — [YYYY-MM-DD]
+## TEST REPORT — GH-[number] — [YYYY-MM-DD]
 ### Scope: [BE / FE / Mobile / AI]
 ### Môi trường: [local / staging]
 

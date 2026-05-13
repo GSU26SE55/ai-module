@@ -1,7 +1,7 @@
 # Skill: /kltn-team
 
 ## Mô tả
-Kiểm tra nhanh toàn bộ trạng thái team GSU26SE55: Jira tracking, sau đó xuất báo cáo QA theo chuẩn `.claude/agents/reviewer.md`.
+Kiểm tra nhanh toàn bộ trạng thái team GSU26SE55: GitHub Issues tracking, sau đó xuất báo cáo QA theo chuẩn `.claude/agents/reviewer.md`.
 
 ## Kích hoạt
 Khi người dùng gõ `/kltn-team` hoặc yêu cầu "review team", "kiểm tra tiến độ team", "check tracking".
@@ -10,20 +10,18 @@ Khi người dùng gõ `/kltn-team` hoặc yêu cầu "review team", "kiểm tra
 
 ## Quy trình thực hiện
 
-### Bước 1 — Fetch Jira Board qua MCP
+### Bước 1 — Fetch GitHub Issues
 
-Dùng Jira MCP (credentials đã cấu hình trong `~/.claude/settings.json`):
+Dùng `gh` CLI để lấy danh sách issues:
 
-```
-jira_search: project = KAN ORDER BY duedate ASC
-fields: summary, status, assignee, duedate, issuetype
-maxResults: 100
+```bash
+gh issue list --repo <org>/<repo> --state open --json number,title,assignees,labels
 ```
 
 Thu thập:
-- Tasks theo status (To Do / In Progress / Done / Blocked)
-- Assignee, deadline, issuetype
-- Tasks overdue (duedate < today) + tasks chưa assign
+- Tasks theo status label (status: init / status: implementing / status: reviewing / status: done)
+- Assignee, deadline (milestone), labels (role, priority, type)
+- Tasks overdue (milestone due date < today) + tasks chưa assign
 
 ### Bước 2 — Xuất báo cáo
 
@@ -59,7 +57,7 @@ Tổng: X | Done: X | In Progress: X | To Do: X | Blocked: X
 
 | | |
 |-|-|
-| **Jira** | https://fpt-team-d7rg7yak.atlassian.net/jira/software/projects/KAN/boards/2 |
+| **GitHub Issues** | https://github.com/<org>/<repo>/issues |
 | **Output** | Xuất trong conversation |
 
 ## Roster team

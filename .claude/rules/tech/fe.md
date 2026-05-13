@@ -86,11 +86,14 @@ src/
     │   └── useDebounce.ts
     ├── lib/
     │   ├── axios.ts                ← Axios instance + interceptors (token attach + refresh)
+    │   ├── errors.ts               ← HttpError, EntityError, handleErrorApi
     │   └── utils.ts                ← shadcn cn() utility
     ├── stores/
     │   └── sessionStore.ts         ← Zustand: token, user, setToken, logout
     ├── context/
     │   └── authContext.tsx         ← AuthProvider: hydrate sessionStore từ cookie khi boot
+    ├── utils/
+    │   └── queryKeys.ts            ← KEY (root) + QUERY_KEY (factories) cho TanStack Query
     └── types/
         ├── api.types.ts            ← ResponseData<T>, PaginationResponse<T>, ErrorEntity
         └── common.types.ts         ← BaseFilterPagination, shared query types
@@ -184,6 +187,41 @@ useEffect(() => {
 
 > **Lưu ý:** `staleTime: 0` không tự refetch theo interval — chỉ đánh dấu data là stale ngay khi fetch. Phải dùng `refetchInterval` để có auto-refetch thực sự. `setInterval` chỉ dùng cho UI countdown (giây đếm ngược) dựa trên deadline đã lấy từ server.
 
+### Query Key Convention — `shared/utils/queryKeys.ts`
+
+Hai cấp key: `KEY` (root dùng để invalidate broad) và `QUERY_KEY` (factory functions có params dùng trong `useQuery`).
+
+```ts
+// shared/utils/queryKeys.ts
+export const KEY = {
+  batteries: ['batteries'],
+  tickets:   ['tickets'],
+  users:     ['users'],
+} as const;
+
+export const QUERY_KEY = {
+  batteries: {
+    list:   (params: BatteryGetListParams) => [...KEY.batteries, 'list', params] as const,
+    detail: (id: string)                   => [...KEY.batteries, 'detail', id]  as const,
+  },
+  tickets: {
+    list:   (params: TicketGetListParams) => [...KEY.tickets, 'list', params] as const,
+    detail: (id: string)                  => [...KEY.tickets, 'detail', id]   as const,
+  },
+} as const;
+```
+
+```ts
+// useQuery — dùng QUERY_KEY factory
+queryKey: QUERY_KEY.batteries.list(params)
+
+// invalidateQueries broad — invalidate tất cả batteries queries
+queryClient.invalidateQueries({ queryKey: KEY.batteries })
+
+// invalidateQueries narrow — chỉ invalidate 1 detail
+queryClient.invalidateQueries({ queryKey: QUERY_KEY.batteries.detail(id) })
+```
+
 ---
 
 ## Feature Isolation — ESLint Enforcement
@@ -192,8 +230,7 @@ Rule `no-restricted-imports` trong `eslint.config.js` để tự động block i
 
 ```js
 // eslint.config.js
-import noRestrictedImports from 'eslint-plugin-no-relative-import-paths';
-
+// no-restricted-imports là built-in ESLint rule — không cần import plugin
 export default [
   {
     rules: {
@@ -216,6 +253,91 @@ export default [
 ```
 
 > CI chạy `npx eslint . --max-warnings=0` — sẽ FAIL build nếu có cross-feature import.
+
+---
+
+## Error Handling
+
+### Lớp lỗi — `shared/lib/errors.ts`
+
+Axios interceptor trong `shared/lib/axios.ts` nhận response `{ isSuccess, message, listErrors }` từ backend và throw typed errors:
+
+```ts
+// shared/lib/errors.ts
+import { toast } from 'sonner';
+import type { UseFormSetError } from 'react-hook-form';
+import type { ErrorEntity } from '@/shared/types/api.types';
+
+export class HttpError extends Error {
+  constructor(public readonly statusCode: number, message: string) {
+    super(message);
+    this.name = 'HttpError';
+  }
+}
+
+// EntityError — lỗi validation field (listErrors từ backend)
+export class EntityError extends HttpError {
+  constructor(public readonly errors: ErrorEntity[]) {
+    super(422, 'Validation error');
+    this.name = 'EntityError';
+  }
+}
+
+interface HandleErrorParams {
+  error: unknown;
+  setError?: UseFormSetError<any>;
+}
+
+export const handleErrorApi = ({ error, setError }: HandleErrorParams) => {
+  if (error instanceof EntityError) {
+    if (setError) {
+      error.errors.forEach(err => setError(err.field, { type: 'server', message: err.detail }));
+    }
+    return;
+  }
+  if (error instanceof HttpError) {
+    toast.error(error.message);
+    return;
+  }
+  toast.error('Có lỗi không xác định xảy ra');
+};
+```
+
+### Dùng trong mutation (non-form)
+
+```ts
+const useDeleteBattery = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => batteryService.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: KEY.batteries });
+      toast.success('Đã xóa');
+    },
+    onError: (error) => handleErrorApi({ error }),
+  });
+};
+```
+
+### Dùng trong form submit (try-catch + setError)
+
+```ts
+// Component có React Hook Form + mutation
+const { handleSubmit, setError } = useForm<BatteryCreatePayload>();
+const { mutateAsync } = useCreateBattery();
+
+const onSubmit = async (data: BatteryCreatePayload) => {
+  try {
+    await mutateAsync(data);
+    toast.success('Tạo thành công');
+  } catch (error) {
+    handleErrorApi({ error, setError }); // EntityError → setError từng field, HttpError → toast
+  }
+};
+```
+
+> **Rule:** `onError` trong mutation dùng cho non-form flows (cancel, delete, approve).
+> Form submit phải dùng `try-catch` + `setError` để map lỗi về đúng field.
 
 ---
 

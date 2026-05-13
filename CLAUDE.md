@@ -51,5 +51,5 @@
 ## Workflow
 
 ```
-/kltn-task KAN-XX → plan.md → approve → code → /kltn-reviewcode → /kltn-test → /kltn-ship KAN-XX
+/kltn-implement [issue-number] → plan.md → approve → code → /kltn-reviewcode → /kltn-test → /kltn-ship [issue-number]
 ```

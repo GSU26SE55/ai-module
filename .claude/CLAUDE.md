@@ -40,6 +40,21 @@ Ngoài ra: `ESCALATED` (từ P1/P2 breach hoặc Staff request) · `CLOSED_REJEC
 ## Cấu trúc hệ thống
 
 ```
+.codex/
+└── skills/                ← codex skills (dùng bởi Codex CLI, không phải Claude Code)
+    ├── be/
+    │   ├── entity/SKILL.md          ← Entity scaffold
+    │   ├── controller/SKILL.md
+    │   ├── cqrs-command/SKILL.md
+    │   ├── cqrs-query/SKILL.md
+    │   ├── consumer/SKILL.md
+    │   └── migration/SKILL.md
+    ├── fe/
+    │   ├── feature/SKILL.md         ← Feature module pattern
+    │   └── hook/SKILL.md            ← TanStack Query hook pattern
+    └── ai/
+        └── fastapi-endpoint/SKILL.md
+
 .claude/
 ├── CLAUDE.md              ← file này — bộ não dự án
 ├── CLAUDE.local.md        ← ghi chú cá nhân, không push lên Git
@@ -56,13 +71,16 @@ Ngoài ra: `ESCALATED` (từ P1/P2 breach hoặc Staff request) · `CLOSED_REJEC
 │   │   ├── check-di-registration.sh    ← remind đăng ký DI
 │   │   └── check-dbcontext-update.sh   ← remind DbSet + migration khi tạo entity
 │   ├── fe/                         ← hooks cho FE role repo (.ts/.tsx files)
+│   │   ├── check-build.sh              ← tsc --noEmit sau mỗi lần edit .ts/.tsx
+│   │   └── post-edit-feedback.sh       ← warn console.log, localStorage, cross-feature import
 │   └── ai/                         ← hooks cho AI role repo (.py files)
 │       ├── check-ruff.sh               ← ruff lint + format sau mỗi lần edit .py
 │       └── check-random-seed.sh        ← warn nếu training script thiếu random seed
 ├── docs/
 │   ├── guide.md
 │   ├── core-business-flow.md
-│   └── ai-datasets.md              ← download links + convention cho 4 datasets
+│   ├── ai-datasets.md              ← download links + convention cho 4 datasets
+│   └── ai-research-references.md   ← tài liệu nghiên cứu AI tham khảo
 ├── rules/                 ← quy tắc — mọi người đều follow
 │   ├── workflow.md        ← quy trình làm việc & git flow
 │   ├── design.md          ← kiến trúc hệ thống 3-layer
@@ -78,31 +96,35 @@ Ngoài ra: `ESCALATED` (từ P1/P2 breach hoặc Staff request) · `CLOSED_REJEC
 │   └── debugger.md        ← debug có cấu trúc 6-phase (reproduce → fix → verify)
 └── skills/
     ├── leader/            ← CHỈ LEADER dùng
-    │   ├── review-team.md   ← /kltn-team    — tracking toàn team
-    │   ├── sprint-plan.md   ← /kltn-sprint  — lên kế hoạch sprint
-    │   └── member-status.md ← /kltn-member  — check từng người
+    │   ├── review-team/SKILL.md   ← /kltn-team    — tracking toàn team
+    │   ├── sprint-plan/SKILL.md   ← /kltn-sprint  — lên kế hoạch sprint
+    │   └── member-status/SKILL.md ← /kltn-member  — check từng người
     └── dev/
         ├── be/            ← BE Dev dùng
-        │   ├── implement/SKILL.md   ← /kltn-implement [issue-number]
-        │   ├── code-review.md       ← /kltn-reviewcode
-        │   ├── test.md              ← /kltn-test [issue-number]
-        │   ├── ship.md              ← /kltn-ship [issue-number]
-        │   ├── review-pr.md         ← /kltn-reviewpr [issue-number]
-        │   ├── scaffold-entity.md   ← /scaffold-entity Service Entity
-        │   ├── scaffold-dto.md      ← /scaffold-dto Service Entity
-        │   ├── scaffold-cqrs-command.md  ← /scaffold-cqrs-command Service Entity Action
-        │   ├── scaffold-cqrs-query.md    ← /scaffold-cqrs-query Service Entity GetList|GetById
-        │   ├── scaffold-controller.md    ← /scaffold-controller Service Entity
-        │   ├── scaffold-crud.md          ← /scaffold-crud Service Entity (full CRUD)
-        │   ├── run-migration.md          ← /run-migration Service MigrationName
-        │   ├── scaffold-consumer.md      ← /scaffold-consumer Service EventName
-        │   ├── scaffold-integration-event.md ← /scaffold-integration-event EventName
-        │   └── scaffold-unit-tests.md    ← /scaffold-unit-tests Service Entity
+        │   ├── implement/SKILL.md             ← /kltn-implement [issue-number]
+        │   ├── code-review/SKILL.md           ← /kltn-reviewcode
+        │   ├── test/SKILL.md                  ← /kltn-test [issue-number]
+        │   ├── ship/SKILL.md                  ← /kltn-ship [issue-number]
+        │   ├── review-pr/SKILL.md             ← /kltn-reviewpr [issue-number]
+        │   ├── scaffold-entity/SKILL.md       ← /scaffold-entity Service Entity
+        │   ├── scaffold-dto/SKILL.md          ← /scaffold-dto Service Entity
+        │   ├── scaffold-cqrs-command/SKILL.md ← /scaffold-cqrs-command Service Entity Action
+        │   ├── scaffold-cqrs-query/SKILL.md   ← /scaffold-cqrs-query Service Entity GetList|GetById
+        │   ├── scaffold-controller/SKILL.md   ← /scaffold-controller Service Entity
+        │   ├── scaffold-crud/SKILL.md         ← /scaffold-crud Service Entity (full CRUD)
+        │   ├── run-migration/SKILL.md         ← /run-migration Service MigrationName
+        │   ├── scaffold-consumer/SKILL.md     ← /scaffold-consumer Service EventName
+        │   ├── scaffold-integration-event/SKILL.md ← /scaffold-integration-event EventName
+        │   └── scaffold-unit-tests/SKILL.md   ← /scaffold-unit-tests Service Entity
         ├── fe/            ← FE Dev dùng
-        │   ├── implement/SKILL.md, code-review.md, test.md, ship.md, review-pr.md
+        │   ├── implement/SKILL.md   ← /kltn-implement [issue-number]
+        │   ├── code-review/SKILL.md ← /kltn-reviewcode
+        │   ├── test/SKILL.md        ← /kltn-test [issue-number]
+        │   ├── ship/SKILL.md        ← /kltn-ship [issue-number]
+        │   └── review-pr/SKILL.md   ← /kltn-reviewpr [issue-number]
         └── ai/            ← AI Dev dùng
-            ├── implement/SKILL.md, code-review.md, test.md, ship.md, review-pr.md
-            └── scaffold-fastapi-endpoint.md ← /scaffold-fastapi-endpoint <name>
+            ├── implement/SKILL.md, code-review/SKILL.md, test/SKILL.md, ship/SKILL.md, review-pr/SKILL.md
+            └── scaffold-fastapi-endpoint/SKILL.md ← /scaffold-fastapi-endpoint <name>
 ```
 
 ---
@@ -110,14 +132,7 @@ Ngoài ra: `ESCALATED` (từ P1/P2 breach hoặc Staff request) · `CLOSED_REJEC
 ## Phân công Role
 
 Mỗi thành viên có **1 role chính** và các **role phụ**. AI là role phụ chung toàn team.
-
-| Thành viên | Role chính | Role phụ |
-|------------|------------|----------|
-| Nguyễn Phúc Duy | BE | FE, AI |
-| Bùi Phước Thắng | BE | FE, AI |
-| Mai Hồng Thái | BE | FE, AI |
-| Trần Minh Trí | FE (Leader) | BE, AI |
-| Nguyễn Nhật Minh | FE | BE, AI |
+Danh sách đầy đủ (MSSV, GitHub username): xem [memory.md](memory.md#roster-team).
 
 Khai báo trong `CLAUDE.local.md` (không commit):
 ```
@@ -178,7 +193,7 @@ sub-repo/
 | Personal | `.claude/CLAUDE.local.md` | Luôn luôn, không commit | Role cá nhân |
 
 Templates component CLAUDE.md: `templates/{backend|frontend|ai-module|mobile}/CLAUDE.md`
-Leader sync về sub-repo qua `bash sync-claude.sh` (subtree) + `push-to-org.sh` (templates).
+Leader sync về sub-repo qua `bash push-config.sh` (push workflow-ai lên org, GitHub Action tự sync xuống role repos) + `push-to-org.sh` (templates).
 
 ---
 
