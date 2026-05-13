@@ -126,14 +126,14 @@ pytest tests/ -v --cov=src
 
 ## Label Tracking (toàn bộ lifecycle của issue)
 
-Mỗi issue có nhiều labels đồng thời. Nhóm `status:` tracking tiến độ:
+Mỗi issue có nhiều labels đồng thời. Nhóm `status:` tracking tiến độ và tự động sync lên Sprint Board:
 
-| Label | Ý nghĩa | Ai set |
-|-------|---------|--------|
-| `status: init` | Issue đã tạo, được giao, chưa bắt đầu | Leader (khi tạo issue) |
-| `status: implementing` | Dev đang implement | `/kltn-implement` (sau plan approve) |
-| `status: reviewing` | PR đã tạo, chờ review | `/kltn-ship` |
-| `status: done` | Merged, hoàn tất | `/kltn-complete` |
+| Label | Cột Sprint Board | Ý nghĩa | Ai set |
+|-------|-----------------|---------|--------|
+| `status: init` | **Plan** | Issue đã tạo, được giao, chưa bắt đầu | Leader (khi tạo issue) |
+| `status: implementing` | **In Progress** | Dev đang implement | `/kltn-implement` (sau plan approve) |
+| `status: reviewing` | **In Review** | PR đã tạo, đang chờ reviewer | `/kltn-ship` |
+| `status: done` | **Completed** | Merged, hoàn tất | `/kltn-complete` |
 
 Các label khác luôn đi kèm:
 - **Role:** `role: BE` / `role: FE` / `role: Mobile` / `role: AI`
