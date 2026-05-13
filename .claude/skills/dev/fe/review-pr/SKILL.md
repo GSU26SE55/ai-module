@@ -1,7 +1,7 @@
 # Skill: /kltn-reviewpr (FE)
 
 ## Kích hoạt
-`/kltn-reviewpr KAN-XX` — review PR của đồng đội phía Frontend (Web hoặc Mobile) trước khi approve merge.
+`/kltn-reviewpr GH-XX / #[number]` — review PR của đồng đội phía Frontend (Web hoặc Mobile) trước khi approve merge.
 
 ---
 
@@ -9,14 +9,15 @@
 
 1. **Đọc PR** — lấy diff và PR description
    ```bash
-   gh pr view <số PR hoặc KAN-XX> --json title,body,files
-   gh pr diff <số PR hoặc KAN-XX>
+   gh pr view <số PR hoặc GH-XX / #[number]> --json title,body,files
+   gh pr diff <số PR hoặc GH-XX / #[number]>
    ```
 
 2. **Kiểm tra PR description** trước khi đọc code:
-   - [ ] Có ticket ID (KAN-XX)?
+   - [ ] Có ticket ID (GH-XX / #[number])?
    - [ ] Mô tả thay đổi rõ ràng?
-   - [ ] Checklist test đã được tích (browser/device)?
+   - [ ] Quality gates đã được tích: `tsc`, `eslint`, `build` đều PASS?
+   - [ ] `logs/GH-XX / #[number]/review.md` và `logs/GH-XX / #[number]/test.md` có trong commit?
 
 3. **Chạy checklist code** (góc nhìn outsider — không phải tác giả)
 
@@ -52,6 +53,10 @@
 - [ ] Token không lưu trong `localStorage` plain text?
 - [ ] Không render sensitive data ra UI không cần thiết?
 
+### Quality Gates
+- [ ] CI build trên PR đang xanh (tsc + eslint + build)?
+- [ ] `logs/GH-XX / #[number]/test.md` có kết quả PASS không?
+
 ### Conflict
 - [ ] Branch không có conflict với `main`?
 - [ ] Không override component/store người khác đang sửa?
@@ -60,7 +65,7 @@
 
 ## Output
 ```
-## BÁO CÁO PR REVIEW — KAN-XX — [YYYY-MM-DD]
+## BÁO CÁO PR REVIEW — GH-XX / #[number] — [YYYY-MM-DD]
 ### Reviewer: [tên bạn]
 ### TÓM TẮT
 [1–2 câu về PR]
@@ -80,4 +85,19 @@
 [APPROVE / REQUEST CHANGES] — Độ tự tin: [Cao / Trung bình / Thấp]
 ```
 
-Nếu REQUEST CHANGES → comment rõ trên PR, không approve.
+Nếu **REQUEST CHANGES**:
+```bash
+gh pr review $PR_NUMBER --request-changes --body "[mô tả vấn đề cần sửa]"
+
+# Chuyển ticket về In Progress để author biết cần sửa
+gh issue edit $ISSUE_NUMBER \
+  --remove-label "status: reviewing" \
+  --add-label "status: implementing"
+```
+> Ticket tự động chuyển từ **In Review → In Progress** trên Sprint Board.
+
+Nếu **APPROVE**:
+```bash
+gh pr review $PR_NUMBER --approve --body "LGTM ✅ — [1 câu tóm tắt]"
+```
+> Ticket giữ nguyên ở cột **In Review**. Author chạy `/kltn-complete $ISSUE_NUMBER` để merge và chuyển sang **Completed**.

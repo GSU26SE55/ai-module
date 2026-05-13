@@ -1,51 +1,89 @@
-# Skill: /kltn-task (FE)
+# Skill: /kltn-implement (FE)
 
 ## Kích hoạt
-`/kltn-task KAN-XX` — làm việc trên Jira ticket phía Frontend (Web hoặc Mobile).
+`/kltn-implement [issue-number]` — làm việc trên GitHub Issue phía Frontend (Web hoặc Mobile).
 
 ---
 
 ## Quy trình
 
-### Bước 1 — Đọc ticket
-Fetch từ Jira, xác định:
+### Bước 0 — Kiểm tra CLAUDE.local.md
+```bash
+cat .claude/CLAUDE.local.md 2>/dev/null || { echo "❌ CLAUDE.local.md chưa tồn tại — tạo file này trước (xem /kltn-setup)"; exit 1; }
+```
+Xác nhận file có đủ 4 trường: **Tên**, **MSSV**, **Role chính**, **Role phụ**.
+Nếu thiếu → dừng lại và yêu cầu tạo/bổ sung trước khi tiếp tục.
+
+### Bước 1 — Đọc GitHub Issue
+```bash
+gh issue view $ISSUE_NUMBER --json number,title,body,labels,milestone,assignees
+```
+Từ output ghi nhớ:
+- `$ISSUE_NUMBER` — số issue (ví dụ: `12`)
+- `$ISSUE_TITLE` — title của issue
+- `$SPRINT` — milestone name
 - **Web** (ReactJS) hay **Mobile** (React Native / Expo)?
 - Output mong đợi là gì? (màn hình, component, API call nào?)
-- Có dependency với ticket BE nào không?
+- Có dependency với issue BE nào không?
 
 ### Bước 2 — Lập Implementation Plan & viết plan.md
 
-Phân tích ticket và viết file plan tại `logs/KAN-XX/plan.md` với nội dung:
+Phân tích issue và viết file plan tại `logs/GH-$ISSUE_NUMBER/plan.md`:
 
 ```markdown
-# Plan — KAN-XX: [Tên ticket]
+# Plan — GH-[number]: [Tên issue]
+
+## Metadata
+- **Status:** PLANNING
+- **Role:** FE | **Ngày:** YYYY-MM-DD
+- **Issue:** #[number] — [GitHub URL]
+- **Sprint:** [milestone]
 
 ## Mục tiêu
-[Ticket yêu cầu làm gì, output là gì]
+[Issue yêu cầu làm gì, output là gì]
 
-## Các file sẽ tạo/sửa
-| File | Hành động | Mô tả |
-|------|-----------|-------|
+## Files
+| File | Action | Ghi chú |
+|------|--------|---------|
 | path/to/file.tsx | create/modify | ... |
 
 ## Approach
 [Cấu trúc component, state management, API calls]
 
-## Dependencies & Edge Cases
-- Loading state, error state, empty state, auth redirect
-- Dependency với ticket BE nào không?
-
-## Ước tính
-- Size: Small / Medium / Large
-- Thời gian: X giờ
+## Steps
+- [ ] Bước 1: [...]
+- [ ] Bước 2: [...]
+- [ ] Bước 3: [...]
 ```
 
 > **DỪNG LẠI — chờ user xác nhận ("ok", "approve", "tiến hành") trước khi làm bất cứ bước nào tiếp theo.**
-> **TUYỆT ĐỐI KHÔNG CODE khi chưa có xác nhận. Không có ngoại lệ, dù ticket nhỏ đến đâu.**
+> **TUYỆT ĐỐI KHÔNG CODE khi chưa có xác nhận. Không có ngoại lệ, dù issue nhỏ đến đâu.**
+
+### Bước 2.5 — Chọn executor
+
+Sau khi plan được approve, hỏi user:
+
+> **"Ai sẽ thực thi plan này?"**
+> 1. **Claude** — Claude Code tự implement (tiếp tục Bước 3 bên dưới)
+> 2. **Codex** — Trigger Codex CLI thực thi plan (Claude dừng lại sau bước này)
+
+**Nếu user chọn Option 2 — Codex:**
+```bash
+codex "Execute the implementation plan in logs/GH-$ISSUE_NUMBER/plan.md.
+Follow the coding conventions in .codex/skills/fe/ for all patterns (feature folder, TanStack Query hooks, service layer, Zod schemas).
+Branch: feature/GH-$ISSUE_NUMBER-$(gh issue view $ISSUE_NUMBER --json title -q '.title' | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | cut -c1-30)
+Do not commit or push — stop after implementation."
+```
+
+Claude dừng lại sau khi chạy lệnh trên. Codex sẽ tự đọc plan và thực thi.
+
+**Nếu user chọn Option 1 — Claude:** tiếp tục Bước 3 bên dưới.
+
+---
 
 ### Bước 3 — Tạo branch
 ```bash
-git checkout -b feature/KAN-XX-ten-tinh-nang
+git checkout -b feature/GH-$ISSUE_NUMBER-ten-tinh-nang
 ```
 
 ### Bước 4 — Implement theo đúng cấu trúc
@@ -74,7 +112,10 @@ src/
     ├── context/
     │   └── authContext.tsx      ← AuthProvider: hydrate sessionStore từ cookie khi boot
     ├── lib/
-    │   └── axios.ts             ← Axios instance + interceptors (không tạo instance mới)
+    │   ├── axios.ts             ← Axios instance + interceptors (không tạo instance mới)
+    │   └── errors.ts            ← HttpError, EntityError, handleErrorApi
+    ├── utils/
+    │   └── queryKeys.ts         ← KEY (root) + QUERY_KEY (factories)
     ├── stores/
     │   └── sessionStore.ts      ← Zustand: token, user, setToken, logout
     └── types/
@@ -107,39 +148,30 @@ services/       ← Axios API calls
 - Page có role restriction đã wrap `RoleRoute` (Admin / Manager / Staff)
 - Responsive đúng (Web)
 
-## Bước 6 — Lint & Build
+> ⛔ **KHÔNG commit, KHÔNG push** trong bước này.
+> Commit + push + tạo PR chỉ được thực hiện khi chạy `/kltn-ship $ISSUE_NUMBER`.
 
-**Web:**
-```bash
-npm run lint
-npm run build
+---
+
+## Sau khi implement xong — chạy theo thứ tự
+
+```
+/kltn-reviewcode  →  /kltn-test  →  /kltn-ship $ISSUE_NUMBER
 ```
 
-**Mobile:**
+`/kltn-test` với FE sẽ chạy:
 ```bash
+# Web
+npx tsc --noEmit                  # type check
+npx eslint . --max-warnings=0     # lint (0 warning)
+npm run build                     # production build
+
+# Mobile
+npx tsc --noEmit
 npx expo lint
-npx expo export --platform web 2>/dev/null || npx tsc --noEmit
 ```
 
-> Phải pass cả lint lẫn build mới được commit. Không bỏ qua warning TypeScript.
-```
-
-**Mobile:**
-```bash
-npx expo lint
-npx expo export --platform web 2>/dev/null || npx tsc --noEmit
-```
-
-> Phải pass cả lint lẫn build mới được commit. Không bỏ qua warning TypeScript.
-
-### Bước 7 — Commit
-```bash
-git add <files cụ thể>
-git commit -m "feat(KAN-XX): mô tả ngắn"
-```
-
-### Bước 8 — Cập nhật Jira
-Chuyển ticket sang **IN PROGRESS**.
+> Cả 3 bước phải PASS trước khi `/kltn-ship`. Không bỏ qua TypeScript error hay ESLint warning.
 
 ---
 

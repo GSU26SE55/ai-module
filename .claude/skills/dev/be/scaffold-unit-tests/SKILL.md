@@ -9,6 +9,27 @@ allowed-tools: Write, Read, Bash, Edit
 
 Usage: `/scaffold-unit-tests ServiceName EntityName`
 
+## Bước 0 — Tạo test project (nếu chưa có)
+
+```bash
+# Tạo xUnit test project
+dotnet new xunit -n {Service}.UnitTests -o services/{Service}/tests/{Service}.UnitTests
+dotnet sln add services/{Service}/tests/{Service}.UnitTests/{Service}.UnitTests.csproj
+
+# Thêm reference tới Application project
+dotnet add services/{Service}/tests/{Service}.UnitTests/{Service}.UnitTests.csproj \
+  reference services/{Service}/src/{Service}.Application/{Service}.Application.csproj
+
+# Cài packages bắt buộc
+cd services/{Service}/tests/{Service}.UnitTests
+dotnet add package Moq
+dotnet add package FluentAssertions
+dotnet add package MockQueryable.Moq
+dotnet add package xunit.runner.visualstudio
+```
+
+> **Tại sao cần MockQueryable.Moq?** `GetAllAsync()` trả `IQueryable<T>` không thể mock trực tiếp bằng Moq vì `IQueryable` cần provider để chạy `.Where()`, `.ToListAsync()`. Package này cung cấp `.BuildMock()` để tạo in-memory queryable hợp lệ.
+
 **Yêu cầu:** Test project phải tồn tại với packages: xUnit, Moq, FluentAssertions, MockQueryable.Moq
 
 ## Bước 1 — Đọc handlers thực tế

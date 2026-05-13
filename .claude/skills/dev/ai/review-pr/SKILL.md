@@ -1,7 +1,7 @@
 # Skill: /kltn-reviewpr (AI)
 
 ## Kích hoạt
-`/kltn-reviewpr KAN-XX` — review PR của đồng đội phía AI/ML module trước khi approve merge.
+`/kltn-reviewpr GH-XX / #[number]` — review PR của đồng đội phía AI/ML module trước khi approve merge.
 
 ---
 
@@ -9,12 +9,12 @@
 
 1. **Đọc PR** — lấy diff và PR description
    ```bash
-   gh pr view <số PR hoặc KAN-XX> --json title,body,files
-   gh pr diff <số PR hoặc KAN-XX>
+   gh pr view <số PR hoặc GH-XX / #[number]> --json title,body,files
+   gh pr diff <số PR hoặc GH-XX / #[number]>
    ```
 
 2. **Kiểm tra PR description** trước khi đọc code:
-   - [ ] Có ticket ID (KAN-XX)?
+   - [ ] Có ticket ID (GH-XX / #[number])?
    - [ ] Có kết quả metric (MAE, RMSE, F1) trong description?
    - [ ] Checklist reproducible đã được tích?
 
@@ -56,7 +56,7 @@
 
 ## Output
 ```
-## BÁO CÁO PR REVIEW — KAN-XX — [YYYY-MM-DD]
+## BÁO CÁO PR REVIEW — GH-XX / #[number] — [YYYY-MM-DD]
 ### Reviewer: [tên bạn]
 ### TÓM TẮT
 [1–2 câu về PR]
@@ -76,4 +76,19 @@
 [APPROVE / REQUEST CHANGES] — Độ tự tin: [Cao / Trung bình / Thấp]
 ```
 
-Nếu REQUEST CHANGES → comment rõ trên PR, không approve.
+Nếu **REQUEST CHANGES**:
+```bash
+gh pr review $PR_NUMBER --request-changes --body "[mô tả vấn đề cần sửa]"
+
+# Chuyển ticket về In Progress để author biết cần sửa
+gh issue edit $ISSUE_NUMBER \
+  --remove-label "status: reviewing" \
+  --add-label "status: implementing"
+```
+> Ticket tự động chuyển từ **In Review → In Progress** trên Sprint Board.
+
+Nếu **APPROVE**:
+```bash
+gh pr review $PR_NUMBER --approve --body "LGTM ✅ — [1 câu tóm tắt]"
+```
+> Ticket giữ nguyên ở cột **In Review**. Author chạy `/kltn-complete $ISSUE_NUMBER` để merge và chuyển sang **Completed**.

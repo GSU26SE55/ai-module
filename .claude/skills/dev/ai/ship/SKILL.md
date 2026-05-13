@@ -1,7 +1,7 @@
 # Skill: /kltn-ship (AI)
 
 ## Kích hoạt
-`/kltn-ship KAN-XX` — tạo PR sau khi `/kltn-reviewcode` PASS và `/kltn-test` PASS.
+`/kltn-ship [issue-number]` — tạo PR sau khi `/kltn-reviewcode` PASS và `/kltn-test` PASS.
 
 ---
 
@@ -17,23 +17,61 @@
 
 2. **Commit logs**
    ```bash
-   git add logs/KAN-XX/
-   git commit -m "docs(KAN-XX): thêm plan, review, test log"
+   git add logs/GH-$ISSUE_NUMBER/
+   git commit -m "docs(#$ISSUE_NUMBER): thêm plan, review, test log"
    ```
 
 3. **Push branch**
    ```bash
-   git push origin feature/KAN-XX-ten-tinh-nang
+   git push origin feature/GH-$ISSUE_NUMBER-ten-tinh-nang || { echo "❌ Push thất bại — chạy: gh auth status"; exit 1; }
    ```
 
 4. **Tạo PR**
    ```bash
    gh pr create \
-     --title "feat(KAN-XX): [tóm tắt]" \
-     --body "## Ticket\nKAN-XX\n\n## Thay đổi\n- \n\n## Kết quả model\n| Metric | Giá trị | Target |\n|--------|---------|--------|\n| MAE    |         | < 2%   |\n| RMSE   |         | < 3%   |\n| F1     |         | > 0.80 |\n\n## Test\n- [ ] FastAPI endpoint chạy được (uvicorn)\n- [ ] Kết quả reproducible (chạy lại ra cùng số)\n- [ ] scaler.pkl được commit tại models/weights/\n- [ ] BE có thể gọi endpoint thành công (CORS OK)"
-   ```
+     --title "feat(#$ISSUE_NUMBER): [tóm tắt ngắn gọn]" \
+     --body "$(cat <<'PREOF'
+   ## Closes #ISSUE_NUMBER
 
-5. **Cập nhật Jira** — chuyển sang IN REVIEW, paste link PR + tóm tắt metric vào comment
+   ## Thay đổi
+   -
+
+   ## Kết quả model
+   | Metric | Giá trị | Target |
+   |--------|---------|--------|
+   | MAE    |         | < 2%   |
+   | RMSE   |         | < 3%   |
+   | F1     |         | > 0.80 |
+
+   ## Test
+   - [ ] FastAPI endpoint chạy được (uvicorn)
+   - [ ] Kết quả reproducible (chạy lại ra cùng số)
+   - [ ] scaler.pkl được commit tại models/weights/
+   - [ ] BE có thể gọi endpoint thành công (CORS OK)
+   PREOF
+   )" \
+   || { echo "❌ Tạo PR thất bại — chạy: gh auth status"; exit 1; }
+   ```
+   > Sau khi tạo xong, thay `#ISSUE_NUMBER` trong PR body bằng số issue thực tế.
+
+5. **Cập nhật GitHub Issue → Sprint Board tự động sync**
+   ```bash
+   # Chuyển ticket sang cột "In Review" trên Sprint Board
+   gh issue edit $ISSUE_NUMBER \
+     --remove-label "status: implementing" \
+     --add-label "status: reviewing"
+
+   # Comment thông báo PR đã tạo (lấy $PR_NUMBER từ output gh pr create ở bước 4)
+   gh issue comment $ISSUE_NUMBER --body "## 👀 PR đã tạo — chờ review
+
+   **PR:** #$PR_NUMBER
+   **Reviewer:** ping @[tên reviewer] để chạy \`/kltn-reviewpr $ISSUE_NUMBER\`
+
+   - reviewcode: ✅ PASS
+   - pytest + coverage: ✅ PASS
+   - inference latency < 100ms: ✅ PASS"
+   ```
+   > Sau bước này, ticket tự động chuyển từ **In Progress → In Review** trên Sprint Board.
 
 ---
 

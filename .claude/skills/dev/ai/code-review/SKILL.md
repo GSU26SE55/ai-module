@@ -5,10 +5,45 @@
 
 ---
 
+## ACTION-FIRST RULE
+
+**Đọc diff thực sự TRƯỚC khi viết bất cứ điều gì.**
+
+```bash
+git diff main...HEAD
+# hoặc nếu đã stage: git diff --staged
+```
+
+Không nhận xét từ memory. Tool calls trước, text output sau.
+
+---
+
+## Effort Scaling
+
+| Level | Khi nào | Làm gì |
+|-------|---------|--------|
+| **Quick** | 1 script nhỏ, ít thay đổi | Chỉ check Critical: seed, scaler, data leakage |
+| **Standard** | 1 ticket / 1 feature | Full checklist, phân tích từng vấn đề |
+| **Deep** | PR train + inference + API | Full checklist + architecture consistency |
+| **Exhaustive** | Cuối sprint / model retrain | Full + metric review + latency benchmark |
+
+---
+
+## Xác định issue number
+
+```bash
+git branch --show-current | grep -oE 'GH-[0-9]+'
+# feature/GH-56-soh-lstm-model → TICKET_ID = GH-56
+```
+
+Nếu không xác định được → hỏi user trước khi tiếp tục.
+
+---
+
 ## Checklist
 
 ### Reproducibility
-- [ ] `random_seed` được set ở đầu script?
+- [ ] `random_seed = 42` được set ở đầu mọi script (train, preprocess)?
 - [ ] Phiên bản thư viện được pin trong `requirements.txt`?
 - [ ] Có thể chạy lại và ra kết quả tương tự không?
 
@@ -30,15 +65,40 @@
 - [ ] Input/output schema được define bằng Pydantic?
 - [ ] `get_model` dependency lấy từ `request.app.state.model`, không tự load?
 - [ ] Xử lý lỗi khi input không hợp lệ?
-- [ ] Model được load 1 lần khi startup, không load mỗi request?
-- [ ] `scaler.pkl` được load cùng model khi startup (trong `lifespan`)?
+- [ ] Model được load 1 lần khi startup (`lifespan`), không load mỗi request?
+- [ ] `scaler.pkl` được load cùng model khi startup?
 - [ ] CORS middleware được cấu hình để BE gọi được?
 
 ---
 
-## Output
+## Adversarial Self-Review
+
+Trước khi nộp báo cáo:
+
+1. **Đã đọc diff chưa?** — Không nhận xét từ memory
+2. **Random seed đã check chưa?** — Thiếu seed là Critical, không Warning
+3. **Data leakage có thực sự kiểm tra chưa?** — Đọc code split, không đoán
+4. **Scaler workflow đúng không?** — fit train → save pkl → load khi inference
+5. **Kết luận PASS/FAIL nhất quán không?** — Có Critical → phải FAIL
+
+---
+
+## Định dạng báo cáo
+
+Sau khi review xong, **bắt buộc ghi file** (dùng Write tool):
+
 ```
-## BÁO CÁO CODE REVIEW — [branch]
+logs/GH-[number]/review.md
+```
+(TICKET_ID đã xác định ở trên, ví dụ: `logs/GH-56/review.md`)
+
+Nếu folder chưa tồn tại → tạo mới. Nội dung file:
+
+```markdown
+## BÁO CÁO CODE REVIEW — [branch] — [YYYY-MM-DD]
+### Scope: AI
+### Effort: [Quick / Standard / Deep / Exhaustive]
+
 ### TÓM TẮT
 [1–2 câu về trạng thái tổng thể]
 
@@ -54,8 +114,41 @@
 [PASS / FAIL] — Độ tự tin: [Cao / Trung bình / Thấp]
 ```
 
-Sau khi có kết quả, lưu vào:
+---
+
+## Common Anti-Patterns
+
+### Bỏ qua random seed vì "kết quả trông ổn"
+
+**SAI:**
 ```
-logs/KAN-XX/review.md
+Chạy train.py → loss giảm → ✅ Pass: model train bình thường
+KẾT LUẬN: PASS
 ```
-Nếu folder chưa tồn tại → tạo mới.
+_Vấn đề:_ Thiếu seed → kết quả không reproducible → không thể so sánh metric giữa các run.
+
+**ĐÚNG** — Kiểm tra seed trong diff:
+```bash
+grep -n "random_seed\|torch.manual_seed\|np.random.seed\|random.seed" train.py
+# Không thấy → 🔴 Critical: train.py — thiếu random seed
+# Fix: thêm random_seed = 42 đầu script + torch.manual_seed(42)
+```
+
+---
+
+### Không kiểm tra scaler workflow
+
+**SAI:**
+```
+✅ Pass: model architecture đúng
+✅ Pass: FastAPI endpoint có Pydantic schema
+KẾT LUẬN: PASS
+```
+
+**ĐÚNG** — Kiểm tra end-to-end scaler flow:
+```bash
+git diff main...HEAD | grep -n "scaler\|MinMaxScaler\|fit\|transform"
+# inference.py:15: scaler = MinMaxScaler(); scaler.fit(X_inference)  ← fit lại trên production!
+# 🔴 Critical: inference.py:15 — scaler được fit lại trên production data
+#    Fix: load scaler từ models/weights/scaler.pkl thay vì fit lại
+```

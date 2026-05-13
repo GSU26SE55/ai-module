@@ -12,13 +12,13 @@ Example: `/scaffold-crud BatteryService Battery`
 
 Skill này tạo **tất cả files** cho một CRUD feature hoàn chỉnh.
 
-## Files sẽ tạo (14 files)
+## Files sẽ tạo (16 files)
 
 ### Domain (2)
 1. `Domain/Entities/{Entity}.cs`
 2. `Domain/Enums/{Entity}StatusEnum.cs`
 
-### Application (10)
+### Application (13)
 3. `Application/DTOs/Response/{Entity}Response.cs` — DTO + nested DTOs + response wrappers
 4. `Application/Commands/{Entity}Create/{Entity}CreateCommand.cs`
 5. `Application/Commands/{Entity}Create/{Entity}CreateCommandHandler.cs`
@@ -28,11 +28,13 @@ Skill này tạo **tất cả files** cho một CRUD feature hoàn chỉnh.
 9. `Application/Commands/{Entity}Delete/{Entity}DeleteCommandHandler.cs`
 10. `Application/Commands/{Entity}Restore/{Entity}RestoreCommand.cs`
 11. `Application/Commands/{Entity}Restore/{Entity}RestoreCommandHandler.cs`
-12. `Application/Queries/{Entity}GetList/` (Query + Handler)
-13. `Application/Queries/{Entity}GetById/` (Query + Handler)
+12. `Application/Queries/{Entity}GetList/{Entity}GetListQuery.cs`
+13. `Application/Queries/{Entity}GetList/{Entity}GetListQueryHandler.cs`
+14. `Application/Queries/{Entity}GetById/{Entity}GetByIdQuery.cs`
+15. `Application/Queries/{Entity}GetById/{Entity}GetByIdQueryHandler.cs`
 
 ### Api (1)
-14. `Api/Controllers/{Entity}Controller.cs`
+16. `Api/Controllers/{Entity}Controller.cs`
 
 ### Files Updated (3)
 - `Infrastructure/Persistence/ApplicationDbContext.cs` — add DbSet
