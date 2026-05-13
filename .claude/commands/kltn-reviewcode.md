@@ -6,12 +6,14 @@ Review code hiện tại trước khi ship.
 - FE → `.claude/skills/dev/fe/code-review/SKILL.md`
 - AI → `.claude/skills/dev/ai/code-review/SKILL.md`
 
-**Bước 2 — Lấy ticket ID**
+**Bước 2 — Lấy issue number từ branch**
 ```bash
-# Lấy ticket ID từ tên branch (vd: feature/KAN-12-ten → KAN-12)
-git branch --show-current | grep -oE 'KAN-[0-9]+'
+# Lấy issue number từ tên branch (vd: feature/GH-12-ten → TICKET_ID = GH-12)
+git branch --show-current | grep -oE 'GH-[0-9]+'
 ```
-Gọi kết quả là **TICKET_ID** (ví dụ: `KAN-12`). Dùng TICKET_ID cho tất cả bước sau.
+Gọi kết quả là **TICKET_ID** (ví dụ: `GH-12`). Dùng TICKET_ID cho tất cả bước sau.
+
+Nếu không tìm được → hỏi user trước khi tiếp tục.
 
 **Bước 3 — Cập nhật status trong plan**
 Dùng Edit tool cập nhật `logs/TICKET_ID/plan.md`:

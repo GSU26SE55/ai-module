@@ -1,8 +1,10 @@
 #!/bin/bash
 # Hook: After creating new interface, check DI registration
 
+normalize_path() { echo "$1" | tr '\\' '/'; }
+
 INPUT=$(cat)
-FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
+FILE_PATH=$(normalize_path "$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')")
 
 if [[ "$FILE_PATH" != *.cs ]] || [[ ! -f "$FILE_PATH" ]]; then exit 0; fi
 

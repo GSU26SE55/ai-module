@@ -1,5 +1,5 @@
 {
-  "enabledMcpjsonServers": ["context7", "jira"],
+  "enabledMcpjsonServers": ["context7"],
 
   "permissions": {
     "allow": [
@@ -28,20 +28,7 @@
       "Bash(ruff:*)",
       "Bash(uvicorn:*)",
       "Bash(pytest:*)",
-      "mcp__jira__jira_create_ticket",
-      "mcp__jira__jira_create_subtask",
-      "mcp__jira__jira_get_ticket",
-      "mcp__jira__jira_get_issue_types",
-      "mcp__jira__jira_get_boards",
-      "mcp__jira__jira_get_sprints",
-      "mcp__jira__jira_search",
-      "mcp__jira__jira_search_users",
-      "mcp__jira__jira_get_myself",
-      "mcp__jira__jira_transition",
-      "mcp__jira__jira_add_comment",
-      "mcp__jira__jira_update_ticket",
-      "mcp__jira__jira_add_worklog",
-      "mcp__jira__jira_delete_ticket"
+      "Bash(jq:*)"
     ]
   },
 

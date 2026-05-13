@@ -3,7 +3,7 @@ Chạy kiểm thử cho ticket được chỉ định.
 Ticket: `$ARGUMENTS`
 
 **Bước 1 — Cập nhật status**
-Dùng Edit tool cập nhật `logs/$ARGUMENTS/plan.md`:
+Dùng Edit tool cập nhật `logs/GH-$ARGUMENTS/plan.md`:
 - `Status: REVIEWING` → `Status: TESTING`
 - `Cập nhật lần cuối` → ngày hôm nay
 
@@ -17,7 +17,7 @@ Xác định role từ CLAUDE.local.md → đọc và thực hiện đúng theo 
 
 **Bước 3 — Xuất báo cáo**
 ```
-## TEST REPORT — KAN-XX — YYYY-MM-DD
+## TEST REPORT — GH-$ARGUMENTS — YYYY-MM-DD
 ### Scope: [BE / FE / AI]
 ### Môi trường: local
 
@@ -41,7 +41,7 @@ Xác định role từ CLAUDE.local.md → đọc và thực hiện đúng theo 
 ```
 
 **Bước 4 — Lưu log test**
-Lưu toàn bộ báo cáo vào `logs/$ARGUMENTS/test.md`.
+Lưu toàn bộ báo cáo vào `logs/GH-$ARGUMENTS/test.md`.
 Nếu folder chưa tồn tại → tạo mới.
 
 Nếu FAIL → sửa bugs → cập nhật `Status` về `IN_PROGRESS` → chạy lại `/kltn-reviewcode` → `/kltn-test`.

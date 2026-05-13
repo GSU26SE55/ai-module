@@ -1,22 +1,27 @@
 #!/bin/bash
 # Hook: After editing .ts/.tsx files, run TypeScript type check
 
+normalize_path() { echo "$1" | tr '\\' '/'; }
+
 INPUT=$(cat)
-FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
+FILE_PATH=$(normalize_path "$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')")
 
 if [[ "$FILE_PATH" != *.ts && "$FILE_PATH" != *.tsx ]]; then exit 0; fi
 
 if echo "$FILE_PATH" | grep -qE '/(node_modules|dist|build|\.next|shared/components/ui)/'; then exit 0; fi
 
 # Tìm thư mục chứa tsconfig.json từ file đang edit lên trên
+# PREV_DIR prevents infinite loop at Windows drive root (/c, /d, etc.)
 DIR=$(dirname "$FILE_PATH")
 TSCONFIG_DIR=""
+PREV_DIR=""
 
-while [[ "$DIR" != "/" && "$DIR" != "$HOME" ]]; do
+while [[ "$DIR" != "/" && "$DIR" != "$HOME" && "$DIR" != "$PREV_DIR" ]]; do
   if [[ -f "$DIR/tsconfig.json" ]]; then
     TSCONFIG_DIR="$DIR"
     break
   fi
+  PREV_DIR="$DIR"
   DIR=$(dirname "$DIR")
 done
 

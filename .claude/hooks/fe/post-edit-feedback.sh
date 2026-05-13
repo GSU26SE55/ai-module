@@ -1,8 +1,10 @@
 #!/bin/bash
 # Hook: After editing .ts/.tsx files, check for FE anti-patterns
 
+normalize_path() { echo "$1" | tr '\\' '/'; }
+
 INPUT=$(cat)
-FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
+FILE_PATH=$(normalize_path "$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')")
 
 if [[ "$FILE_PATH" != *.ts && "$FILE_PATH" != *.tsx ]]; then exit 0; fi
 
@@ -21,8 +23,9 @@ if [[ -n "$CONSOLE_HITS" ]]; then
 fi
 
 # Hardcode API URL — bỏ qua: localhost, test/spec file, dòng comment, VITE_ env usage
+# Detect cả double-quote và template literal (backtick)
 if ! echo "$FILE_PATH" | grep -qE '\.(test|spec)\.(ts|tsx)$'; then
-  if grep -E '"https?://[^"]*"' "$FILE_PATH" | grep -qvE 'localhost|127\.0\.0\.1|0\.0\.0\.0|^\s*(//|/?\*)|import\.meta\.env\.VITE_'; then
+  if grep -E '["` ](https?://[^"` ]+)["` ]' "$FILE_PATH" | grep -qvE 'localhost|127\.0\.0\.1|0\.0\.0\.0|^\s*(//|/?\*)|import\.meta\.env\.VITE_'; then
     WARNINGS="${WARNINGS}⚠️ Hardcoded URL in '$FILE_PATH'. Use env.VITE_API_BASE_URL instead.\n"
   fi
 fi
@@ -59,7 +62,7 @@ if grep -qE 'axios\.create\s*\(' "$FILE_PATH"; then
 fi
 
 if [[ -n "$WARNINGS" ]]; then
-  echo -e "$WARNINGS"
+  printf "%b" "$WARNINGS"
 fi
 
 exit 0

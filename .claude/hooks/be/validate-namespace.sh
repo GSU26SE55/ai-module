@@ -1,8 +1,10 @@
 #!/bin/bash
 # Hook: Validate C# namespace matches folder path
 
+normalize_path() { echo "$1" | tr '\\' '/'; }
+
 INPUT=$(cat)
-FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
+FILE_PATH=$(normalize_path "$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')")
 
 if [[ "$FILE_PATH" != *.cs ]] || [[ ! -f "$FILE_PATH" ]]; then exit 0; fi
 
@@ -25,9 +27,10 @@ if [[ -z "$REL_PATH" ]]; then
   REL_PATH=$(echo "$FILE_PATH" | sed -n 's|.*/services/[^/]*/||p')
 fi
 # Fallback: match from any known layer folder (Api/Application/Domain/Infrastructure)
+# Use grep -oE instead of grep -P (Perl regex not available on Windows Git Bash)
 if [[ -z "$REL_PATH" ]]; then
-  REL_PATH=$(echo "$FILE_PATH" | grep -oP '(?<=(Api|Application|Domain|Infrastructure)/).+')
-  LAYER=$(echo "$FILE_PATH" | grep -oP '[^/]+(Api|Application|Domain|Infrastructure)(?=/)' | tail -1)
+  REL_PATH=$(echo "$FILE_PATH" | grep -oE '(Api|Application|Domain|Infrastructure)/[^/].*' | sed 's|^[^/]*/||' | head -1)
+  LAYER=$(echo "$FILE_PATH" | grep -oE '[^/]+(Api|Application|Domain|Infrastructure)(/|$)' | sed 's|/$||' | tail -1)
   if [[ -n "$REL_PATH" && -n "$LAYER" ]]; then
     REL_PATH="${LAYER}/${REL_PATH}"
   fi

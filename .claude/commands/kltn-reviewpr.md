@@ -10,8 +10,9 @@ Ticket/PR: `$ARGUMENTS`
 
 **Bước 2 — Lấy thông tin PR, xác định biến làm việc**
 ```bash
-# Nếu $ARGUMENTS là ticket ID (KAN-XX)
-gh pr list --search "$ARGUMENTS in:title" --json number,title,url,headRefName
+# Nếu $ARGUMENTS là issue number (ví dụ: 12)
+gh pr list --search "#$ARGUMENTS in:title OR GH-$ARGUMENTS in:title" \
+  --json number,title,url,headRefName
 
 # Nếu $ARGUMENTS là PR number — dùng trực tiếp
 gh pr view $ARGUMENTS --json number,title,url,headRefName,state
@@ -19,7 +20,7 @@ gh pr view $ARGUMENTS --json number,title,url,headRefName,state
 
 Từ output trên, ghi nhớ để dùng xuyên suốt:
 - `$PR_NUMBER` — số PR nguyên (ví dụ: `42`)
-- `$TICKET_ID` — ticket ID trích từ branch hoặc title (ví dụ: `KAN-12`)
+- `$ISSUE_NUMBER` — issue number (ví dụ: `12`), trích từ branch `feature/GH-12-...`
 
 **Bước 3 — Lấy diff và review**
 ```bash
@@ -28,7 +29,7 @@ gh pr diff $PR_NUMBER
 Chạy checklist theo role skill file (Bước 1), xuất kết quả:
 
 ```
-## BÁO CÁO PR REVIEW — KAN-XX — YYYY-MM-DD
+## BÁO CÁO PR REVIEW — GH-$ISSUE_NUMBER — YYYY-MM-DD
 ### Reviewer: [tên bạn từ CLAUDE.local.md]
 ### TÓM TẮT
 [1–2 câu về PR]
@@ -62,4 +63,4 @@ Dừng ở đây. Thông báo author sửa và push lại, rồi tag reviewer đ
 ```bash
 gh pr review $PR_NUMBER --approve --body "LGTM ✅ — [1 câu tóm tắt]"
 ```
-Dừng ở đây. Author sẽ chạy `/kltn-complete $TICKET_ID` để tạo handoff và merge.
+Dừng ở đây. Author sẽ chạy `/kltn-complete $ISSUE_NUMBER` để tạo handoff và merge.

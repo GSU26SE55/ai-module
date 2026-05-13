@@ -1,292 +1,92 @@
-# Hướng dẫn sử dụng Claude Code — Team GSU26SE55
+# Hướng dẫn sử dụng hàng ngày — Team GSU26SE55
 
-## Yêu cầu cài đặt (tất cả mọi người)
-
-| Công cụ | Phiên bản |
-|---------|-----------|
-| [Claude Code](https://claude.ai/code) | Mới nhất — bắt buộc |
-| Node.js | 18+ |
-| Git | 2.30+ |
-| Python | 3.x (cho pre-commit) |
-| Tài khoản GitHub | Đã được Leader invite vào org `GSU26SE55` |
+> Đây là hướng dẫn **sử dụng hàng ngày**. Nếu bạn mới join và cần setup lần đầu, gõ `/kltn-setup`.
 
 ---
 
-## SETUP — Làm 1 lần khi join project
+## GitHub Project — Xem tiến độ Sprint
 
-### Bước 1 — Lấy Jira API Token
+Toàn bộ task của team được tracking tại:
 
-1. Đăng nhập Atlassian → https://id.atlassian.com/manage-profile/security/api-tokens
-2. Nhấn **Create API token** → đặt tên (VD: `claude-code`) → **Copy token**
+**https://github.com/orgs/GSU26SE55/projects/3**
 
-Giữ bí mật — không share, không commit.
+### 5 Views có sẵn
 
----
+| View | Layout | Dùng khi nào |
+|------|--------|-------------|
+| **Backlog** | Board (group by Status) | Đầu sprint — xem task chưa bắt đầu |
+| **Priority board** | Board (group by Priority) | Ưu tiên P1/P2 phải được xử lý trước |
+| **Team items** | Table (group by Assignees) | Leader xem ai đang làm gì |
+| **Roadmap** | Roadmap (by Milestone) | Xem timeline 8 sprint |
+| **My items** | Table (filter: assignee:@me) | Dev xem task của mình mỗi ngày |
 
-### Bước 2 — Clone repo theo role chính
+### Project Status field vs GitHub Labels
 
-| Thành viên | Role chính | Role phụ | Clone repo chính |
-|------------|------------|----------|-----------------|
-| Nguyễn Phúc Duy | BE | FE, AI | `git clone https://github.com/GSU26SE55/backend.git` |
-| Bùi Phước Thắng | BE | FE, AI | `git clone https://github.com/GSU26SE55/backend.git` |
-| Mai Hồng Thái | BE | FE, AI | `git clone https://github.com/GSU26SE55/backend.git` |
-| Trần Minh Trí | FE (Leader) | BE, AI | clone tất cả (xem mục Leader) |
-| Nguyễn Nhật Minh | FE | BE, AI | `git clone https://github.com/GSU26SE55/frontend.git` |
+Có **2 hệ thống tracking** chạy song song:
 
-> Nếu được assign task role phụ: clone thêm repo đó, tạo `CLAUDE.local.md` với đúng role phụ đang làm.
+| | GitHub Labels | Project Status field |
+|--|--------------|---------------------|
+| Giá trị | `status: init/implementing/reviewing/done` | `Backlog / In Progress / Done` |
+| Ai cập nhật | `/kltn-*` commands tự động | GitHub Actions tự động (khi label thay đổi) |
+| Mục đích | Claude Code workflow | Hiển thị visual trên board |
 
----
+**Mapping tự động (GitHub Actions):**
 
-### Bước 3 — Tạo CLAUDE.local.md (trong folder repo vừa clone)
+| Label | Project Status |
+|-------|---------------|
+| `status: init` | `Backlog` |
+| `status: implementing` | `In Progress` |
+| `status: reviewing` | `In Progress` |
+| `status: done` | `Done` |
 
-Tạo file `.claude/CLAUDE.local.md` (không commit — đã có trong `.gitignore`):
-
-**BE Dev (Duy / Thắng / Thái) — làm task BE:**
-```
-Tên: [Tên của bạn]
-MSSV: [MSSV của bạn]
-Role chính: BE
-Role phụ: FE, AI
-```
-
-**BE Dev — khi làm task FE phụ (clone frontend repo):**
-```
-Tên: [Tên của bạn]
-MSSV: [MSSV của bạn]
-Role chính: BE
-Role phụ: FE, AI
-Đang làm: FE (role phụ)
-```
-
-**FE Dev (Minh) — làm task FE:**
-```
-Tên: Nguyễn Nhật Minh
-MSSV: SE170310
-Role chính: FE
-Role phụ: BE, AI
-```
-
-**Khi làm task AI (mọi thành viên — clone ai-module):**
-```
-Tên: [Tên của bạn]
-MSSV: [MSSV của bạn]
-Role chính: [Role chính của bạn]
-Role phụ: FE, AI   (hoặc BE, AI)
-Đang làm: AI (role phụ)
-```
-
----
-
-### Bước 4 — Cấu hình Jira MCP
-
-> **Lưu ý:** Jira MCP phải được cấu hình ở **user scope** (`~/.claude/settings.json`), KHÔNG phải `settings.local.json`.
-> `settings.local.json` chỉ dùng cho permissions/hooks — Claude Code từ chối field `mcpServers` ở đây.
-> `~/.claude/settings.json` nằm ngoài mọi Git repo → an toàn, không bao giờ bị commit.
-
-Mở file `~/.claude/settings.json` (tạo mới nếu chưa có), thêm block `mcpServers`:
-
-```json
-{
-  "mcpServers": {
-    "jira": {
-      "command": "npx",
-      "args": ["-y", "@rui.branco/jira-mcp"],
-      "env": {
-        "JIRA_BASE_URL": "https://fpt-team-d7rg7yak.atlassian.net",
-        "JIRA_EMAIL": "<email fpt của bạn>",
-        "JIRA_API_TOKEN": "<token Jira từ Bước 1>"
-      }
-    }
-  }
-}
-```
-
-> Nếu `~/.claude/settings.json` đã có các field khác (theme, model, v.v.), chỉ thêm block `"mcpServers"` vào — không xóa phần còn lại.
-
-Claude Code load user scope trước → bạn sẽ thấy đủ 3 MCP: `context7`, `jira`, (playwright disabled).
-
----
-
-### Bước 5 — Cài pre-commit hooks
-
-```bash
-pip install pre-commit
-pre-commit install
-pre-commit install --hook-type commit-msg
-pre-commit install --hook-type pre-push
-```
-
-Chạy trong folder repo. Làm **1 lần** — hook tự chạy mỗi lần commit / push.
-
-> `--hook-type pre-push` là bắt buộc — thiếu dòng này thì hook chặn push thẳng lên main sẽ không hoạt động.
-
----
-
-### Bước 6 — Mở Claude Code và verify
-
-> **Quan trọng:** Claude Code phải được mở từ **bên trong folder repo** — không phải từ Desktop hay thư mục tuỳ ý. Claude Code đọc `.claude/` trong thư mục hiện tại để load đúng rules, hooks và skills của dự án. Mở sai thư mục → không có lệnh `/kltn-*`.
-
-```bash
-# BE Dev
-cd ~/Documents/GSU26SE55/backend
-claude
-
-# FE Dev
-cd ~/Documents/GSU26SE55/frontend
-claude
-
-# Đang làm task role phụ (ví dụ BE làm task FE)
-cd ~/Documents/GSU26SE55/frontend   # cd vào repo của role đang làm
-claude
-```
-
-Sau khi Claude Code mở, gõ `/mcp` — phải thấy `jira: connected` (và `context7` nếu có).
-
-Nếu `jira: disconnected` → kiểm tra lại token ở Bước 4.
-
-Gõ `/` để xem danh sách lệnh Claude Code. Xem bảng **Danh sách lệnh** ở cuối trang để biết các lệnh `/kltn-*` của dự án.
-
----
-
-## LEADER — Setup riêng (Trần Minh Trí)
-
-### Bước 2L — Clone tất cả repo
-
-```bash
-mkdir GSU26SE55 && cd GSU26SE55
-git clone https://github.com/GSU26SE55/workflow-ai.git
-git clone https://github.com/GSU26SE55/backend.git
-git clone https://github.com/GSU26SE55/frontend.git
-git clone https://github.com/GSU26SE55/mobile.git
-git clone https://github.com/GSU26SE55/ai-module.git
-```
-
-Thêm remote `workflow-ai` cho các sub-repo (để sync config):
-
-```bash
-for repo in backend frontend mobile ai-module; do
-  cd $repo
-  git remote add workflow-ai https://github.com/GSU26SE55/workflow-ai.git
-  cd ..
-done
-```
-
-### Bước 3L — CLAUDE.local.md trong workflow-ai
-
-```
-Tên: Trần Minh Trí
-MSSV: SE183109
-Role chính: FE (Leader)
-Role phụ: BE, AI
-```
-
-### Bước 4L — Cấu hình Jira MCP ở user scope
-
-Leader làm việc trên nhiều repo → cài Jira MCP ở **user scope** để dùng được ở mọi nơi mà không cần cấu hình lại từng repo.
-
-Mở `~/.claude/settings.json` (file global của Claude Code), thêm block `mcpServers`:
-
-```json
-{
-  "mcpServers": {
-    "jira": {
-      "command": "npx",
-      "args": ["-y", "@rui.branco/jira-mcp"],
-      "env": {
-        "JIRA_BASE_URL": "https://fpt-team-d7rg7yak.atlassian.net",
-        "JIRA_EMAIL": "<email của bạn>",
-        "JIRA_API_TOKEN": "<token Jira từ Bước 1>"
-      }
-    }
-  }
-}
-```
-
-> `~/.claude/settings.json` nằm ngoài mọi Git repo — không có rủi ro commit nhầm token.
-
-### Bước 5L — Pre-commit cho tất cả sub-repos
-
-```bash
-pip install pre-commit
-for repo in backend frontend mobile ai-module; do
-  cd $repo && pre-commit install && pre-commit install --hook-type commit-msg && pre-commit install --hook-type pre-push && cd ..
-done
-```
-
-### Bước 6L — Mở Claude Code từ workflow-ai
-
-```bash
-cd workflow-ai
-claude
-```
-
----
-
-## Chạy toàn bộ hệ thống local (Docker Compose)
-
-> Yêu cầu: Docker Desktop đang chạy. Đã clone tất cả sub-repo về cùng cấp với `workflow-ai`.
-
-```bash
-# 1. Tạo file .env
-cd workflow-ai
-cp .env.example .env
-# (mặc định đủ dùng cho local, không cần sửa)
-
-# 2. Khởi động
-docker compose up -d
-
-# 3. Kiểm tra
-docker compose ps
-
-# 4. Xem log
-docker compose logs -f backend
-docker compose logs -f ai-module
-
-# 5. Dừng
-docker compose down
-```
-
-**Services và port:**
-
-| Service | Port | URL |
-|---------|------|-----|
-| Backend (ASP.NET Core) | 5000 | http://localhost:5000 |
-| AI Module (FastAPI) | 8001 | http://localhost:8001/docs |
-| Frontend (React build) | 3000 | http://localhost:3000 |
-| PostgreSQL / TimescaleDB | 5432 | — |
-| Redis | 6379 | — |
-| RabbitMQ Management | 15672 | http://localhost:15672 |
-
-> **Dev thường ngày:** chạy `npm run dev` / `dotnet run` trực tiếp — Docker dùng để test integration.
+> Issues mới tạo tự động xuất hiện trên board nhờ workflow "Auto-add to project".
+> Mỗi issue có nhiều labels đồng thời: `status:` + `role:` + `priority:` + `type:`. Chỉ nhóm `status:` thay đổi theo lifecycle.
 
 ---
 
 ## Luồng làm việc hàng ngày
 
-```
-git pull                    ← lấy code mới nhất (gồm cả .claude/ đã sync)
+> **Issues nằm trong từng sub-repo** — BE dev làm việc trong `backend`, FE dev làm việc trong `frontend`. Sprint Board tổng hợp tất cả.
 
-/kltn-task KAN-XX           ← Claude đọc Jira, phân tích codebase, gợi ý approach
-                            ← Claude viết plan.md → logs/KAN-XX/plan.md
-                            ← Bạn review plan → gõ "ok" / "approve" để xác nhận
+```
+# 1. Xem task được assign
+Vào https://github.com/orgs/GSU26SE55/projects/3 → tab "My items"
+
+# 2. cd đúng repo rồi mới mở Claude
+cd ~/Documents/GSU26SE55/backend   # (hoặc frontend / mobile / ai-module)
+git pull
+claude
+
+# 3. Lập plan (bắt buộc trước khi code)
+/kltn-plan 12               ← Claude đọc Issue #12
+                            ← Claude phân tích gap, hỏi nếu chưa rõ scope/approach
+                            ← Claude viết plan.md → logs/GH-12/plan.md
+                            ← Bạn review plan → gõ "ok" để xác nhận
+                            ← Claude post plan lên Issue comment
+                            ← Label tự đổi: status:init → status:implementing
+                            ← Sprint Board tự cập nhật: Backlog → In Progress
                             ⚠️  Claude KHÔNG code trước khi có xác nhận
 
-code...
+# 4. Implement (sau khi plan approved)
+/kltn-implement 12          ← Claude đọc plan.md → bắt đầu code từng bước
+                            ← Đánh dấu từng bước hoàn thành trong plan.md
 
+# 5. Code...
+
+# 6. Quality gates
 /kltn-reviewcode            ← Claude review diff → PASS hoặc FAIL
-                            ← Sửa nếu FAIL → /kltn-reviewcode lại
+/kltn-test 12               ← Claude chạy test → PASS hoặc FAIL
 
-/kltn-test KAN-XX           ← Claude chạy test → PASS hoặc FAIL
-                            ← Sửa nếu FAIL → /kltn-test lại
+# 7. Ship
+/kltn-ship 12               ← Claude tạo PR + comment vào Issue
+                            ← Label tự đổi: implementing → reviewing
 
-/kltn-ship KAN-XX           ← Claude tạo PR + update Jira → IN REVIEW
+# 8. Reviewer (đồng đội) chạy
+/kltn-reviewpr 12           ← APPROVE hoặc REQUEST CHANGES
 
-# --- Đồng đội (reviewer) chạy ---
-/kltn-reviewpr KAN-XX       ← Review PR → APPROVE hoặc REQUEST CHANGES
-                            ← Nếu REQUEST CHANGES: author sửa, push lại, báo reviewer review lại
-
-# --- Author chạy sau khi được APPROVE ---
-/kltn-complete KAN-XX       ← Tạo handoff file → push lên branch → merge PR → Jira Done
+# 9. Author chạy sau khi được APPROVE
+/kltn-complete 12           ← handoff → merge PR → label: done
+                            ← Sprint Board tự cập nhật: In Progress → Done
 ```
 
 ---
@@ -297,18 +97,19 @@ code...
 
 | Lệnh | Khi nào dùng |
 |------|-------------|
-| `/kltn-task KAN-XX` | Bắt đầu ticket — đọc Jira, phân tích, lên plan |
+| `/kltn-plan 123` | Lập plan cho ticket #123 — đọc issue, hỏi nếu chưa rõ, viết plan, chờ approve |
+| `/kltn-implement 123` | Implement — **yêu cầu plan đã approved** (chạy sau `/kltn-plan`) |
 | `/kltn-reviewcode` | Review code trước khi test |
-| `/kltn-test KAN-XX` | Test sau khi reviewcode PASS |
-| `/kltn-ship KAN-XX` | Tạo PR + update Jira → IN REVIEW |
-| `/kltn-reviewpr KAN-XX` | **[Reviewer]** Review PR → APPROVE hoặc REQUEST CHANGES |
-| `/kltn-complete KAN-XX` | **[Author]** Sau khi PR APPROVE: handoff → push → merge → Jira Done |
+| `/kltn-test 123` | Test sau khi reviewcode PASS |
+| `/kltn-ship 123` | Tạo PR + cập nhật label → reviewing |
+| `/kltn-reviewpr 123` | **[Reviewer]** Review PR → APPROVE hoặc REQUEST CHANGES |
+| `/kltn-complete 123` | **[Author]** Sau khi PR APPROVE: handoff → push → merge → done |
 
 ### Scaffold BE (tạo boilerplate nhanh)
 
 | Lệnh | Output |
 |------|--------|
-| `/scaffold-crud {Service} {Entity}` | 14 files + migration |
+| `/scaffold-crud {Service} {Entity}` | 16 files + migration |
 | `/scaffold-entity {Service} {Entity}` | Entity + DbSet |
 | `/scaffold-cqrs-command {Service} {Entity} {Action}` | Command + Handler |
 | `/scaffold-cqrs-query {Service} {Entity} GetList\|GetById` | Query + Handler |
@@ -327,14 +128,14 @@ code...
 
 | Lệnh | Tác dụng |
 |------|---------|
-| `/kltn-sprint` | Lên kế hoạch sprint, phân công task từ Jira |
-| `/kltn-team` | Báo cáo tiến độ toàn team |
-| `/kltn-member [tên]` | Check tiến độ từng người |
+| `/kltn-sprint` | Lên kế hoạch sprint — tạo GitHub Issues trong sub-repos, phân công assignee |
+| `/kltn-team` | Báo cáo tiến độ toàn team theo GitHub labels |
+| `/kltn-member [tên]` | Check tiến độ từng người theo Issues được assign |
 
 ### MCP tools
 
 ```
-# Context7 — tra docs
+# Context7 — tra docs thư viện
 dùng context7 tìm cách dùng IMediator trong MediatR .NET
 dùng context7 tìm cách dùng useMutation trong TanStack Query v5
 ```
@@ -355,10 +156,26 @@ Ticket chỉ được coi là **Done** khi đủ cả 3:
 
 - **Không merge PR của chính mình** — cần ít nhất 1 người approve
 - **Không push thẳng lên main** — luôn qua PR
-- **1 ticket = 1 branch** — `feature/KAN-XX-ten-ngan`
-- **Commit format:** `feat(KAN-XX): mô tả` / `fix` / `refactor` / `test`
+- **1 issue = 1 branch** — `feature/GH-[number]-ten-ngan` (ví dụ: `feature/GH-42-battery-crud`)
+- **Commit format:** `feat(#42): mô tả` / `fix(#42)` / `refactor(#42)` / `test(#42)`
+- **PR body phải có** `Closes #[number]` — GitHub tự close issue khi merge
 - **Không commit** `CLAUDE.local.md` — đã có trong `.gitignore`
 - **Không tự thêm package** ngoài stack trong `rules/tech/` — hỏi Leader trước
+
+---
+
+## Label hệ thống
+
+Mỗi issue mang nhiều labels đồng thời:
+
+| Nhóm | Labels |
+|------|--------|
+| **Status** | `status: init` · `status: implementing` · `status: reviewing` · `status: done` |
+| **Role** | `role: BE` · `role: FE` · `role: Mobile` · `role: AI` |
+| **Priority** | `priority: P1: Critical (4h)` · `priority: P2: High (24h)` · `priority: P3: Standard (72h)` |
+| **Type** | `type: feat` · `type: fix` · `type: refactor` · `type: test` · `type: docs` · `type: chore` |
+
+Ví dụ issue mới được tạo sẽ có: `status: init` + `role: BE` + `priority: P2: High (24h)` + `type: feat`
 
 ---
 
@@ -383,10 +200,14 @@ git push origin fix/ten-thay-doi
 
 ```bash
 cd workflow-ai
+git checkout -b chore/ten-thay-doi
 git add .claude/
 git commit -m "chore: mô tả thay đổi"
-git push org-workflow main --no-verify   # trigger GitHub Actions (--no-verify bypass pre-push hook)
+git push origin chore/ten-thay-doi
+# Mở PR → self-merge sau khi verify
 ```
+
+> **Lưu ý:** pre-commit hook chặn commit thẳng lên `main` — Leader cũng phải tạo branch và PR.
 
 Theo dõi Actions tại: https://github.com/GSU26SE55/workflow-ai/actions
 

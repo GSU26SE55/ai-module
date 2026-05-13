@@ -1,15 +1,17 @@
 #!/bin/bash
 # Hook: Warn if a training script is missing random seed (reproducibility risk)
 
+normalize_path() { echo "$1" | tr '\\' '/'; }
+
 INPUT=$(cat)
-FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
+FILE_PATH=$(normalize_path "$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')")
 
 if [[ "$FILE_PATH" != *.py ]]; then exit 0; fi
 if [[ ! -f "$FILE_PATH" ]]; then exit 0; fi
 
 # Check training-related files AND preprocess scripts (shuffle also needs seed)
 BASENAME=$(basename "$FILE_PATH")
-DIRPATH=$(dirname "$FILE_PATH")
+DIRPATH=$(normalize_path "$(dirname "$FILE_PATH")")
 
 IS_SEED_FILE=0
 if echo "$BASENAME" | grep -qiE "^train|_train|training|preprocess|preprocessing"; then IS_SEED_FILE=1; fi

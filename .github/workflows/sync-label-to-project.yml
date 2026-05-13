@@ -1,0 +1,75 @@
+name: Sync label status to Sprint Board
+
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  sync-status:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync status label → Project Status field
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN }}
+          ISSUE_NODE_ID: ${{ github.event.issue.node_id }}
+          LABEL_NAME: ${{ github.event.label.name }}
+        run: |
+          # Map label → Status option ID trong project
+          case "$LABEL_NAME" in
+            "status: implementing"|"status: reviewing")
+              STATUS_OPTION_ID="47fc9ee4"  # In Progress
+              ;;
+            "status: done")
+              STATUS_OPTION_ID="98236657"  # Done
+              ;;
+            "status: init")
+              STATUS_OPTION_ID="f75ad846"  # Backlog
+              ;;
+            *)
+              echo "Không phải status label — bỏ qua"
+              exit 0
+              ;;
+          esac
+
+          PROJECT_ID="PVT_kwDOEKtNA84BXeyy"
+          STATUS_FIELD_ID="PVTSSF_lADOEKtNA84BXeyyzhSrWPY"
+
+          # Tìm item ID của issue này trong project
+          ITEM_ID=$(gh api graphql -f query='
+          query($projectId: ID!) {
+            node(id: $projectId) {
+              ... on ProjectV2 {
+                items(first: 100) {
+                  nodes {
+                    id
+                    content { ... on Issue { id } }
+                  }
+                }
+              }
+            }
+          }' -f projectId="$PROJECT_ID" \
+          --jq ".data.node.items.nodes[] | select(.content.id == \"$ISSUE_NODE_ID\") | .id")
+
+          if [ -z "$ITEM_ID" ]; then
+            echo "Issue chưa có trong project board — bỏ qua"
+            exit 0
+          fi
+
+          # Cập nhật Status field
+          gh api graphql -f query='
+          mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+            updateProjectV2ItemFieldValue(input: {
+              projectId: $projectId
+              itemId: $itemId
+              fieldId: $fieldId
+              value: { singleSelectOptionId: $optionId }
+            }) {
+              projectV2Item { id }
+            }
+          }' \
+          -f projectId="$PROJECT_ID" \
+          -f itemId="$ITEM_ID" \
+          -f fieldId="$STATUS_FIELD_ID" \
+          -f optionId="$STATUS_OPTION_ID"
+
+          echo "✅ Project Status updated: label '$LABEL_NAME' → option $STATUS_OPTION_ID"

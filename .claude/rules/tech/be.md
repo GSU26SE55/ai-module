@@ -287,7 +287,7 @@ public class BatteryCreateCommand : IRequest<BatteryCreateResponse>, IValidatabl
 |-------|---------|
 | Email | `[\w.+-]+@[\w-]+\.[\w]{2,}` |
 | Password | `^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[!@#$%^&*]).{8,}$` |
-| Phone VN | `^(0[3\|5\|7\|8\|9])[0-9]{8}$` |
+| Phone VN | `^(0[35789])[0-9]{8}$` |
 
 **Pipeline:** `Request → ValidationBehavior → nếu !IsSuccess → return ngay (skip handler)`
 

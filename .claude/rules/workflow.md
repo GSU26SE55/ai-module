@@ -3,8 +3,11 @@
 ## Vòng đời một Sprint — 3 phase
 
 ```
-[LEADER]  /kltn-sprint  →  kế hoạch sprint
-[DEV]     /kltn-task KAN-XX  →  plan  →  viết plan.md  →  chờ user review  →  code  →  /kltn-reviewcode  →  /kltn-test  →  /kltn-ship KAN-XX
+[LEADER]  /kltn-sprint  →  tạo GitHub Issues (label: status:init) + phân công
+[DEV]     /kltn-implement 123  →  đọc issue → plan.md → approve → post plan lên issue + label:implementing → code
+          → /kltn-reviewcode → /kltn-test → /kltn-ship 123  →  PR + label:reviewing
+[REVIEWER] /kltn-reviewpr 123  →  approve / request changes
+[DEV]     /kltn-complete 123  →  merge PR + label:done + close issue
 [LEADER]  /kltn-team hoặc /kltn-member [tên]
 ```
 
@@ -12,38 +15,49 @@
 
 ## Phase 1 — Init (đầu sprint, leader chạy 1 lần)
 
-`/kltn-sprint` → xuất kế hoạch + phân công trong conversation.
+`/kltn-sprint` → tạo GitHub Issues với label `status: init` + phân công assignee + thêm vào milestone → xuất kế hoạch trong conversation.
 
 ---
 
 ## Phase 2 — Execute (dev, hàng ngày)
 
-Luồng chuẩn (áp dụng cho MỌI ticket, không phân biệt size):
+Luồng chuẩn (áp dụng cho MỌI task, không phân biệt size):
 ```
-/kltn-task KAN-XX  →  viết plan.md  →  chờ user approve  →  code  →  /kltn-reviewcode  →  /kltn-test  →  /kltn-ship KAN-XX
+/kltn-implement 123  →  đọc GitHub Issue #123  →  viết plan.md
+               →  chờ user approve
+               →  post plan lên issue + label: init → implementing
+               →  code
+               →  /kltn-reviewcode  →  /kltn-test
+               →  /kltn-ship 123  →  PR + label: implementing → reviewing
 ```
 
-**Bước Plan (bắt buộc với MỌI ticket):**
-Sau khi đọc ticket, viết file `logs/KAN-XX/plan.md` trước khi làm bất cứ điều gì khác:
+**Bước Plan (bắt buộc với MỌI task):**
+Sau khi đọc issue, viết file `logs/GH-123/plan.md` trước khi làm bất cứ điều gì khác.
 
 Nội dung plan.md phải có:
 ```markdown
-# Plan — KAN-XX: [Tên ticket]
+# Plan — GH-123: [Tên issue]
+
+## Metadata
+- Status: PLANNING | Role: BE/FE/AI | Ngày: YYYY-MM-DD
+- Issue: #123 — [URL]
 
 ## Mục tiêu
-[Mô tả ngắn gọn ticket cần làm gì]
+[Mô tả ngắn gọn issue cần làm gì]
 
-## Các file sẽ tạo/sửa
-| File | Hành động | Mô tả |
-|------|-----------|-------|
-| path/to/file.ts | create/modify | ... |
+## Files
+| File | Action | Ghi chú |
+|------|--------|---------|
+| path/to/file | create/modify | ... |
 
 ## Approach
-[Mô tả cách implement: thuật toán, data flow, API design]
+[Data flow / API design]
 
+## Steps
+- [ ] Bước 1: ...
 ```
 
-> **TUYỆT ĐỐI KHÔNG CODE khi chưa có file `logs/KAN-XX/plan.md` được user xác nhận (reply "ok", "approve", "tiến hành", hoặc tương đương). Không có ngoại lệ.**
+> **TUYỆT ĐỐI KHÔNG CODE khi chưa có file `logs/GH-[number]/plan.md` được user xác nhận (reply "ok", "approve", "tiến hành", hoặc tương đương). Không có ngoại lệ.**
 
 ---
 
@@ -67,8 +81,9 @@ Một ticket được coi là **Done** khi đủ cả 3 điều kiện:
 
 | Tình huống | Làm gì |
 |------------|--------|
-| Cần biết task của sprint | `/kltn-sprint` hoặc fetch Jira |
-| Không chắc scope ticket | Hỏi leader, không tự expand |
+| Cần biết task của sprint | `/kltn-sprint` hoặc `gh issue list --milestone "Sprint N"` |
+| Không chắc scope task | Hỏi leader, không tự expand |
+| Muốn xem issue detail | `gh issue view [number]` |
 
 ---
 
@@ -103,7 +118,24 @@ pytest tests/ -v --cov=src
 
 ## Git
 
-- Branch: `feature/KAN-XX-slug-ngan`
-- 1 ticket = 1 branch, commit thường xuyên
+- Branch: `feature/GH-[number]-slug-ngan` (ví dụ: `feature/GH-42-battery-crud`)
+- 1 issue = 1 branch, commit thường xuyên
 - Không merge thẳng main — luôn qua PR
-- Commit message: `type(KAN-XX): mô tả` (type: feat / fix / refactor / test)
+- Commit message: `type(#[number]): mô tả` (ví dụ: `feat(#42): add Battery CRUD`)
+- PR body **phải có** `Closes #[number]` để GitHub tự close issue khi merge
+
+## Label Tracking (toàn bộ lifecycle của issue)
+
+Mỗi issue có nhiều labels đồng thời. Nhóm `status:` tracking tiến độ:
+
+| Label | Ý nghĩa | Ai set |
+|-------|---------|--------|
+| `status: init` | Issue đã tạo, được giao, chưa bắt đầu | Leader (khi tạo issue) |
+| `status: implementing` | Dev đang implement | `/kltn-implement` (sau plan approve) |
+| `status: reviewing` | PR đã tạo, chờ review | `/kltn-ship` |
+| `status: done` | Merged, hoàn tất | `/kltn-complete` |
+
+Các label khác luôn đi kèm:
+- **Role:** `role: BE` / `role: FE` / `role: Mobile` / `role: AI`
+- **Priority:** `priority: P1: Critical (4h)` / `priority: P2: High (24h)` / `priority: P3: Standard (72h)`
+- **Type:** `type: feat` / `type: fix` / `type: refactor` / `type: test` / `type: docs`

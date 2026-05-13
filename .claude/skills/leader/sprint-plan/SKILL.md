@@ -42,7 +42,7 @@ Xuất đề xuất dạng bảng:
 
 | Ticket | Tóm tắt | Đề xuất assign | Lý do | Deadline |
 |--------|---------|----------------|-------|---------|
-| KAN-XX | ...     | Nguyễn Phúc Duy | AI task — phụ trách AI module | DD/MM |
+| GH-XX | ...     | Nguyễn Phúc Duy | AI task — phụ trách AI module | DD/MM |
 ```
 
 ### Bước 4 — Tạo file sprint plan
@@ -58,7 +58,7 @@ Xuất kế hoạch sprint trong conversation:
 ## Phân công
 
 ### Nguyễn Phúc Duy (BE Dev / AI Dev)
-- [ ] KAN-XX: [tóm tắt] — due DD/MM
+- [ ] GH-XX: [tóm tắt] — due DD/MM
 
 ### Bùi Phước Thắng (BE)
 - [ ] ...
@@ -77,7 +77,7 @@ Xuất kế hoạch sprint trong conversation:
 - [Thành viên nào có nhiều task nhất]
 
 ## Ghi chú
-- File này là checkpoint — /kltn-task và /kltn-member đọc file này để tránh re-fetch Jira
+- File này là checkpoint — /kltn-implement và /kltn-member đọc file này để tránh re-fetch Jira
 ```
 
 ---
@@ -86,4 +86,4 @@ Xuất kế hoạch sprint trong conversation:
 
 - **Không tự assign mà không hỏi** — Đây là đề xuất, leader xác nhận trước khi tạo file.
 - **Cân bằng workload** — Không để 1 người carry cả sprint.
-- **File sprint là context anchor** — Sau khi tạo, các session `/kltn-task` đọc file này thay vì fetch Jira lại.
+- **File sprint là context anchor** — Sau khi tạo, các session `/kltn-implement` đọc file này thay vì fetch Jira lại.

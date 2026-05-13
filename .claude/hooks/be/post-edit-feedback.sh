@@ -1,8 +1,10 @@
 #!/bin/bash
 # Hook: After editing .cs files, check for common anti-patterns
 
+normalize_path() { echo "$1" | tr '\\' '/'; }
+
 INPUT=$(cat)
-FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')
+FILE_PATH=$(normalize_path "$(echo "$INPUT" | jq -r '.tool_input.file_path // empty')")
 
 if [[ "$FILE_PATH" != *.cs ]]; then exit 0; fi
 
@@ -42,10 +44,13 @@ if [[ -f "$FILE_PATH" ]]; then
 fi
 
 # QueryHandler phải filter IsDeleted — dự án không dùng global query filter
+# Kiểm tra cụ thể: GetAllAsync() có được chain với .Where(x => !x.IsDeleted) không
 if echo "$FILE_PATH" | grep -qE "(Query|Get).*Handler"; then
   if [[ -f "$FILE_PATH" ]]; then
-    if grep -q "GetAllAsync()" "$FILE_PATH" && ! grep -q "IsDeleted" "$FILE_PATH"; then
-      WARNINGS="${WARNINGS}⚠️ QueryHandler '$FILE_PATH' dùng GetAllAsync() nhưng không filter IsDeleted. Thêm .Where(x => !x.IsDeleted).\n"
+    if grep -q "GetAllAsync()" "$FILE_PATH"; then
+      if ! grep -qE '\.Where\([^)]*!.*IsDeleted|\.Where\([^)]*IsDeleted\s*==\s*false' "$FILE_PATH"; then
+        WARNINGS="${WARNINGS}⚠️ QueryHandler '$FILE_PATH' dùng GetAllAsync() nhưng không có .Where(x => !x.IsDeleted). Thêm filter trước khi query.\n"
+      fi
     fi
   fi
 fi
@@ -66,7 +71,7 @@ if echo "$FILE_PATH" | grep -q "Controller"; then
 fi
 
 if [[ -n "$WARNINGS" ]]; then
-  echo -e "$WARNINGS"
+  printf "%b" "$WARNINGS"
 fi
 
 exit 0

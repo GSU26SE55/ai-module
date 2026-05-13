@@ -83,11 +83,11 @@ Ngoài ra: `ESCALATED` (từ P1/P2 breach hoặc Staff request) · `CLOSED_REJEC
     │   └── member-status.md ← /kltn-member  — check từng người
     └── dev/
         ├── be/            ← BE Dev dùng
-        │   ├── task.md              ← /kltn-task KAN-XX
+        │   ├── implement/SKILL.md   ← /kltn-implement [issue-number]
         │   ├── code-review.md       ← /kltn-reviewcode
-        │   ├── test.md              ← /kltn-test KAN-XX
-        │   ├── ship.md              ← /kltn-ship KAN-XX
-        │   ├── review-pr.md         ← /kltn-reviewpr KAN-XX
+        │   ├── test.md              ← /kltn-test [issue-number]
+        │   ├── ship.md              ← /kltn-ship [issue-number]
+        │   ├── review-pr.md         ← /kltn-reviewpr [issue-number]
         │   ├── scaffold-entity.md   ← /scaffold-entity Service Entity
         │   ├── scaffold-dto.md      ← /scaffold-dto Service Entity
         │   ├── scaffold-cqrs-command.md  ← /scaffold-cqrs-command Service Entity Action
@@ -99,9 +99,9 @@ Ngoài ra: `ESCALATED` (từ P1/P2 breach hoặc Staff request) · `CLOSED_REJEC
         │   ├── scaffold-integration-event.md ← /scaffold-integration-event EventName
         │   └── scaffold-unit-tests.md    ← /scaffold-unit-tests Service Entity
         ├── fe/            ← FE Dev dùng
-        │   ├── task.md, code-review.md, test.md, ship.md, review-pr.md
+        │   ├── implement/SKILL.md, code-review.md, test.md, ship.md, review-pr.md
         └── ai/            ← AI Dev dùng
-            ├── task.md, code-review.md, test.md, ship.md, review-pr.md
+            ├── implement/SKILL.md, code-review.md, test.md, ship.md, review-pr.md
             └── scaffold-fastapi-endpoint.md ← /scaffold-fastapi-endpoint <name>
 ```
 
@@ -134,7 +134,7 @@ Role phụ:   FE, AI    ← có thể dùng skills/dev/fe/ và skills/dev/ai/
 | | Leader | BE chính | FE chính | Ghi chú |
 |--|--------|----------|----------|---------|
 | **rules/** (đọc) | ✅ | ✅ | ✅ | Mọi người đọc tất cả |
-| `/kltn-task` | ✅ | ✅ | ✅ | Theo role của ticket |
+| `/kltn-implement` | ✅ | ✅ | ✅ | Theo role của ticket |
 | `/kltn-reviewcode` | ✅ | ✅ | ✅ | Theo role của ticket |
 | `/kltn-test` | ✅ | ✅ | ✅ | Không dùng Playwright/screenshot |
 | `/kltn-ship` | ✅ | ✅ | ✅ | |
@@ -185,11 +185,11 @@ Leader sync về sub-repo qua `bash sync-claude.sh` (subtree) + `push-to-org.sh`
 ## Nguyên tắc hoạt động
 
 - **Rules** — quy tắc bất biến, không ai được bỏ qua khi code
-- **Dev workflow** — quy trình chuẩn: `/kltn-task` → code → `/kltn-reviewcode` → `/kltn-test` → `/kltn-ship` → [reviewer] `/kltn-reviewpr` → [author] `/kltn-complete`
+- **Dev workflow** — quy trình chuẩn: `/kltn-implement` → code → `/kltn-reviewcode` → `/kltn-test` → `/kltn-ship` → [reviewer] `/kltn-reviewpr` → [author] `/kltn-complete`
 - **BE scaffold** — tạo boilerplate nhanh: `/scaffold-crud Service Entity` (full CRUD 1 lệnh)
 - **Leader skills** — tracking và planning, không can thiệp vào flow coding của dev
 - **Hooks** — tự động chạy sau mỗi edit .cs: build check, namespace validate, anti-pattern warning
-- **Log files** — `/kltn-reviewcode` ghi `logs/KAN-XX/review.md`, `/kltn-test` ghi `logs/KAN-XX/test.md`; `/kltn-ship` commit cả folder `logs/KAN-XX/` lên branch trước khi tạo PR; `/kltn-complete` tạo `logs/KAN-XX/handoff.md` rồi push → merge
+- **Log files** — `/kltn-reviewcode` ghi `logs/GH-[number]/review.md`, `/kltn-test` ghi `logs/GH-[number]/test.md`; `/kltn-ship` commit cả folder `logs/GH-[number]/` lên branch trước khi tạo PR; `/kltn-complete` tạo `logs/GH-[number]/handoff.md` rồi push → merge
 - Sprint plan và leader report (`/kltn-team`, `/kltn-member`) xuất trong conversation — không lưu file
 
 ## BE Scaffold Workflow (mới)

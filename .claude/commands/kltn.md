@@ -6,28 +6,44 @@ Hiển thị toàn bộ commands của dự án GSU26SE55.
 
 ## KLTN Commands — GSU26SE55
 
+### Thông tin & Setup
+
+| Command | Dùng khi nào |
+|---------|-------------|
+| `/kltn-setup` | Mới join project — xem hướng dẫn setup lần đầu (1 lần duy nhất) |
+| `/kltn-guide` | Xem hướng dẫn sử dụng hàng ngày, danh sách lệnh, quy tắc |
+| `/kltn` | Hiện menu này |
+
+---
+
 ### Dev Commands (tất cả thành viên)
 
 | Command | Dùng khi nào |
 |---------|-------------|
-| `/kltn-task KAN-XX` | Bắt đầu làm 1 ticket — đọc ticket → lập plan → code |
+| `/kltn-plan GH-XX` | Hiểu rõ task — đọc issue, hỏi nếu chưa rõ, lập plan, chờ approve |
+| `/kltn-implement GH-XX` | Implement — **yêu cầu plan đã approved** (chạy sau `/kltn-plan`) |
 | `/kltn-reviewcode` | Review code trước khi ship — xuất PASS / FAIL |
-| `/kltn-test KAN-XX` | Kiểm thử sau khi reviewcode PASS — xuất PASS / FAIL |
-| `/kltn-ship KAN-XX` | Tạo PR + cập nhật Jira sang IN REVIEW |
-| `/kltn-reviewpr KAN-XX` | Review PR của đồng đội — APPROVE hoặc REQUEST CHANGES (chỉ reviewer) |
-| `/kltn-complete KAN-XX` | Sau khi PR được APPROVE: tạo handoff → push → merge → update Jira (chỉ author) |
+| `/kltn-test GH-XX` | Kiểm thử sau khi reviewcode PASS — xuất PASS / FAIL |
+| `/kltn-ship GH-XX` | Tạo PR + cập nhật label → reviewing |
+| `/kltn-reviewpr GH-XX` | Review PR của đồng đội — APPROVE hoặc REQUEST CHANGES (chỉ reviewer) |
+| `/kltn-complete GH-XX` | Sau khi PR được APPROVE: tạo handoff → push → merge → done (chỉ author) |
 
-**Luồng chuẩn (bắt buộc với MỌI ticket):**
+**Luồng chuẩn (bắt buộc với MỌI task):**
 ```
-[Author]   /kltn-task KAN-XX → plan (xác nhận) → code → /kltn-reviewcode → /kltn-test KAN-XX → /kltn-ship KAN-XX
-[Reviewer] /kltn-reviewpr KAN-XX → APPROVE hoặc REQUEST CHANGES
-[Author]   /kltn-complete KAN-XX → handoff → merge → Jira Done
+[Author]   /kltn-plan GH-XX  → đọc issue → hỏi nếu chưa rõ → plan.md → approve
+[Author]   /kltn-implement GH-XX  → implement từng bước trong plan
+           → /kltn-reviewcode → /kltn-test GH-XX → /kltn-ship GH-XX
+[Reviewer] /kltn-reviewpr GH-XX → APPROVE hoặc REQUEST CHANGES
+[Author]   /kltn-complete GH-XX → handoff → merge → Done
 ```
 
-**Estimate size:**
-- Small (< 2h) — đi đủ luồng, nhanh hơn do scope nhỏ
-- Medium (2–4h) — đi đủ luồng
-- Large (> 4h) — hỏi leader trước khi code
+**Ví dụ thực tế (issue #42):**
+```
+/kltn-plan 42         ← đọc issue, hỏi nếu scope/approach chưa rõ, tạo plan
+/kltn-implement 42         ← implement theo plan đã approve
+/kltn-ship 42         ← tạo PR, label → reviewing
+/kltn-complete 42     ← merge PR, label → done
+```
 
 ---
 
@@ -35,10 +51,9 @@ Hiển thị toàn bộ commands của dự án GSU26SE55.
 
 | Command | Dùng khi nào |
 |---------|-------------|
-| `/kltn-sprint` | Đầu sprint — phân công task từ Jira, tạo sprint file |
-| `/kltn-team` | Báo cáo tiến độ toàn team + QA |
+| `/kltn-sprint` | Đầu sprint — tạo GitHub Issues trong sub-repos, phân công assignee |
+| `/kltn-team` | Báo cáo tiến độ toàn team |
 | `/kltn-member [tên]` | Check tiến độ từng người cụ thể |
-| `/kltn` | Hiện menu này |
 
 ---
 
@@ -46,7 +61,7 @@ Hiển thị toàn bộ commands của dự án GSU26SE55.
 
 Ticket được coi là **Done** khi **đủ cả 3**:
 1. `/kltn-reviewcode` → PASS
-2. `/kltn-test KAN-XX` → PASS
+2. `/kltn-test GH-XX` → PASS
 3. PR được ≥ 1 người approve và merged vào main
 
 ---
@@ -55,10 +70,11 @@ Ticket được coi là **Done** khi **đủ cả 3**:
 
 - Không push thẳng lên `main` — luôn qua PR
 - Không merge PR của chính mình — cần ít nhất 1 người approve
-- 1 ticket = 1 branch: `feature/KAN-XX-ten-ngan`
-- Commit format: `feat(KAN-XX): mô tả` / `fix` / `refactor` / `test`
+- 1 issue = 1 branch: `feature/GH-[number]-ten-ngan`
+- Commit format: `feat(#42): mô tả` / `fix(#42)` / `refactor(#42)` / `test(#42)`
+- PR body phải có `Closes #[number]` để GitHub tự close issue khi merge
 - Không thêm package ngoài tech stack trong `.claude/rules/tech/{be,fe,mobile,ai}.md`
 
 ---
 
-Gõ bất kỳ command nào ở trên để bắt đầu.
+Gõ `/kltn-guide` để xem hướng dẫn đầy đủ hoặc bất kỳ command nào ở trên để bắt đầu.

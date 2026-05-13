@@ -1,0 +1,25 @@
+name: Add issue to Sprint Board
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  add-to-project:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add to GSU26SE55 Sprint Board
+        env:
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN }}
+        run: |
+          gh api graphql -f query='
+          mutation($projectId: ID!, $contentId: ID!) {
+            addProjectV2ItemById(input: {
+              projectId: $projectId
+              contentId: $contentId
+            }) {
+              item { id }
+            }
+          }' \
+          -f projectId="PVT_kwDOEKtNA84BXeyy" \
+          -f contentId="${{ github.event.issue.node_id }}"
