@@ -4,7 +4,8 @@
 
 ```
 [LEADER]  /kltn-sprint  →  tạo GitHub Issues (label: status:init) + phân công
-[DEV]     /kltn-implement 123  →  đọc issue → plan.md → approve → post plan lên issue + label:implementing → code
+[DEV]     /kltn-plan 123        →  đọc issue → plan.md → approve → post plan lên issue + label:implementing
+[DEV]     /kltn-implement 123  →  đọc plan.md đã approved → code
           → /kltn-reviewcode → /kltn-test → /kltn-ship 123  →  PR + label:reviewing
 [REVIEWER] /kltn-reviewpr 123  →  approve / request changes
 [DEV]     /kltn-complete 123  →  merge PR + label:done + close issue
@@ -23,10 +24,12 @@
 
 Luồng chuẩn (áp dụng cho MỌI task, không phân biệt size):
 ```
-/kltn-implement 123  →  đọc GitHub Issue #123  →  viết plan.md
-               →  chờ user approve
+/kltn-plan 123       →  đọc GitHub Issue #123  →  phân tích gap
+               →  hỏi nếu chưa rõ scope/approach
+               →  viết plan.md  →  chờ user approve
                →  post plan lên issue + label: init → implementing
-               →  code
+
+/kltn-implement 123  →  đọc plan.md đã approved  →  code từng bước
                →  /kltn-reviewcode  →  /kltn-test
                →  /kltn-ship 123  →  PR + label: implementing → reviewing
 ```

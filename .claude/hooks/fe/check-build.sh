@@ -36,9 +36,16 @@ if [[ -z "$TSCONFIG_DIR" ]]; then exit 0; fi
 # node_modules chưa install → bỏ qua
 if [[ ! -d "$TSCONFIG_DIR/node_modules" ]]; then exit 0; fi
 
+TSC_BIN="$TSCONFIG_DIR/node_modules/.bin/tsc"
+if [[ ! -f "$TSC_BIN" ]]; then exit 0; fi
+
 cd "$TSCONFIG_DIR" || exit 0
 
-OUTPUT=$(npx tsc --noEmit 2>&1)
+if command -v rtk &>/dev/null; then
+  OUTPUT=$(rtk tsc --noEmit 2>&1)
+else
+  OUTPUT=$("$TSC_BIN" --noEmit 2>&1)
+fi
 EXIT_CODE=$?
 
 if [[ $EXIT_CODE -ne 0 ]]; then

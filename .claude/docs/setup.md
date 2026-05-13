@@ -6,6 +6,7 @@
 |---------|-----------|
 | [Claude Code](https://claude.ai/code) | Mới nhất — bắt buộc |
 | [GitHub CLI (`gh`)](https://cli.github.com/) | 2.40+ — bắt buộc |
+| [RTK](https://github.com/rtk-ai/rtk) | Mới nhất — bắt buộc |
 | Node.js | 18+ |
 | Git | 2.30+ |
 | Python | 3.x (cho pre-commit) |
@@ -88,7 +89,34 @@ Chạy trong folder repo. Làm **1 lần** — hook tự chạy mỗi lần comm
 
 ---
 
-### Bước 5 — Mở Claude Code và verify
+### Bước 5 — Cài RTK (token saver cho Claude Code)
+
+RTK nén output của các lệnh (build, test, git, gh...) trước khi gửi vào Claude — giảm 60–90% token tiêu thụ. Đã được cấu hình sẵn trong `workflow-ai/CLAUDE.md`; Claude Code tự dùng `rtk` prefix khi chạy commands, không cần làm thêm gì.
+
+**macOS:**
+```bash
+brew install rtk
+```
+
+**Windows (WSL — khuyến nghị):**
+```bash
+curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh
+```
+> Chạy lệnh này bên trong terminal WSL (Ubuntu). Nếu chưa có WSL: `wsl --install` trong PowerShell (Admin) rồi restart.
+
+**Windows (native — không dùng WSL):**
+1. Tải file `rtk-x86_64-pc-windows-msvc.zip` tại [github.com/rtk-ai/rtk/releases](https://github.com/rtk-ai/rtk/releases)
+2. Giải nén → copy `rtk.exe` vào một thư mục trong PATH (ví dụ `C:\Tools\`)
+3. Thêm thư mục đó vào System PATH nếu chưa có
+
+Kiểm tra:
+```bash
+rtk --version   # in ra phiên bản
+```
+
+---
+
+### Bước 6 — Mở Claude Code và verify
 
 > Claude Code **phải mở từ bên trong folder repo** — mở sai thư mục → không có lệnh `/kltn-*`.
 
@@ -107,6 +135,7 @@ Kiểm tra sau khi mở:
 ```bash
 gh auth status                                      # ✓ Logged in
 gh issue list --repo GSU26SE55/backend --limit 5    # thấy issues → OK
+rtk --version                                       # ✓ RTK installed
 ```
 
 Gõ `/kltn-guide` để xem hướng dẫn sử dụng.
@@ -200,7 +229,13 @@ done
 
 ---
 
-### Bước 8L — Mở Claude Code từ workflow-ai
+### Bước 8L — Cài RTK
+
+Tương tự Member — xem **Bước 5** ở trên (macOS / Windows / WSL). Đã cấu hình sẵn, không cần làm thêm gì.
+
+---
+
+### Bước 9L — Mở Claude Code từ workflow-ai
 
 ```bash
 cd ~/Documents/GSU26SE55/workflow-ai

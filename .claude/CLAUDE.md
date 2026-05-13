@@ -122,9 +122,10 @@ Ngoài ra: `ESCALATED` (từ P1/P2 breach hoặc Staff request) · `CLOSED_REJEC
         │   ├── test/SKILL.md        ← /kltn-test [issue-number]
         │   ├── ship/SKILL.md        ← /kltn-ship [issue-number]
         │   └── review-pr/SKILL.md   ← /kltn-reviewpr [issue-number]
-        └── ai/            ← AI Dev dùng
-            ├── implement/SKILL.md, code-review/SKILL.md, test/SKILL.md, ship/SKILL.md, review-pr/SKILL.md
-            └── scaffold-fastapi-endpoint/SKILL.md ← /scaffold-fastapi-endpoint <name>
+        ├── ai/            ← AI Dev dùng
+        │   ├── implement/SKILL.md, code-review/SKILL.md, test/SKILL.md, ship/SKILL.md, review-pr/SKILL.md
+        │   └── scaffold-fastapi-endpoint/SKILL.md ← /scaffold-fastapi-endpoint <name>
+        └── task/SKILL.md                      ← /kltn-task (tất cả role)
 ```
 
 ---
@@ -155,6 +156,7 @@ Role phụ:   FE, AI    ← có thể dùng skills/dev/fe/ và skills/dev/ai/
 | `/kltn-ship` | ✅ | ✅ | ✅ | |
 | `/kltn-reviewpr` | ✅ | ✅ | ✅ | Reviewer chạy — chỉ approve/request-changes |
 | `/kltn-complete` | ✅ | ✅ | ✅ | Author chạy sau khi PR được approve |
+| `/kltn-task` | ✅ | ✅ | ✅ | Tạo issue mới vào sub-repo của mình |
 | `/scaffold-crud` | ✅ | ✅ | 🔶 | FE dùng khi làm task BE phụ |
 | `/scaffold-entity` | ✅ | ✅ | 🔶 | |
 | `/scaffold-cqrs-command` | ✅ | ✅ | 🔶 | |
@@ -200,12 +202,28 @@ Leader sync về sub-repo qua `bash push-config.sh` (push workflow-ai lên org, 
 ## Nguyên tắc hoạt động
 
 - **Rules** — quy tắc bất biến, không ai được bỏ qua khi code
-- **Dev workflow** — quy trình chuẩn: `/kltn-implement` → code → `/kltn-reviewcode` → `/kltn-test` → `/kltn-ship` → [reviewer] `/kltn-reviewpr` → [author] `/kltn-complete`
+- **Dev workflow** — quy trình chuẩn: (tùy chọn: `/kltn-task` tạo task mới) → `/kltn-plan` → `/kltn-implement` → code → `/kltn-reviewcode` → `/kltn-test` → `/kltn-ship` → [reviewer] `/kltn-reviewpr` → [author] `/kltn-complete`
 - **BE scaffold** — tạo boilerplate nhanh: `/scaffold-crud Service Entity` (full CRUD 1 lệnh)
 - **Leader skills** — tracking và planning, không can thiệp vào flow coding của dev
 - **Hooks** — tự động chạy sau mỗi edit .cs: build check, namespace validate, anti-pattern warning
 - **Log files** — `/kltn-reviewcode` ghi `logs/GH-[number]/review.md`, `/kltn-test` ghi `logs/GH-[number]/test.md`; `/kltn-ship` commit cả folder `logs/GH-[number]/` lên branch trước khi tạo PR; `/kltn-complete` tạo `logs/GH-[number]/handoff.md` rồi push → merge
 - Sprint plan và leader report (`/kltn-team`, `/kltn-member`) xuất trong conversation — không lưu file
+
+### Lệnh kltn — tất cả role
+
+| Lệnh | Ai dùng | Tác dụng |
+|------|---------|---------|
+| `/kltn-task` | Dev | Tạo GitHub Issue mới vào sub-repo (skeleton, chưa cần plan) |
+| `/kltn-plan 123` | Dev | Đọc issue → phân tích gap → hỏi nếu chưa rõ → viết plan.md → chờ approve → post lên issue |
+| `/kltn-implement 123` | Dev | Implement — **yêu cầu plan đã approved** (chạy sau `/kltn-plan`) |
+| `/kltn-reviewcode` | Dev | Review diff — PASS / FAIL |
+| `/kltn-test 123` | Dev | Chạy test — PASS / FAIL |
+| `/kltn-ship 123` | Dev | Tạo PR + label → reviewing |
+| `/kltn-reviewpr 123` | Reviewer | Review PR → APPROVE / REQUEST CHANGES |
+| `/kltn-complete 123` | Author | Merge PR + label → done |
+| `/kltn-sprint` | **Leader** | Lên kế hoạch sprint — tạo issues + phân công |
+| `/kltn-team` | **Leader** | Báo cáo tiến độ toàn team |
+| `/kltn-member [tên]` | **Leader** | Check tiến độ từng người |
 
 ## BE Scaffold Workflow (mới)
 

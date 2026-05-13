@@ -141,6 +141,7 @@ gh issue create \
 Các thành viên:
 1. Vào GitHub Project GSU26SE55 → tab "My items" → xem issue được assign
 2. cd vào repo tương ứng (backend / frontend / mobile / ai-module)
-3. Chạy: /kltn-implement [issue-number]
-   Ví dụ: /kltn-implement 12
+3. Chạy: /kltn-plan [issue-number]      ← đọc issue, hỏi nếu chưa rõ, tạo plan, chờ approve
+   Sau đó: /kltn-implement [issue-number] ← bắt đầu code
+   Ví dụ: /kltn-plan 12 → /kltn-implement 12
 ```

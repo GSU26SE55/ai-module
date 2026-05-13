@@ -19,6 +19,7 @@ Hiển thị toàn bộ commands và hướng dẫn sử dụng hàng ngày củ
 
 | Command | Dùng khi nào |
 |---------|-------------|
+| `/kltn-task` | Tạo GitHub Issue mới vào sub-repo (skeleton — context sẽ post sau khi plan) |
 | `/kltn-plan GH-XX` | Hiểu rõ task — đọc issue, hỏi nếu chưa rõ, lập plan, chờ approve |
 | `/kltn-implement GH-XX` | Implement — **yêu cầu plan đã approved** |
 | `/kltn-reviewcode` | Review code trước khi ship — xuất PASS / FAIL |
@@ -29,6 +30,7 @@ Hiển thị toàn bộ commands và hướng dẫn sử dụng hàng ngày củ
 
 **Luồng chuẩn (bắt buộc với MỌI task):**
 ```
+[Author]   /kltn-task            → tạo issue mới (nếu chưa có)
 [Author]   /kltn-plan GH-XX      → đọc issue → hỏi nếu chưa rõ → plan.md → approve
 [Author]   /kltn-implement GH-XX → implement từng bước trong plan
            → /kltn-reviewcode → /kltn-test GH-XX → /kltn-ship GH-XX
@@ -38,6 +40,7 @@ Hiển thị toàn bộ commands và hướng dẫn sử dụng hàng ngày củ
 
 **Ví dụ thực tế (issue #42):**
 ```
+/kltn-task          ← tạo issue #42 (nếu chưa có)
 /kltn-plan 42       ← đọc issue, hỏi nếu scope/approach chưa rõ, tạo plan
 /kltn-implement 42  ← implement theo plan đã approve
 /kltn-ship 42       ← tạo PR, label → reviewing
@@ -105,6 +108,9 @@ Hiển thị toàn bộ commands và hướng dẫn sử dụng hàng ngày củ
 ### Luồng hàng ngày
 
 ```
+# 0. (Tùy chọn) Tạo issue mới nếu task chưa có trên board
+/kltn-task         ← nhập tiêu đề, type, priority → issue tự lên Sprint Board
+
 # 1. Xem task được assign
 Vào https://github.com/orgs/GSU26SE55/projects/3 → tab "My items"
 

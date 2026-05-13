@@ -20,7 +20,7 @@ done
 
 if [[ -z "$CSPROJ" ]]; then exit 0; fi
 
-BUILD_OUTPUT=$(dotnet build "$CSPROJ" --nologo -v q 2>&1)
+BUILD_OUTPUT=$(dotnet build "$CSPROJ" --nologo -v q --no-restore 2>&1)
 BUILD_EXIT=$?
 
 if [[ $BUILD_EXIT -ne 0 ]]; then
