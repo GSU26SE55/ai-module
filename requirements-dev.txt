@@ -1,0 +1,4 @@
+# Dev/test dependencies — không cần trên production
+pytest==8.4.2
+pytest-cov==7.1.0
+httpx==0.28.1
