@@ -5,6 +5,7 @@
 - **Role:** AI
 - **Ngày:** 2026-05-17
 - **Issue:** #2 — https://github.com/GSU26SE55/ai-module/issues/2
+- **PR:** #3 — https://github.com/GSU26SE55/ai-module/pull/3
 - **Sprint:** Sprint 1 (due: 2026-05-30)
 
 ## Mục tiêu
