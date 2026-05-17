@@ -5,3 +5,21 @@
 .DS_Store
 Thumbs.db
 logs/*.log
+
+# Dataset — raw và processed không commit (kích thước lớn)
+data/raw/
+data/processed/
+*.mat
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
