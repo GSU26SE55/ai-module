@@ -10,7 +10,7 @@
 **Đọc diff thực sự TRƯỚC khi viết bất cứ điều gì.**
 
 ```bash
-git diff main...HEAD
+git diff dev...HEAD
 # hoặc nếu đã stage: git diff --staged
 ```
 
@@ -125,7 +125,7 @@ _Vấn đề:_ Không phát hiện `await GetAllAsync()` hay `await UpdateAsync(
 
 **ĐÚNG** — Đọc diff trước, ghi evidence cụ thể:
 ```
-git diff main...HEAD | grep -n "await.*GetAllAsync\|await.*UpdateAsync\|await.*DeleteAsync"
+git diff dev...HEAD | grep -n "await.*GetAllAsync\|await.*UpdateAsync\|await.*DeleteAsync"
 # → BatteryCommandHandler.cs:34: await _unitOfWork.Batteries.UpdateAsync(entity);
 # 🔴 Critical: BatteryCommandHandler.cs:34 — UpdateAsync là void method, remove `await`
 ```

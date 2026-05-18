@@ -50,7 +50,7 @@
 - [ ] Không commit raw dataset?
 
 ### Conflict
-- [ ] Branch không có conflict với `main`?
+- [ ] Branch không có conflict với `dev`?
 
 ---
 

@@ -22,7 +22,7 @@ Dùng Edit tool cập nhật `logs/TICKET_ID/plan.md`:
 
 **Bước 4 — Lấy diff**
 ```bash
-git diff main...HEAD
+git diff dev...HEAD
 ```
 
 **Bước 5 — Chạy checklist theo role, xuất kết quả**

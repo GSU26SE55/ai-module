@@ -49,7 +49,7 @@
 - [ ] Không có breaking change với dữ liệu hiện tại?
 
 ### Conflict
-- [ ] Branch không có conflict với `main`?
+- [ ] Branch không có conflict với `dev`?
 - [ ] Không override code của người khác đang làm?
 
 ---

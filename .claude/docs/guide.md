@@ -180,14 +180,14 @@ Ticket chỉ được coi là **Done** khi đủ cả 3:
 
 1. `/kltn-reviewcode` → **PASS**
 2. `/kltn-test` → **PASS**
-3. PR được ≥ 1 người approve và **merged vào main**
+3. PR được ≥ 1 người approve và **merged vào dev**
 
 ---
 
 ## Quy tắc bắt buộc
 
 - **Không merge PR của chính mình** — cần ít nhất 1 người approve
-- **Không push thẳng lên main** — luôn qua PR
+- **Không push thẳng lên dev** — luôn qua PR
 - **1 issue = 1 branch** — `feature/GH-[number]-ten-ngan` (ví dụ: `feature/GH-42-battery-crud`)
 - **Commit format:** `feat(#42): mô tả` / `fix(#42)` / `refactor(#42)` / `test(#42)`
 - **PR body phải có** `Closes #[number]` — GitHub tự close issue khi merge
@@ -239,7 +239,7 @@ git push origin chore/ten-thay-doi
 # Mở PR → self-merge sau khi verify
 ```
 
-> **Lưu ý:** pre-commit hook chặn commit thẳng lên `main` — Leader cũng phải tạo branch và PR.
+> **Lưu ý:** pre-commit hook chặn commit thẳng lên `main` của `workflow-ai` — Leader cũng phải tạo branch và PR.
 
 Theo dõi Actions tại: https://github.com/GSU26SE55/workflow-ai/actions
 

@@ -9,7 +9,7 @@
 
 1. **Kiểm tra cuối**
    ```bash
-   git status && git log main...HEAD --oneline
+   git status && git log dev...HEAD --oneline
    ```
    Không có: `.env`, migration chưa apply, file build artifact
 

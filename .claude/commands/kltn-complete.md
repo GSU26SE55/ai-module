@@ -11,7 +11,7 @@ git branch --show-current
 ```
 
 - Nếu đang đứng ở `feature/GH-$ARGUMENTS-...` → dùng luôn branch này.
-- Nếu đang đứng ở `main` → liệt kê toàn bộ branch:
+- Nếu đang đứng ở `dev` → liệt kê toàn bộ branch:
   ```bash
   git branch
   ```
@@ -69,7 +69,7 @@ Dùng Write tool tạo `logs/GH-$ISSUE_NUMBER/handoff.md`:
 - reviewcode: PASS
 - test: PASS
 - reviewpr: APPROVED
-- PR: merged vào main
+- PR: merged vào dev
 
 ## Ghi chú
 [Thông tin kỹ thuật quan trọng: migration đã chạy, breaking change, cần update config...]
@@ -97,7 +97,7 @@ Nếu lệnh trên **thất bại**, dừng ngay và thực hiện recovery:
 
 2. Nếu merge conflict → resolve conflict trên branch, push lại, rồi thử lại:
    git checkout $BRANCH_NAME
-   git merge main
+   git merge dev
    # ... fix conflict ...
    git push origin $BRANCH_NAME
    gh pr merge $PR_NUMBER --merge
@@ -114,8 +114,8 @@ Nếu lệnh trên **thất bại**, dừng ngay và thực hiện recovery:
 
 Nếu merge **thành công**:
 ```bash
-git checkout main
-git pull origin main
+git checkout dev
+git pull origin dev
 ```
 
 **Bước 6 — Close GitHub Issue + cập nhật label**
@@ -132,7 +132,7 @@ gh issue edit $ISSUE_NUMBER \
 # Comment tóm tắt kết quả
 gh issue comment $ISSUE_NUMBER --body "## ✅ DONE — GH-$ISSUE_NUMBER
 
-**PR #$PR_NUMBER** đã merge vào main.
+**PR #$PR_NUMBER** đã merge vào dev.
 **Reviewer:** [tên reviewer]
 **Ngày merge:** $(date +%Y-%m-%d)
 

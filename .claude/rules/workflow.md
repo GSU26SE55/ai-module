@@ -69,7 +69,7 @@ Nội dung plan.md phải có:
 Một ticket được coi là **Done** khi đủ cả 3 điều kiện:
 1. Code đã được `/kltn-reviewcode` **PASS**
 2. `/kltn-test` xuất báo cáo **PASS**
-3. PR đã được ít nhất **1 người approve** và **merged vào main**
+3. PR đã được ít nhất **1 người approve** và **merged vào dev**
 
 ---
 
@@ -139,7 +139,7 @@ pytest tests/ -v --cov=src
 
 - Branch: `feature/GH-[number]-slug-ngan` (ví dụ: `feature/GH-42-battery-crud`)
 - 1 issue = 1 branch, commit thường xuyên
-- Không merge thẳng main — luôn qua PR
+- Không merge thẳng dev — luôn qua PR
 - Commit message: `type(#[number]): mô tả` (ví dụ: `feat(#42): add Battery CRUD`)
 - PR body **phải có** `Closes #[number]` để GitHub tự close issue khi merge
 

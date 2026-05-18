@@ -9,7 +9,7 @@
 
 1. **Kiểm tra cuối**
    ```bash
-   git status && git log main...HEAD --oneline
+   git status && git log dev...HEAD --oneline
    ```
    Không có: model weight files lớn (`.pt`, `.pth` > 50MB → dùng Git LFS hoặc link download), raw dataset, notebook checkpoint
 

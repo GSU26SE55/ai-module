@@ -43,7 +43,7 @@ git branch --show-current | grep -oE 'GH-[0-9]+'
 ## Bước 3 — Chạy pytest với coverage
 
 ```bash
-pytest tests/ -v --cov=src --cov-report=term
+pytest tests/ -v --cov=api --cov=data --cov=models --cov=train --cov-report=term-missing
 ```
 
 Target: **≥ 85% line coverage**. CI fail nếu < 85%.
@@ -54,8 +54,8 @@ Target: **≥ 85% line coverage**. CI fail nếu < 85%.
 
 ```bash
 # Chạy 2 lần với cùng input — kết quả phải giống nhau
-python -c "from src.infer import predict; print(predict(sample_input))"
-python -c "from src.infer import predict; print(predict(sample_input))"
+python -c "from models.soh_predictor import SOHPredictor; import torch; m=SOHPredictor(); m.eval(); x=torch.rand(1,30,3); print(m(x).item())"
+python -c "from models.soh_predictor import SOHPredictor; import torch; m=SOHPredictor(); m.eval(); x=torch.rand(1,30,3); print(m(x).item())"
 # Phải ra cùng output → seed = 42 hoạt động đúng
 ```
 

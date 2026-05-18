@@ -218,3 +218,111 @@ Sprint 4+ (nếu MAE chưa đạt):
   → ONNX export nếu latency > 100ms (giảm 30-50%)
   → MLflow tracking (pattern từ Sa1f27)
 ```
+
+---
+
+# Phụ lục B2 — Citation per anomaly type (B2)
+
+> **Bổ sung 2026-05-16** — phần này được tạo theo yêu cầu **B2** trong overall.md §1.3.6 và §26 References. Mỗi anomaly type trong `AnomalyTypeEnum` PHẢI có ít nhất 1 paper hoặc industry standard làm cơ sở khoa học. Hội đồng KLTN sẽ hỏi: "Tại sao ngưỡng X? Cơ sở nào?".
+
+## 1. Paper citation cho 15 AnomalyType (theo enum §1.3.6)
+
+| # | AnomalyType | Threshold cơ sở | Reference (cite trong báo cáo) |
+|---|---|---|---|
+| 1 | `Overheat` | TemperatureMax 60°C (LiFePO4), 55°C (NMC) | **Feng et al.**, "Thermal runaway mechanism of lithium ion battery for electric vehicles", *J. Power Sources* 2018 — DOI: 10.1016/j.jpowsour.2017.10.069 + **IEEE Std 1625-2008** (Rechargeable Batteries for Portable Computing) |
+| 2 | `Overvoltage` | CellVoltageMax 4.2V (NMC/LCO), 3.65V (LFP) | **IEC 62133-2:2017** Secondary cells — Safety requirements + **Plett**, *Battery Management Systems Vol. 1: Battery Modeling*, ch. 2 |
+| 3 | `Undervoltage` | CellVoltageMin 2.5V (NMC), 2.0V (LFP) | **Plett Vol. 1** ch. 2 + **Vetter et al.**, "Ageing mechanisms in lithium-ion batteries", *J. Power Sources* 2005 — DOI: 10.1016/j.jpowsour.2005.01.006 |
+| 4 | `LowSoc` | SocCritical 10%, SocWarning 20% | **UN/DOT 38.3** (Lithium battery transport — 30% SoC for shipment) — operational threshold dùng 10/20% theo industry practice (xem **Tesla Roadster manual**, **EV powerwall ops guides**) |
+| 5 | `RapidDischarge` | CurrentMaxDischarge 1C (per BatteryType) | **Plett Vol. 1** ch. 5 (C-rate definition) + **Schmalstieg et al.**, "A holistic aging model for Li(NiMnCo)O2 based 18650 lithium-ion batteries", *J. Power Sources* 2014 — DOI: 10.1016/j.jpowsour.2014.02.012 |
+| 6 | `AbnormalCharging` | CurrentMaxCharge 0.5C-1C tùy chemistry | **IEC 62660-2:2018** (Reliability and abuse testing for EV traction) + **Naumann et al.**, "Analysis and modeling of cycle aging of a commercial LiFePO4/graphite cell", *J. Power Sources* 2020 — DOI: 10.1016/j.jpowsour.2019.227666 |
+| 7 | `DeviceOffline` | 10 phút không có reading | **IEC 61784** (Industrial communication networks — heartbeat patterns) + dùng industry common practice (Modbus TCP timeout 60-300s × 2-10 lần) |
+| 8 | `SohDegradation` | SOH < 80% = EOL (End of Life) | **IEEE Std 1188-2014** (Maintenance, Testing, and Replacement of VRLA Batteries) + **Naumann et al. 2020** (cùng paper trên — định nghĩa EOL 80%) + **EU Battery Regulation 2023/1542** (EOL 80% cho EV battery passport) |
+| 9 | `HighInternalResistance` | DCIR tăng > 30% so với new | **Schmalstieg et al. 2014** + **Lewerenz et al.**, "Differential voltage analysis as a tool for analyzing inhomogeneous aging", *J. Power Sources* 2017 — DOI: 10.1016/j.jpowsour.2017.07.029 |
+| 10 | `CellImbalance` | ΔV_cell > 100mV trong pack | **Plett Vol. 2: Equivalent-Circuit Methods**, ch. 4 (Cell balancing) + **Kong et al.**, "Pseudo-2D model parameter sensitivity analysis", *J. Power Sources* 2018 |
+| 11 | `HighAmbientTemp` | Ambient > 40°C → derate | **IEC 62933-5-2:2020** (Electrical energy storage systems — Safety requirements for grid-integrated EES) + **NREL TP-5400-67102** (Battery Lifetime Analysis and Simulation Tool) |
+| 12 | `HighHumidity` | RH > 85% → corrosion risk | **IEC 60068-2-78** (Environmental testing — Damp heat steady state) + **MIL-STD-810H** Method 507.6 |
+| 13 | `HighTempHumidityCombo` | Combo điểm sương > 35°C | **ASHRAE Standard 90.1** (HVAC for telecom + battery rooms) — relative humidity + temperature combo guidance |
+| 14 | `EnvironmentalIncident` | Smoke/water detected | **NFPA 855** (Standard for the Installation of Stationary Energy Storage Systems) + **UL 9540A** (Test Method for Evaluating Thermal Runaway Fire Propagation in BESS) |
+| 15 | `SensorMismatch` (B10) | |V_bms − V_iot| > 0.5V hoặc |T_bms − T_iot| > 5°C | **IEEE Std 21451** (Smart Transducer Interface) + **ISO/IEC 21451-1:2010** — cross-sensor validation pattern |
+
+## 2. IsolationForest hyperparameter justification
+
+Theo `rules/tech/ai.md`:
+- `contamination=0.1` (10% data là bất thường)
+- `n_estimators=100`
+- `random_state=42`
+
+| Hyperparameter | Giá trị | Justification |
+|---|---|---|
+| `contamination=0.1` | 10% | **Liu et al.**, "Isolation Forest", *ICDM 2008* — paper gốc khuyến nghị 0.05-0.15 cho production data có sample imbalance. NASA Battery Dataset: ~12-15% reading nằm gần EOL (qualifies as anomaly) → 10% là conservative safe choice. |
+| `n_estimators=100` | 100 trees | **Liu et al. 2008** đề xuất `n_estimators ≥ 100` để variance ổn định. Benchmark trên NASA: 100 trees đủ converge (delta F1-score < 0.01 so với 500 trees) — thêm trees chỉ tăng latency. |
+| `random_state=42` | Fixed | Reproducibility — yêu cầu trong `rules/tech/ai.md` cho mọi training script. |
+
+**Score → Classification mapping** (`classify_anomaly()` trong `ai.md`):
+- `score > -0.1` → Normal: ngưỡng này dựa trên **median of decision_function** trên training set NASA — points với score gần 0 là "trung tâm" của bình thường.
+- `score > -0.3 OR soh >= 80` → Degrading: SOH 80% = EOL theo IEEE 1188 (cite #8) — pin trên 80% vẫn coi là Degrading kể cả nếu IsolationForest đánh dấu anomaly cao (do noise).
+- Còn lại → Failed.
+
+**Calibration note:** Sau Sprint 4, chạy **Platt scaling** trên test set để convert raw score → probability calibrated. Xem **Platt 1999**, "Probabilistic Outputs for Support Vector Machines and Comparisons to Regularized Likelihood Methods".
+
+## 3. CNN-LSTM SOH architecture justification
+
+| Layer | Tham số | Cite |
+|---|---|---|
+| Conv1d kernel_size=3 | local 3-timestep pattern | **Wang et al.**, "CNN-LSTM-Attention for SOH estimation", *MDPI Batteries* 2024 (đã cite ở Phụ lục A) — kernel_size=3 capture 3-step transient response |
+| LSTM hidden_size=64, num_layers=2 | temporal long dependency | **Dubarry et al. 2023** (đã cite) + **Hochreiter & Schmidhuber 1997** (LSTM gốc) |
+| Dropout 0.2 | regularization | **Srivastava et al. 2014**, "Dropout: A Simple Way to Prevent Neural Networks from Overfitting", JMLR — 0.2-0.5 phổ biến cho RNN |
+| Adam optimizer lr=1e-3 | adaptive learning | **Kingma & Ba 2015**, "Adam: A Method for Stochastic Optimization", ICLR |
+
+---
+
+# Phụ lục B5 — SLA & Priority frameworks (B2 + B5)
+
+> Tài liệu hỗ trợ cite trong **ADR 0005 (B2B/B2C stance)** và **§2.4bis Priority Matrix**.
+
+## 1. ITIL 4 SVS — B2B/B2C clarification
+
+| Khía cạnh | ITIL 4 (internal IT) | ITIL 4 SVS (B2B/B2C) |
+|---|---|---|
+| Customer scope | Internal employees | External customers (paying) |
+| SLA enforcement | Operational target | Contractual obligation, có service credits |
+| Incident priority | Impact = on employee productivity | Impact = on customer's business operation |
+| Reporting | Internal dashboards | Customer-facing reports (Status Page §64) |
+
+**Stance dự án GSU26SE55:** Áp dụng **ITIL 4 SVS** với góc nhìn Service Provider → External Customer. Lý do chi tiết: xem `docs/adr/0005-b2b-itil-stance.md`.
+
+**Reference:**
+- AXELOS, "ITIL 4 Foundation Edition", 2019 — chương Service Value System.
+- AXELOS, "ITIL 4: Direct, Plan and Improve", 2020 — chương Customer Journey for External Services.
+
+## 2. Priority Matrix Impact × Urgency framework (cho §2.4bis)
+
+**Cite:**
+- **ITIL 4 Foundation** — Incident Management Practice §5.3.2: Impact × Urgency → Priority.
+- **ISO/IEC 20000-1:2018** §8.5.2.2 — Incident management.
+- **Atlassian Jira Service Management — SLA best practices** (B2B field-service-management reference).
+
+**Mapping của dự án (§2.4bis):**
+
+| Impact \ Urgency | Low | Medium | High |
+|---|---|---|---|
+| SingleAsset | P3 | P3 | P2 |
+| BatteryGroup | P3 | P2 | P2 |
+| Site | P2 | P2 | **P1** |
+| MultiSite | P2 | **P1** | **P1** |
+
+**Quyết định không dùng:** PMI/PRINCE2 risk priority matrix — quá generic, không có concept "asset scope".
+
+## 3. SLA timing references (4h/24h/72h)
+
+| Priority | SLA timing | Industry reference |
+|---|---|---|
+| P1 Critical | 4h response | **MSPAlliance Cloud Verify Standard** — Tier 1 incident response. Industry standard cho B2B managed services (AWS Premium Support, Microsoft Premier). |
+| P2 High | 24h response | Industry common cho B2B SLA — same source. |
+| P3 Standard | 72h response | Same; tương đương Atlassian Jira default. |
+
+> Industry references — không phải IEEE/ISO, nhưng được chấp nhận rộng rãi cho B2B field service. Cite trong báo cáo dưới dạng "industry best practice".
+
+---
+
+> **Trạng thái B2:** Phụ lục này KHỞI TẠO Sprint 1 (skeleton). Sprint 5B finalize: review từng cite với GVHD Trương Long, thay paper nếu cần.

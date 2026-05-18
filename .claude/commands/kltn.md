@@ -161,13 +161,13 @@ dùng context7 tìm cách dùng useMutation trong TanStack Query v5
 Ticket được coi là **Done** khi **đủ cả 3**:
 1. `/kltn-reviewcode` → PASS
 2. `/kltn-test GH-XX` → PASS
-3. PR được ≥ 1 người approve và merged vào main
+3. PR được ≥ 1 người approve và merged vào dev
 
 ---
 
 ### Quy tắc bắt buộc
 
-- Không push thẳng lên `main` — luôn qua PR
+- Không push thẳng lên `dev` — luôn qua PR
 - Không merge PR của chính mình — cần ít nhất 1 người approve
 - 1 issue = 1 branch: `feature/GH-[number]-ten-ngan`
 - Commit format: `feat(#42): mô tả` / `fix(#42)` / `refactor(#42)` / `test(#42)`

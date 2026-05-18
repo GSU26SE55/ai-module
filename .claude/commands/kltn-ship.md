@@ -8,7 +8,7 @@ git branch --show-current
 ```
 
 - Nếu đang đứng ở nhánh `feature/GH-$ARGUMENTS-...` → ghi nhớ `$BRANCH_NAME`, tiếp tục Bước 2.
-- Nếu đang đứng ở `main` → liệt kê toàn bộ branch để xác định đúng feature branch:
+- Nếu đang đứng ở `dev` → liệt kê toàn bộ branch để xác định đúng feature branch:
   ```bash
   git branch
   ```
@@ -23,7 +23,7 @@ git branch --show-current
 **Bước 3 — Kiểm tra cuối**
 ```bash
 git status
-git log main...HEAD --oneline
+git log dev...HEAD --oneline
 ```
 
 **Bước 4 — Cập nhật status và commit logs**

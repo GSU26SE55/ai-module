@@ -10,7 +10,7 @@
 **Đọc diff thực sự TRƯỚC khi viết bất cứ điều gì.**
 
 ```bash
-git diff main...HEAD
+git diff dev...HEAD
 # hoặc nếu đã stage: git diff --staged
 ```
 
@@ -147,7 +147,7 @@ KẾT LUẬN: PASS
 
 **ĐÚNG** — Kiểm tra end-to-end scaler flow:
 ```bash
-git diff main...HEAD | grep -n "scaler\|MinMaxScaler\|fit\|transform"
+git diff dev...HEAD | grep -n "scaler\|MinMaxScaler\|fit\|transform"
 # inference.py:15: scaler = MinMaxScaler(); scaler.fit(X_inference)  ← fit lại trên production!
 # 🔴 Critical: inference.py:15 — scaler được fit lại trên production data
 #    Fix: load scaler từ models/weights/scaler.pkl thay vì fit lại

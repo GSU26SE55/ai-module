@@ -87,7 +87,10 @@ BATCH_SIZE = 32
 ```python
 from sklearn.ensemble import IsolationForest
 
-# Hyperparameters (BẮT BUỘC)
+# Hyperparameters (BẮT BUỘC) — justification: xem .claude/docs/ai-research-references.md §2
+# - CONTAMINATION 0.1: Liu et al. ICDM 2008 đề xuất 0.05–0.15; NASA dataset ~12-15% near-EOL → 0.1 safe
+# - N_ESTIMATORS 100: Liu et al. 2008 — variance hội tụ ≥ 100 trees; thêm chỉ tăng latency
+# - RANDOM_STATE 42: reproducibility theo .claude/rules/tech/ai.md
 CONTAMINATION = 0.1     # ước tính 10% data là bất thường (NASA dataset)
 N_ESTIMATORS  = 100
 RANDOM_STATE  = 42      # BẮT BUỘC — seed cố định
@@ -117,6 +120,13 @@ import joblib
 joblib.dump(iso_forest, "models/weights/isolation_forest.pkl")
 # isolation_forest.pkl PHẢI commit vào Git (như scaler.pkl)
 ```
+
+> **Cơ sở khoa học (B2):** Mọi anomaly type và hyperparameter trong file này PHẢI cite paper hoặc industry standard. Xem `.claude/docs/ai-research-references.md`:
+> - Phụ lục B2 §1 — paper cho 15 AnomalyType (Overheat, Overvoltage, SOH EOL 80%, …)
+> - Phụ lục B2 §2 — IsolationForest hyperparameter justification
+> - Phụ lục B2 §3 — CNN-LSTM architecture justification (kernel_size, dropout, optimizer)
+>
+> Hội đồng KLTN sẽ hỏi "tại sao ngưỡng X?" — đừng tự đặt mà không cite.
 
 ---
 

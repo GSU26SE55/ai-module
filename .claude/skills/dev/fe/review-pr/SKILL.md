@@ -58,7 +58,7 @@
 - [ ] `logs/GH-XX / #[number]/test.md` có kết quả PASS không?
 
 ### Conflict
-- [ ] Branch không có conflict với `main`?
+- [ ] Branch không có conflict với `dev`?
 - [ ] Không override component/store người khác đang sửa?
 
 ---
