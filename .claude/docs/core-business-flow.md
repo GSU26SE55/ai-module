@@ -185,7 +185,7 @@ sequenceDiagram
         Backend->>Backend: tính priority (P1/P2/P3) từ classification + dependency
         Customer->>Mobile: Tạo ticket thủ công (hoặc system auto-create)
         Mobile->>Backend: POST /tickets (assetId, category, description, files, priority_suggested)
-        Backend->>DB: lưu ticket (status=NEW, priority=auto)
+        Backend->>DB: lưu ticket (status=OPEN, priority=auto-calculated)
         Backend->>DB: ghi Activity Timeline
         Backend->>Notif: notify Manager
         Notif-->>Manager: ticket mới + priority gợi ý
@@ -243,7 +243,8 @@ Vòng đời 1 ticket. Mỗi state có role được phép chuyển trạng thá
 
 ```mermaid
 stateDiagram-v2
-    [*] --> NEW : Customer tạo / System auto-create
+    [*] --> NEW : Customer tạo thủ công
+    [*] --> OPEN : System auto-create từ alert<br/>(priority đã tính sẵn, bỏ qua NEW)
 
     NEW --> OPEN : Manager tiếp nhận<br/>(thêm vào queue)
     OPEN --> ASSIGNED : Manager xem xét priority<br/>+ assign Staff<br/>→ start SLA timer
@@ -252,12 +253,12 @@ stateDiagram-v2
     IN_PROGRESS --> IN_PROGRESS : Staff ghi log,<br/>comment Customer
 
     IN_PROGRESS --> WAITING_CUSTOMER : Staff cần thêm thông tin<br/>→ pause SLA có kiểm soát
-    WAITING_CUSTOMER --> IN_PROGRESS : Customer phản hồi<br/>→ resume SLA
+    WAITING_CUSTOMER --> IN_PROGRESS : Customer comment/phản hồi<br/>→ System auto-resume SLA
     IN_PROGRESS --> WAITING_PARTS : Cần linh kiện/on-site<br/>→ pause SLA có lý do
-    WAITING_PARTS --> IN_PROGRESS : Có linh kiện / tới lịch xử lý<br/>→ resume SLA
+    WAITING_PARTS --> IN_PROGRESS : Có linh kiện / tới lịch xử lý<br/>→ Staff resume thủ công
 
-    IN_PROGRESS --> RESOLVED : Staff mark resolved<br/>(Wiki bắt buộc)
-    IN_PROGRESS --> ESCALATED : Staff escalate chủ động tại 2/3 SLA<br/>HOẶC SLA breach
+    IN_PROGRESS --> RESOLVED : Staff mark resolved
+    IN_PROGRESS --> ESCALATED : Staff request escalate<br/>HOẶC System auto tại 2/3 SLA<br/>HOẶC SLA breach (P1/P2)
 
     ESCALATED --> ASSIGNED : Manager reassign<br/>tầng Staff cao hơn
     ESCALATED --> INCIDENT : Nhiều ticket liên quan<br/>hoặc rủi ro an toàn
@@ -284,15 +285,18 @@ stateDiagram-v2
         SLA pause phải có lý do,
         thời điểm pause/resume,
         và người thực hiện.
+        WAITING_CUSTOMER: auto-resume khi Customer comment.
+        WAITING_PARTS/ONSITE: Staff resume thủ công.
     end note
 
     note right of ESCALATED
         Trigger:
-        (1) Staff escalate chủ động tại 2/3 SLA
-        (2) Staff không xử lý nổi
-        (3) SLA sắp breach (80%)
-        (4) SLA đã breach
-        (5) Ticket reopen nhiều lần
+        (1) Staff request escalate (thiếu skill/scope)
+        (2) System auto tại 2/3 SLA (chưa có solution)
+        (3) SLA breach 100% — P1/P2 auto, P3 xử lý theo chuẩn P2
+        (4) Ticket reopen ≥ 2 lần
+        Sau escalate: Staff cũ bị block hoàn toàn
+        Staff mới (tầng trên) chịu trách nhiệm đóng ticket
     end note
 
     note right of INCIDENT
@@ -334,7 +338,7 @@ flowchart LR
     P3 -->|Staff xử lý xong| OK3[✅ RESOLVED]
     P3 -->|80% SLA| W3[⚠️ Reminder<br/>notify Staff]
     W3 --> P3
-    P3 -->|Breach 100%| E3[🔺 Manager review<br/>priority hoặc workload]
+    P3 -->|Breach 100%| E3[🔺 Escalate — xử lý<br/>theo chuẩn P2<br/>Manager reassign senior]
 
     E1 --> Critical[🚨 Incident flag<br/>notify Admin nếu rủi ro an toàn]
     E2 --> P1
@@ -664,8 +668,8 @@ flowchart TD
 | BR-08 | Mọi thay đổi quan trọng (assign, status, priority, pause SLA, approve, reject, reopen) phải lưu actor + timestamp + reason |
 | BR-09 | ThresholdConfig gắn theo Battery Type — thay đổi ngưỡng ảnh hưởng toàn bộ asset cùng loại, Admin phải xác nhận trước khi save |
 | BR-10 | Manager assign Staff đúng tầng: P1→Tier 1, P2→Tier 2, P3→Tier 3. Escalate = chuyển lên tầng cao hơn |
-| BR-11 | Trước khi mark RESOLVED, Staff phải tạo hoặc cập nhật Wiki tương ứng (mô tả từng bước, ảnh, mã lỗi gắn mã Ticket). Manager reject nếu thiếu Wiki khi approve |
-| BR-12 | Tầng nào nhận ticket thì tầng đó đóng. Đến 2/3 SLA chưa xong → bắt buộc escalate lên tầng trên, tầng trên chịu trách nhiệm đóng và tạo Wiki |
+| BR-11 | Wiki là quy trình mềm (không enforce cứng). Nếu lỗi đã có Wiki → Staff link ticket vào Wiki sẵn có; nếu chưa có → khuyến khích tạo Wiki mới. Manager có thể reject nếu thiếu hướng dẫn, không bắt buộc mỗi ticket phải tạo Wiki mới |
+| BR-12 | Tầng nào nhận ticket thì tầng đó đóng. System auto-trigger ESCALATED tại 2/3 SLA nếu chưa RESOLVED. Sau escalate, Staff cũ bị block hoàn toàn — Staff mới (tầng trên) chịu trách nhiệm đóng ticket. Không có ngoại lệ |
 
 ### Priority & SLA
 
@@ -673,7 +677,7 @@ flowchart TD
 |----------|-----|---------|------------|---------------|
 | P1 Critical | 4h | Rủi ro an toàn, mất điện, nguy cơ hư hại | Tier 1 (tổng thể) | Manager reassign Senior + notify Admin → Critical Incident nếu vẫn fail |
 | P2 High | 24h | Suy giảm hiệu năng rõ rệt, lỗi sạc/xả | Tier 2 (theo module) | Manager reassign Tier 1 (priority giữ P2) |
-| P3 Normal | 72h | Bất thường nhẹ, câu hỏi vận hành | Tier 3 (chuyên sâu) | Manager review + bàn giao nếu cần (ticket không vào ESCALATED) |
+| P3 Normal | 72h | Bất thường nhẹ, câu hỏi vận hành | Tier 3 (chuyên sâu) | Escalate xử lý theo chuẩn P2 — Manager reassign senior |
 
 > **Priority do System tính tự động** từ classification + dependency. Manager **xem xét và có thể điều chỉnh 1 lần** khi triage (OPEN → ASSIGNED) — phải ghi lý do vào Activity Timeline. Sau đó **không thay đổi** trong toàn bộ vòng đời ticket. Breach SLA → escalate thêm *nhân lực/cấp bậc*, không phải đổi deadline hay priority. Giữ priority cố định đảm bảo audit trail chính xác và SLA report không bị skew.
 
