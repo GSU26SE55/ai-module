@@ -307,7 +307,6 @@ Theo `rules/tech/ai.md`:
 | Impact \ Urgency | Low | Medium | High |
 |---|---|---|---|
 | SingleAsset | P3 | P3 | P2 |
-| BatteryGroup | P3 | P2 | P2 |
 | Site | P2 | P2 | **P1** |
 | MultiSite | P2 | **P1** | **P1** |
 

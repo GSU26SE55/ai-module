@@ -45,7 +45,7 @@ Chi tiết rules → [tech/fe.md](tech/fe.md)
 | Priority | SLA | Trigger | Breach action |
 |----------|-----|---------|---------------|
 | P1 Critical | < 4h | Pin mất điện / nguy cơ an toàn / scope Site hoặc MultiSite | Reassign Senior (Tier 3) + notify Admin |
-| P2 High | < 24h | Degradation đáng kể / scope BatteryGroup | Manager reassign Tier 2/3 |
+| P2 High | < 24h | Degradation đáng kể / SingleAsset urgency cao hoặc Site urgency thấp–TB | Manager reassign Tier 2/3 |
 | P3 Standard | < 72h | Bất thường nhẹ / bảo trì định kỳ / scope SingleAsset | Manager review |
 
 - Priority **tính từ Priority Matrix Impact × Urgency** (`overall.md §2.4bis`), KHÔNG nhập thẳng
