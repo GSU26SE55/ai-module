@@ -47,6 +47,7 @@ git push origin feature/GH-$ISSUE_NUMBER-ten-tinh-nang || { echo "❌ Push thấ
 
 ```bash
 gh pr create \
+  --base dev \
   --title "feat(#$ISSUE_NUMBER): [tóm tắt ngắn gọn]" \
   --body "$(cat <<'PREOF'
 ## Closes #ISSUE_NUMBER

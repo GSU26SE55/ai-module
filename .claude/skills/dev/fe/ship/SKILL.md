@@ -40,6 +40,7 @@
 5. **Tạo PR**
    ```bash
    gh pr create \
+     --base dev \
      --title "feat(#$ISSUE_NUMBER): [tóm tắt ngắn gọn]" \
      --body "$(cat <<'PREOF'
    ## Closes #ISSUE_NUMBER
