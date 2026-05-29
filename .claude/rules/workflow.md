@@ -6,8 +6,8 @@
 [LEADER]  /kltn-sprint  →  tạo GitHub Issues (label: status:init) + phân công
 [DEV]     /kltn-plan 123        →  đọc issue → plan.md → approve → post plan lên issue + label:implementing
 [DEV]     /kltn-implement 123  →  đọc plan.md đã approved → code
-          → /kltn-reviewcode → /kltn-test → /kltn-ship 123  →  PR + label:reviewing
-[REVIEWER] /kltn-reviewpr 123  →  approve / request changes
+          → /kltn-reviewcode → /kltn-test → /kltn-ship 123  →  PR + handoff + label:reviewing
+[REVIEWER] review PR trực tiếp trên GitHub  →  approve / request changes
 [DEV]     /kltn-complete 123  →  merge PR + label:done + close issue
 [LEADER]  /kltn-team hoặc /kltn-member [tên]
 ```
@@ -31,7 +31,9 @@ Luồng chuẩn (áp dụng cho MỌI task, không phân biệt size):
 
 /kltn-implement 123  →  đọc plan.md đã approved  →  code từng bước
                →  /kltn-reviewcode  →  /kltn-test
-               →  /kltn-ship 123  →  PR + label: implementing → reviewing
+               →  /kltn-ship 123  →  PR + handoff + label: implementing → reviewing
+               →  reviewer approve trên GitHub
+               →  /kltn-complete 123  →  merge PR + label: done
 ```
 
 **Bước Plan (bắt buộc với MỌI task):**

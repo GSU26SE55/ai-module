@@ -1,4 +1,4 @@
-Tạo Pull Request và cập nhật GitHub Issue. Chỉ chạy sau khi `/kltn-reviewcode` PASS và `/kltn-test` PASS.
+Tạo Pull Request, tạo handoff file, và cập nhật GitHub Issue. Chỉ chạy sau khi `/kltn-reviewcode` PASS và `/kltn-test` PASS.
 
 Issue number: `$ARGUMENTS`
 
@@ -54,13 +54,44 @@ Dùng Edit tool cập nhật `logs/GH-$ARGUMENTS/plan.md` — thêm dòng PR và
 PR: #$PR_NUMBER — $PR_URL
 ```
 
+**Bước 7 — Tạo handoff file**
+Dùng Write tool tạo `logs/GH-$ARGUMENTS/handoff.md`:
+
+```markdown
+# HANDOFF — GH-[number]: [Tên issue]
+
+## Thông tin
+- **Người thực hiện:** [tên từ CLAUDE.local.md]
+- **Ngày ship:** YYYY-MM-DD
+- **Status:** SHIPPED ⏳ (chờ reviewer approve)
+- **Issue:** #[number]
+- **PR:** #$PR_NUMBER — $PR_URL
+- **Branch:** $BRANCH_NAME
+
+## Tiến độ Steps
+[Copy nguyên ## Steps từ plan.md — tất cả phải [x]]
+
+## Những gì đã làm
+[Tóm tắt từ danh sách Files trong plan.md]
+
+## Kết quả
+- reviewcode: PASS
+- test: PASS
+- PR: tạo thành công — chờ reviewer approve
+
+## Ghi chú
+[Thông tin kỹ thuật quan trọng: migration đã chạy, breaking change, cần update config...]
+```
+
+**Bước 8 — Commit handoff và push lên branch**
+
 ```bash
-git add logs/GH-$ARGUMENTS/plan.md
-git commit -m "docs(#$ARGUMENTS): gắn PR #$PR_NUMBER vào plan"
+git add logs/GH-$ARGUMENTS/
+git commit -m "docs(#$ARGUMENTS): gắn PR #$PR_NUMBER vào plan + thêm handoff"
 git push origin HEAD
 ```
 
-**Bước 7 — Cập nhật GitHub Issue**
+**Bước 9 — Cập nhật GitHub Issue**
 
 ```bash
 # Chuyển label status: implementing → status: reviewing
@@ -72,8 +103,18 @@ gh issue edit $ARGUMENTS \
 gh issue comment $ARGUMENTS --body "## 👀 PR đã tạo — chờ review
 
 **PR:** #$PR_NUMBER — $PR_URL
-**Reviewer:** ping @[tên reviewer] để chạy \`/kltn-reviewpr $ARGUMENTS\`
+**Reviewer:** ping người review để xem PR trên GitHub và approve
 
 - reviewcode: ✅ PASS
-- test: ✅ PASS"
+- test: ✅ PASS
+
+Sau khi được APPROVE, author chạy \`/kltn-complete $ARGUMENTS\` để merge."
+```
+
+---
+
+Sau bước này, nhắc user:
+```
+Ship xong. PR #$PR_NUMBER đang chờ reviewer approve trên GitHub.
+Sau khi được approve, chạy /kltn-complete $ARGUMENTS để merge.
 ```

@@ -83,14 +83,13 @@ claude
 /kltn-test 12               ← Claude chạy test → PASS hoặc FAIL
 
 # 7. Ship
-/kltn-ship 12               ← Claude tạo PR + comment vào Issue
+/kltn-ship 12               ← Claude tạo PR + handoff file + comment vào Issue
                             ← Label tự đổi: implementing → reviewing
 
-# 8. Reviewer (đồng đội) chạy
-/kltn-reviewpr 12           ← APPROVE hoặc REQUEST CHANGES
+# 8. Reviewer xem PR trên GitHub và approve (không cần claude)
 
 # 9. Author chạy sau khi được APPROVE
-/kltn-complete 12           ← handoff → merge PR → label: done
+/kltn-complete 12           ← merge PR → label: done
                             ← Sprint Board tự cập nhật: In Progress → Done
 ```
 
@@ -107,9 +106,8 @@ claude
 | `/kltn-implement 123` | Implement — **yêu cầu plan đã approved** (chạy sau `/kltn-plan`) |
 | `/kltn-reviewcode` | Review code trước khi test |
 | `/kltn-test 123` | Test sau khi reviewcode PASS |
-| `/kltn-ship 123` | Tạo PR + cập nhật label → reviewing |
-| `/kltn-reviewpr 123` | **[Reviewer]** Review PR → APPROVE hoặc REQUEST CHANGES |
-| `/kltn-complete 123` | **[Author]** Sau khi PR APPROVE: handoff → push → merge → done |
+| `/kltn-ship 123` | Tạo PR + handoff file + cập nhật label → reviewing |
+| `/kltn-complete 123` | **[Author]** Sau khi PR APPROVE trên GitHub: merge → done |
 
 ### Scaffold BE (tạo boilerplate nhanh)
 

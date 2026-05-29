@@ -74,12 +74,14 @@
    gh issue comment $ISSUE_NUMBER --body "## 👀 PR đã tạo — chờ review
 
    **PR:** #$PR_NUMBER
-   **Reviewer:** ping @[tên reviewer] để chạy \`/kltn-reviewpr $ISSUE_NUMBER\`
+   **Reviewer:** ping người review để xem PR trên GitHub và approve
 
    - reviewcode: ✅ PASS
    - tsc --noEmit: ✅ PASS
    - eslint: ✅ PASS
-   - build: ✅ PASS"
+   - build: ✅ PASS
+
+   Sau khi được APPROVE, author chạy \`/kltn-complete $ISSUE_NUMBER\` để merge."
    ```
    > Sau bước này, ticket tự động chuyển từ **In Progress → In Review** trên Sprint Board.
 

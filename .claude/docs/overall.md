@@ -3303,8 +3303,8 @@ GitHub Actions step:
 - [ ] Code implement
 - [ ] `/kltn-reviewcode` → PASS, log `logs/KAN-XX/review.md`
 - [ ] `/kltn-test` → PASS với coverage report, log `logs/KAN-XX/test.md`
-- [ ] `/kltn-ship KAN-XX` — push branch + commit logs folder + tạo PR
-- [ ] Reviewer chạy `/kltn-reviewpr KAN-XX` → APPROVE
+- [ ] `/kltn-ship KAN-XX` — push branch + commit logs + tạo PR + handoff file
+- [ ] Reviewer approve PR trên GitHub
 - [ ] Author chạy `/kltn-complete` → merge
 
 ### 18.2. Per service (production-ready demo)
