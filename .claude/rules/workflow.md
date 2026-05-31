@@ -139,7 +139,20 @@ pytest tests/ -v --cov=src
 
 ## Git
 
-- Branch: `feature/GH-[number]-slug-ngan` (ví dụ: `feature/GH-42-battery-crud`)
+**Branching strategy:**
+
+| Branch | Mục đích | Tạo bởi |
+|--------|----------|---------|
+| `main` | Production-ready; protected — merge chỉ qua approved PR | — |
+| `dev` | Integration — target cho mọi feature PR | — |
+| `staging` | Test gần production | — |
+| `feat/GH-[number]-slug` | Feature branch — 1 issue = 1 branch | `/kltn-implement` |
+| `fix/GH-[number]-slug` | Bug fix — issue label `type: fix` | `/kltn-debug` |
+| `chore/[purpose]` | Maintenance — deps, config, tooling | manual |
+| `docs/[purpose]` | Documentation | manual |
+| `refactor/[purpose]` | Refactor — không đổi behavior | manual |
+| `test/[purpose]` | Viết / cập nhật test cases | manual |
+
 - 1 issue = 1 branch, commit thường xuyên
 - Không merge thẳng dev — luôn qua PR
 - Commit message: `type(#[number]): mô tả` (ví dụ: `feat(#42): add Battery CRUD`)

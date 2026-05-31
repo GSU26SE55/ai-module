@@ -46,9 +46,9 @@ Issue number: `$ARGUMENTS`
 **Bước 2 — Bắt đầu implement (khi user chọn Execute)**
 
 - Cập nhật `plan.md`: `Status: PLANNING → IN_PROGRESS`, `Ngày` → hôm nay.
-- Tạo branch theo format: `feature/GH-$ARGUMENTS-slug-ngan`
+- Tạo branch theo format: `feat/GH-$ARGUMENTS-slug-ngan`
   - Slug lấy từ title issue: viết thường, chỉ dùng `a-z`, `0-9`, dấu gạch ngang, tối đa 5 từ.
-  - Ví dụ: issue "Add Battery CRUD API" → `feature/GH-42-add-battery-crud-api`
+  - Ví dụ: issue "Add Battery CRUD API" → `feat/GH-42-add-battery-crud-api`
 
 Thực hiện từng Step trong `plan.md` theo thứ tự:
 

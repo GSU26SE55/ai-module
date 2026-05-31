@@ -104,7 +104,7 @@ You are implementing GitHub Issue #$ISSUE_NUMBER for a Mobile (React Native / Ex
 Follow ALL coding conventions in .codex/skills/fe/ and the mobile CLAUDE.md
 (Expo Router, expo-secure-store, TanStack Query hooks, service layer, src/lib/axios.ts only).
 
-Branch to create: feature/GH-$ISSUE_NUMBER-$SLUG
+Branch to create: feat/GH-$ISSUE_NUMBER-$SLUG
 
 == IMPLEMENTATION PLAN ==
 [toàn bộ nội dung logs/GH-$ISSUE_NUMBER/plan.md]
@@ -131,7 +131,7 @@ SLUG=$(gh issue view $ISSUE_NUMBER --json title -q '.title' \
   | cut -d'-' -f1-5 \
   | sed 's/-$//')
 
-git checkout -b feature/GH-$ISSUE_NUMBER-$SLUG
+git checkout -b feat/GH-$ISSUE_NUMBER-$SLUG
 ```
 
 ### Bước 4 — Implement theo cấu trúc Mobile

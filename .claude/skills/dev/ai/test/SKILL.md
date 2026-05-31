@@ -27,7 +27,7 @@
 Issue number lấy từ argument của lệnh. Nếu không có:
 ```bash
 git branch --show-current | grep -oE 'GH-[0-9]+'
-# feature/GH-56-soh-lstm → GH-56
+# feat/GH-56-soh-lstm → GH-56
 ```
 
 ---

@@ -33,7 +33,7 @@ Không nhận xét từ memory hay đọc code lướt qua. Tool calls trước,
 
 ```bash
 git branch --show-current | grep -oE 'GH-[0-9]+'
-# feature/GH-12-battery-crud → TICKET_ID = GH-12
+# feat/GH-12-battery-crud → TICKET_ID = GH-12
 ```
 
 Nếu không xác định được → hỏi user trước khi tiếp tục.

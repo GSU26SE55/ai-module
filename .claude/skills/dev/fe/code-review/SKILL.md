@@ -33,7 +33,7 @@ Không nhận xét từ memory hay đọc lướt. Tool calls trước, text out
 
 ```bash
 git branch --show-current | grep -oE 'GH-[0-9]+'
-# feature/GH-34-login-page → TICKET_ID = GH-34
+# feat/GH-34-login-page → TICKET_ID = GH-34
 ```
 
 Nếu không xác định được → hỏi user trước khi tiếp tục.

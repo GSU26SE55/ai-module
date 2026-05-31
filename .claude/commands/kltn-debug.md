@@ -34,7 +34,7 @@ git branch --show-current
 ```
 
 Kiểm tra branch hiện tại:
-- Nếu đang đứng ở `feature/GH-$ARGUMENTS-...` → dùng luôn, ghi nhớ `$BRANCH_NAME`
+- Nếu đang đứng ở `feat/GH-$ARGUMENTS-...` hoặc `fix/GH-$ARGUMENTS-...` → dùng luôn, ghi nhớ `$BRANCH_NAME`
 - Nếu không → tìm branch liên quan đến issue:
 
 ```bash
@@ -44,8 +44,9 @@ git branch -a | grep "GH-$ARGUMENTS"
   - **Tìm thấy** → checkout:
     ```bash
     git fetch origin
-    git checkout feature/GH-$ARGUMENTS-...
-    git pull origin feature/GH-$ARGUMENTS-...
+    BRANCH=$(git branch -a | grep "GH-$ARGUMENTS" | head -1 | sed 's|remotes/origin/||' | xargs)
+    git checkout $BRANCH
+    git pull origin $BRANCH
     ```
   - **Không tìm thấy** → tạo branch mới từ dev:
     ```bash

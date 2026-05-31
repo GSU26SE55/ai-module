@@ -23,7 +23,7 @@
 
 3. **Push branch**
    ```bash
-   git push origin feature/GH-$ISSUE_NUMBER-ten-tinh-nang || { echo "❌ Push thất bại — chạy: gh auth status"; exit 1; }
+   git push origin feat/GH-$ISSUE_NUMBER-ten-tinh-nang || { echo "❌ Push thất bại — chạy: gh auth status"; exit 1; }
    ```
 
 4. **Tạo PR**

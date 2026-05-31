@@ -169,7 +169,8 @@ Ticket được coi là **Done** khi **đủ cả 3**:
 
 - Không push thẳng lên `dev` — luôn qua PR
 - Không merge PR của chính mình — cần ít nhất 1 người approve
-- 1 issue = 1 branch: `feature/GH-[number]-ten-ngan`
+- Branch theo type: `feat/GH-[number]-slug` (feature) · `fix/GH-[number]-slug` (bug fix) · `chore/[purpose]` · `docs/[purpose]` · `refactor/[purpose]` · `test/[purpose]`
+- 1 issue = 1 branch, merge chỉ qua PR vào `dev`
 - Commit format: `feat(#42): mô tả` / `fix(#42)` / `refactor(#42)` / `test(#42)`
 - PR body phải có `Closes #[number]` để GitHub tự close issue khi merge
 - Không commit `CLAUDE.local.md` — đã có trong `.gitignore`

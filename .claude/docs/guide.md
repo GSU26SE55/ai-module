@@ -186,7 +186,10 @@ Ticket chỉ được coi là **Done** khi đủ cả 3:
 
 - **Không merge PR của chính mình** — cần ít nhất 1 người approve
 - **Không push thẳng lên dev** — luôn qua PR
-- **1 issue = 1 branch** — `feature/GH-[number]-ten-ngan` (ví dụ: `feature/GH-42-battery-crud`)
+- **Branching strategy** — 1 issue = 1 branch, prefix theo type:
+  - `feat/GH-[number]-slug` — feature (tạo bởi `/kltn-implement`)
+  - `fix/GH-[number]-slug` — bug fix (tạo bởi `/kltn-debug`)
+  - `chore/[purpose]` · `docs/[purpose]` · `refactor/[purpose]` · `test/[purpose]` — manual
 - **Commit format:** `feat(#42): mô tả` / `fix(#42)` / `refactor(#42)` / `test(#42)`
 - **PR body phải có** `Closes #[number]` — GitHub tự close issue khi merge
 - **Không commit** `CLAUDE.local.md` — đã có trong `.gitignore`

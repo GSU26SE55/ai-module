@@ -8,12 +8,12 @@ Issue number: `$ARGUMENTS`
 git branch --show-current
 ```
 
-- Nếu đang đứng ở `feature/GH-$ARGUMENTS-...` → dùng luôn branch này.
+- Nếu đang đứng ở `feat/GH-$ARGUMENTS-...` hoặc `fix/GH-$ARGUMENTS-...` → dùng luôn branch này.
 - Nếu đang đứng ở `dev` → liệt kê toàn bộ branch:
   ```bash
-  git branch
+  git branch | grep "GH-$ARGUMENTS"
   ```
-  Sau đó `git checkout feature/GH-$ARGUMENTS-...` trước khi tiếp tục.
+  Sau đó checkout branch tìm được trước khi tiếp tục.
 
 Lấy thông tin PR:
 ```bash

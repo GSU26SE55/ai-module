@@ -7,12 +7,12 @@ Issue number: `$ARGUMENTS`
 git branch --show-current
 ```
 
-- Nếu đang đứng ở nhánh `feature/GH-$ARGUMENTS-...` → ghi nhớ `$BRANCH_NAME`, tiếp tục Bước 2.
-- Nếu đang đứng ở `dev` → liệt kê toàn bộ branch để xác định đúng feature branch:
+- Nếu đang đứng ở nhánh `feat/GH-$ARGUMENTS-...` hoặc `fix/GH-$ARGUMENTS-...` → ghi nhớ `$BRANCH_NAME`, tiếp tục Bước 2.
+- Nếu đang đứng ở `dev` → liệt kê toàn bộ branch để xác định đúng branch:
   ```bash
-  git branch
+  git branch | grep "GH-$ARGUMENTS"
   ```
-  Sau đó `git checkout feature/GH-$ARGUMENTS-...` trước khi tiếp tục.
+  Sau đó checkout branch tìm được trước khi tiếp tục.
 
 **Bước 2 — Xác định role**
 Đọc CLAUDE.local.md. Nếu có **Dev Role** → dùng Dev Role. Nếu chỉ có Role → dùng Role đó.
