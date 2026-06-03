@@ -4,9 +4,9 @@ import pytest
 class TestWindowUtils:
     def test_window_size_30(self):
         """A valid reading sequence must have exactly 30 timesteps."""
-        readings = [[3.7, 1.5, 25.0]] * 30
+        readings = [[3.7, 1.5, 25.0, 1.0, 3.5, 12.0]] * 30
         assert len(readings) == 30
-        assert all(len(r) == 3 for r in readings)
+        assert all(len(r) == 6 for r in readings)
 
     def test_invalid_window_size_raises(self):
         """PredictRequest validator must reject sequences != 30 timesteps."""
@@ -15,23 +15,32 @@ class TestWindowUtils:
         from src.schemas.predict import PredictRequest
 
         with pytest.raises(ValidationError, match="30 timesteps"):
-            PredictRequest(battery_id="B0005", readings=[[3.7, 1.5, 25.0]] * 29)
+            PredictRequest(battery_id="B0005", readings=[[3.7, 1.5, 25.0, 1.0, 3.5, 12.0]] * 29)
 
     def test_invalid_feature_count_raises(self):
-        """PredictRequest validator must reject rows with != 3 features."""
+        """PredictRequest validator must reject rows with unsupported feature count."""
         from pydantic import ValidationError
 
         from src.schemas.predict import PredictRequest
 
-        with pytest.raises(ValidationError, match="3 features"):
+        with pytest.raises(ValidationError, match="feature counts"):
             PredictRequest(battery_id="B0005", readings=[[3.7, 1.5]] * 30)
 
     def test_valid_request_passes(self):
         from src.schemas.predict import PredictRequest
 
-        req = PredictRequest(battery_id="B0005", readings=[[3.7, 1.5, 25.0]] * 30)
+        req = PredictRequest(
+            battery_id="B0005",
+            readings=[[3.7, 1.5, 25.0, 1.0, 3.5, 12.0]] * 30,
+        )
         assert req.battery_id == "B0005"
         assert len(req.readings) == 30
+
+    def test_legacy_three_feature_request_passes(self):
+        from src.schemas.predict import PredictRequest
+
+        req = PredictRequest(battery_id="B0005", readings=[[3.7, 1.5, 25.0]] * 30)
+        assert len(req.readings[0]) == 3
 
 
 class TestSOHFormula:

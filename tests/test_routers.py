@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from src.models.soh_predictor import SOHPredictor
+from src.models.soh_predictor import MambaSOHPredictor
 
 
 def make_dummy_loader():
@@ -14,7 +14,7 @@ def make_dummy_loader():
     scaler = MinMaxScaler()
     scaler.fit(np.random.rand(50, 3))
 
-    model = SOHPredictor()
+    model = MambaSOHPredictor()
     model.eval()
 
     iso = IsolationForest(n_estimators=10, random_state=42)
@@ -49,7 +49,7 @@ class TestHealthRouter:
         resp = client.get("/health")
         data = resp.json()
         assert "scaler_loaded" in data
-        assert "lstm_loaded" in data
+        assert "mamba_loaded" in data
         assert "isolation_forest_loaded" in data
 
 

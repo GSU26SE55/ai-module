@@ -4,7 +4,7 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from src.models.soh_predictor import SOHPredictor
+from src.models.soh_predictor import MambaSOHPredictor
 
 
 def make_dummy_readings(n: int = 30) -> list[list[float]]:
@@ -21,7 +21,7 @@ class TestInferencePipeline:
         dummy_scaler = MinMaxScaler()
         dummy_scaler.fit(np.random.rand(50, 3))
 
-        dummy_model = SOHPredictor()
+        dummy_model = MambaSOHPredictor()
         dummy_model.eval()
 
         dummy_iso = IsolationForest(n_estimators=10, random_state=42)
