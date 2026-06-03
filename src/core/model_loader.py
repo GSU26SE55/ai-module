@@ -5,12 +5,12 @@ import torch
 
 from src.core.config import (
     ISO_FOREST_PATH,
-    LSTM_PATH,
+    MAMBA_PATH,
     MODEL_VERSION,
     SCALER_PATH,
     SCALER_VERSION,
 )
-from src.models.soh_predictor import SOHPredictor
+from src.models.soh_predictor import MambaSOHPredictor
 
 scaler = None
 soh_model = None
@@ -22,7 +22,7 @@ def load_models() -> None:
 
     for path, label in [
         (SCALER_PATH, "MinMaxScaler"),
-        (LSTM_PATH, "LSTM model"),
+        (MAMBA_PATH, "Mamba model"),
         (ISO_FOREST_PATH, "Isolation Forest"),
     ]:
         if not os.path.exists(path):
@@ -38,12 +38,13 @@ def load_models() -> None:
         )
     scaler = scaler_artifact["scaler"]
 
-    checkpoint = torch.load(LSTM_PATH, map_location="cpu", weights_only=False)
+    checkpoint = torch.load(MAMBA_PATH, map_location="cpu", weights_only=False)
     if checkpoint["version"] != MODEL_VERSION:
         raise RuntimeError(
             f"Model version mismatch: expected {MODEL_VERSION}, got {checkpoint['version']}"
         )
-    soh_model = SOHPredictor()
+    input_features = checkpoint.get("input_features", 3)
+    soh_model = MambaSOHPredictor(input_features=input_features)
     soh_model.load_state_dict(checkpoint["model_state_dict"])
     soh_model.eval()
 

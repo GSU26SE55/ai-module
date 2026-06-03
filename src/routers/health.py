@@ -12,6 +12,6 @@ async def health() -> dict:
         "status": "ok",
         "model_version": MODEL_VERSION,
         "scaler_loaded": model_loader.scaler is not None,
-        "lstm_loaded": model_loader.soh_model is not None,
+        "mamba_loaded": model_loader.soh_model is not None,
         "isolation_forest_loaded": model_loader.iso_model is not None,
     }

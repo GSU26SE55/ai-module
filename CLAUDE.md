@@ -20,9 +20,12 @@
 
 ---
 
-## ⚠️ Architecture — LSTM/CNN-LSTM + Isolation Forest
+## ⚠️ Architecture — Mamba + Isolation Forest
 
-**SOHPredictor:** `Conv1d(3→32, k=3) → MaxPool1d(2) → LSTM(32→64, 2 layers, dropout=0.2) → Linear(64→32) → Linear(32→1)`
+**MambaSOHPredictor:** `Linear(3→64) → MambaBlock×2(d_model=64, d_state=16, d_conv=4, expand=2) → LayerNorm → last token → Linear(64→32) → GELU+Dropout(0.2) → Linear(32→1)`
+
+> Pure PyTorch — không dùng `mamba-ssm` CUDA library, chạy được Windows 11 native.
+> Artifact: `models/weights/soh_mamba_v1.0.pth` (không phải `soh_lstm_*.pth`)
 
 **IsolationForest:** `contamination=0.1, n_estimators=100, random_state=42`
 
