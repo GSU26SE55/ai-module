@@ -17,6 +17,10 @@
       "Bash(ls:*)",
       "Bash(cp:*)",
       "Bash(mv:*)",
+      "Bash(dotnet:*)",
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(node:*)",
       "Bash(python:*)",
       "Bash(python3:*)",
       "Bash(pip:*)",
@@ -59,6 +63,48 @@
       {
         "matcher": "Edit|Write",
         "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/be/post-edit-feedback.sh",
+            "timeout": 10,
+            "statusMessage": "Checking BE code patterns..."
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/be/validate-namespace.sh",
+            "timeout": 5,
+            "statusMessage": "Validating namespace..."
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/be/check-dbcontext-update.sh",
+            "timeout": 5,
+            "statusMessage": "Checking entity registration..."
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/be/check-di-registration.sh",
+            "timeout": 5,
+            "statusMessage": "Checking DI registration..."
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/be/check-build.sh",
+            "timeout": 60,
+            "statusMessage": "Building .NET project..."
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/fe/post-edit-feedback.sh",
+            "timeout": 10,
+            "statusMessage": "Checking FE code patterns..."
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/fe/check-build.sh",
+            "timeout": 60,
+            "statusMessage": "TypeScript type check..."
+          },
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/ai/check-ruff.sh",

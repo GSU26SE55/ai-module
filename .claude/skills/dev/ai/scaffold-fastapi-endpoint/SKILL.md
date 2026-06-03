@@ -122,7 +122,13 @@ app.include_router({name}.router)
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {
+        "status":                  "ok",
+        "model_version":           "1.0",
+        "scaler_loaded":           getattr(app.state, "scaler",    None) is not None,
+        "lstm_loaded":             getattr(app.state, "model",     None) is not None,
+        "isolation_forest_loaded": getattr(app.state, "iso_model", None) is not None,
+    }
 ```
 
 **Thêm import CORSMiddleware vào đầu file:**

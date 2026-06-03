@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GSU26SE55 — Flow theo Role (Admin / Manager / Staff / Customer)</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "SF Pro Text", Roboto, sans-serif;
+      margin: 0;
+      padding: 0;
+      background: #f7f8fa;
+      color: #1f2937;
+      line-height: 1.6;
+    }
+    header {
+      background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
+      color: white;
+      padding: 32px 48px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    header h1 { margin: 0 0 8px 0; font-size: 26px; font-weight: 600; }
+    header .meta { font-size: 14px; opacity: 0.9; }
+    header .meta strong { font-weight: 600; }
+
+    nav {
+      position: sticky;
+      top: 0;
+      background: white;
+      border-bottom: 1px solid #e5e7eb;
+      padding: 12px 48px;
+      z-index: 10;
+      display: flex;
+      gap: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    nav a {
+      padding: 8px 16px;
+      border-radius: 8px;
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 500;
+      color: #374151;
+      transition: all 0.15s;
+    }
+    nav a:hover { background: #f3f4f6; }
+    nav a.admin   { border-left: 3px solid #ef4444; }
+    nav a.manager { border-left: 3px solid #3b82f6; }
+    nav a.staff   { border-left: 3px solid #10b981; }
+    nav a.customer{ border-left: 3px solid #8b5cf6; }
+
+    main { padding: 32px 48px 64px; max-width: 1280px; margin: 0 auto; }
+
+    section.role {
+      background: white;
+      border-radius: 12px;
+      padding: 32px;
+      margin-bottom: 24px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+      border-top: 4px solid;
+    }
+    section#admin    { border-top-color: #ef4444; }
+    section#manager  { border-top-color: #3b82f6; }
+    section#staff    { border-top-color: #10b981; }
+    section#customer { border-top-color: #8b5cf6; }
+
+    section.role h2 {
+      margin: 0 0 4px 0;
+      font-size: 22px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    section.role h2 .badge {
+      font-size: 11px;
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+    #admin h2 .badge    { background: #fee2e2; color: #b91c1c; }
+    #manager h2 .badge  { background: #dbeafe; color: #1d4ed8; }
+    #staff h2 .badge    { background: #d1fae5; color: #047857; }
+    #customer h2 .badge { background: #ede9fe; color: #6d28d9; }
+
+    section.role .platform {
+      font-size: 13px;
+      color: #6b7280;
+      margin-bottom: 16px;
+    }
+
+    .meta-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      margin: 12px 0 24px;
+    }
+    .meta-table td {
+      padding: 6px 12px;
+      border: 1px solid #e5e7eb;
+    }
+    .meta-table td:first-child {
+      font-weight: 600;
+      color: #374151;
+      background: #f9fafb;
+      width: 160px;
+      white-space: nowrap;
+    }
+
+    .mermaid {
+      text-align: center;
+      padding: 16px 0;
+      overflow-x: auto;
+    }
+
+    footer {
+      text-align: center;
+      padding: 24px;
+      font-size: 13px;
+      color: #6b7280;
+      border-top: 1px solid #e5e7eb;
+      margin-top: 32px;
+    }
+
+    .legend {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+      font-size: 12px;
+      color: #4b5563;
+    }
+    .legend-item { display: flex; align-items: center; gap: 6px; }
+    .legend-color {
+      width: 14px; height: 14px; border-radius: 3px;
+      border: 1px solid #d1d5db;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>GSU26SE55 — Solar Lithium-ion Battery Maintenance Management System</h1>
+  <div class="meta">
+    <strong>Flow theo Role</strong> · Admin / Manager / Staff / Customer ·
+    Scope: <strong>SE-only</strong> · ITIL Ticket &amp; SLA Management
+  </div>
+</header>
+
+<nav>
+  <a href="#admin"    class="admin">🔴 Admin</a>
+  <a href="#manager"  class="manager">🔵 Manager</a>
+  <a href="#staff"    class="staff">🟢 Staff</a>
+  <a href="#customer" class="customer">🟣 Customer</a>
+</nav>
+
+<main>
+
+<!-- ============== ADMIN ============== -->
+<section id="admin" class="role">
+  <h2>🔴 Admin <span class="badge">WEB APP</span></h2>
+  <div class="platform">Setup 1 lần + giám sát định kỳ. Không tham gia daily operation.</div>
+
+  <table class="meta-table">
+    <tr><td>Entry</td><td>Login Web App với tài khoản super-admin</td></tr>
+    <tr><td>Task chính</td><td>User CRUD · Battery Type + ThresholdConfig per Type · Battery Asset · SLA rules · Audit log</td></tr>
+    <tr><td>Tần suất</td><td>Setup 1 lần + cập nhật khi có yêu cầu</td></tr>
+    <tr><td>Quyền đặc biệt</td><td>Disable account · Reset password · Restore DB · Incident visibility</td></tr>
+  </table>
+
+  <div class="mermaid">
+flowchart TD
+    Start([Admin mở Web App]) --> L1[Nhập email + password]
+    L1 --> L2{Credential OK?}
+    L2 -->|Sai| L3[Hiện lỗi<br/>+ đếm số lần sai] --> L1
+    L2 -->|Đúng| L4{2FA enabled?}
+    L4 -->|Có| L5[Nhập OTP]
+    L4 -->|Không| Dashboard
+    L5 --> L6{OTP OK?}
+    L6 -->|Sai| L5
+    L6 -->|Đúng| Dashboard[Admin Dashboard]
+
+    Dashboard --> T1[👥 User Management]
+    Dashboard --> T2[🔋 Battery Config]
+    Dashboard --> T6[🧾 Battery Asset]
+    Dashboard --> T3[📋 SLA Rules]
+    Dashboard --> T4[📊 Audit Log]
+    Dashboard --> T5[⚙️ System Settings]
+
+    T1 --> U1{Hành động}
+    U1 -->|Tạo mới| U2[Chọn role<br/>Manager/Staff/Customer]
+    U2 --> U3[Điền info<br/>email, SĐT, tên]
+    U3 --> U4{Validate email<br/>unique?}
+    U4 -->|Trùng| U3
+    U4 -->|OK| U5[Generate password<br/>+ gửi email invite]
+    U5 --> U6[Log audit event]
+    U1 -->|Edit| U7[Sửa info / role]
+    U1 -->|Disable| U8[Confirm + revoke token]
+    U1 -->|Reset PWD| U9[Gửi link reset]
+
+    T2 --> B1[Chọn loại pin<br/>LFP / NMC / ...]
+    B1 --> B1b{Loại pin đã có?}
+    B1b -->|Chưa| B1c[Tạo mới Battery Type<br/>tên + specs chung]
+    B1b -->|Có rồi| B2
+    B1c --> B2[Mở ThresholdConfig<br/>của loại pin này]
+    B2 --> B3[Cấu hình ngưỡng cảnh báo<br/>theo từng thông số]
+    B3 --> B4[V_min · V_max<br/>T_max · SOC_warning<br/>I_max · SOH_threshold...]
+    B4 --> B5{Customer đang<br/>dùng loại pin này?}
+    B5 -->|Có| B6[Warning:<br/>thay đổi sẽ affect N assets]
+    B6 --> B7[Confirm → save ThresholdConfig]
+    B5 -->|Không| B7
+
+    T6 --> BA1[Create Battery Asset<br/>serial + battery type + size/vị trí]
+    BA1 --> BA2[Link Customer<br/>owner/current user]
+    BA2 --> BA3[Set install date<br/>warranty + nguồn đọc: IoT / BMS]
+    BA3 --> BA4[View asset history<br/>alerts / tickets / sensor readings]
+
+    T3 --> SR1[Set response time per priority<br/>+ Staff tier tương ứng]
+    SR1 --> SR2[P1: 4h → Staff Tier 1<br/>P2: 24h → Staff Tier 2<br/>P3: 72h → Staff Tier 3]
+    SR2 --> SR3[Set escalation threshold<br/>Escalate chủ động tại 2/3 SLA<br/>Breach 100% → auto-escalate]
+    SR3 --> SR4[Set priority mapping<br/>anomaly type → priority<br/>dependency → nâng priority]
+
+    T4 --> AL1[Filter by user/action/date]
+    AL1 --> AL2[Xem chi tiết event]
+    AL2 --> AL3[Export CSV nếu cần audit]
+
+    T5 --> SY1[Email template]
+    T5 --> SY2[Notification config]
+    T5 --> SY3[Backup manual trigger]
+    T5 --> SY4[Restore DB<br/>⚠️ destructive]
+  </div>
+</section>
+
+<!-- ============== MANAGER ============== -->
+<section id="manager" class="role">
+  <h2>🔵 Manager <span class="badge">WEB APP</span></h2>
+  <div class="platform">Điều phối viên — hoạt động liên tục trong Phase 4 (Triage) và Phase 6 (Verify).</div>
+
+  <table class="meta-table">
+    <tr><td>Entry</td><td>Login Web App khi có ticket mới hoặc kiểm tra định kỳ</td></tr>
+    <tr><td>Task chính</td><td>Xem xét priority tự động → Điều chỉnh nếu cần → Assign Staff theo tầng → Review Wiki + Approve resolution</td></tr>
+    <tr><td>Căn cứ xem xét</td><td>Thông số sensor của cục pin đó · Ảnh/video Customer gửi · Dependency report từ System</td></tr>
+    <tr><td>Giới hạn</td><td>Không tự đặt priority từ đầu — chỉ điều chỉnh từ priority đã tính · Không xử lý ticket trực tiếp</td></tr>
+  </table>
+
+  <div class="mermaid">
+flowchart TD
+    Start([Manager login]) --> Dash[Manager Dashboard]
+
+    Dash --> KPI[Xem KPI<br/>Open: X · Overdue: Y<br/>SLA breach: Z%]
+
+    KPI --> Action{Có ticket<br/>cần xử lý?}
+    Action -->|Không| Idle[Xem report<br/>hoặc chờ notification]
+    Action -->|Có| Queue[Mở Ticket Queue<br/>ORDER BY priority · createdAt]
+
+    Queue --> Pick[Mở ticket — xem priority<br/>đã tính tự động từ System]
+
+    Pick --> Review1[Xem thông số sensor<br/>của cục pin đó<br/>V · I · T · SOC · SOH<br/>chart lịch sử bất thường]
+    Review1 --> Review2[Xem ảnh / video<br/>Customer đã đính kèm<br/>+ mô tả sự cố]
+    Review2 --> Review3[Xem Dependency report<br/>pin hỏng ảnh hưởng<br/>bao nhiêu pin khác?]
+
+    Review3 --> PriorityCheck{Priority tự động<br/>có phù hợp không?}
+    PriorityCheck -->|Phù hợp| Assign
+    PriorityCheck -->|Cần điều chỉnh| AdjPriority[Điều chỉnh priority<br/>+ ghi lý do bắt buộc<br/>vào Activity Timeline]
+    AdjPriority --> Assign
+
+    Assign[Assign Staff theo tầng SLA] --> AC0[P1 → Staff Tier 1<br/>tổng thể hệ thống<br/>P2 → Staff Tier 2<br/>chuyên theo module<br/>P3 → Staff Tier 3<br/>chuyên sâu lĩnh vực]
+    AC0 --> AC1{Staff tầng phù hợp<br/>còn capacity?}
+    AC1 -->|Không| AC2[Xem workload<br/>toàn bộ Staff cùng tầng]
+    AC2 --> AC3[Chọn Staff load thấp nhất<br/>trong tầng phù hợp]
+    AC1 -->|Có| AC4[Xem skill match<br/>với loại pin / module]
+    AC3 --> AC5[Confirm assign]
+    AC4 --> AC5
+    AC5 --> Notify[System: start SLA timer<br/>+ push notify Staff]
+
+    Notify --> Wait{Chờ Staff xử lý}
+
+    Wait -->|Staff mark RESOLVED| Verify[Review Maintenance Log<br/>+ Wiki đã tạo chưa?]
+    Wait -->|Staff escalate chủ động<br/>tại 2/3 SLA| Escalate
+    Wait -->|SLA breach| Escalate
+    Wait -->|Reopen nhiều lần| Escalate
+
+    Verify --> Check{Chất lượng xử lý OK?<br/>Wiki đã có?}
+    Check -->|OK + có Wiki| Approve[Approve<br/>→ status CLOSED_PENDING_RATE]
+    Check -->|Chưa ổn / thiếu Wiki| Reject[Reject<br/>→ gửi lại Staff IN_PROGRESS<br/>kèm note yêu cầu bổ sung]
+
+    Reject --> Wait
+
+    Escalate[🔺 Escalation Decision] --> ED1{Ticket đang ở<br/>Staff tầng nào?}
+    ED1 -->|Tier 1 — P1 chưa resolve| ED6[🚨 Critical incident<br/>Notify Admin + toàn team]
+    ED1 -->|Tier 2 — P2| ED5[Reassign Staff Tier 1<br/>nâng xử lý tổng thể]
+    ED1 -->|Tier 3 — P3| ED4[Reassign Staff Tier 2<br/>chuyên module phù hợp]
+    ED4 --> Notify
+    ED5 --> Notify
+
+    Approve --> End{Customer rate?}
+    End -->|Rate good| Closed[CLOSED]
+    End -->|Reopen| Queue
+    End -->|No action 7 ngày| Closed
+
+    Dash --> Report[📊 Reports]
+    Report --> R1[Staff Performance theo tầng]
+    Report --> R2[SLA Compliance]
+    Report --> R3[Customer Satisfaction]
+    Report --> R4[Export PDF/Excel]
+  </div>
+</section>
+
+<!-- ============== STAFF ============== -->
+<section id="staff" class="role">
+  <h2>🟢 Staff <span class="badge">WEB APP</span></h2>
+  <div class="platform">Xử lý ticket theo mô hình băng chuyền — nhiều ticket song song.</div>
+
+  <table class="meta-table">
+    <tr><td>Entry</td><td>Login Web App · nhận push notification ticket mới</td></tr>
+    <tr><td>Task chính</td><td>Đọc ticket → Tra Wiki → Đưa ra solution → Ghi log → Tạo/cập nhật Wiki → Resolved hoặc Escalate</td></tr>
+    <tr><td>Tần suất</td><td>Continuous — xử lý nhiều ticket song song (băng chuyền)</td></tr>
+    <tr><td>Giới hạn</td><td>Không đổi priority · Không approve resolution · Escalate sớm hơn là muộn hơn · Wiki bắt buộc trước Resolved</td></tr>
+  </table>
+
+  <div style="background:#fef3c7;border-left:3px solid #f59e0b;padding:10px 14px;border-radius:0 6px 6px 0;font-size:13px;margin-bottom:20px;color:#92400e">
+    <strong>Nguyên tắc escalate chủ động:</strong> Mốc cứng tại <strong>2/3 SLA</strong> (P1: ~2h40 · P2: 16h · P3: 48h) mà chưa hoàn thành → bắt buộc escalate ngay. Ghi lý do + % SLA đã dùng.
+  </div>
+
+  <div class="mermaid">
+flowchart TD
+    Start([Staff login]) --> Dash[Staff Dashboard<br/>SLA countdown hiển thị<br/>real-time trên mỗi ticket]
+    Dash --> MyT[My Tickets<br/>sắp xếp theo SLA còn lại]
+
+    MyT --> N1{Ticket nào<br/>ưu tiên?}
+    N1 -->|P1 / SLA ít nhất| Accept[Mở ticket — P1 hoặc<br/>ticket gần hết SLA nhất]
+    N1 -->|Xem đang làm| N2[Tiếp tục ticket<br/>đang IN_PROGRESS]
+
+    Accept --> Read[Đọc toàn bộ thông tin ticket<br/>mô tả Customer + ảnh<br/>battery asset + lịch sử alert]
+    Read --> SLACheck{Còn bao nhiêu<br/>% SLA?}
+    SLACheck -->|"> 2/3 SLA còn"| Proceed[Tiến hành xử lý<br/>trong zone an toàn]
+    SLACheck -->|"< 1/2 SLA còn<br/>chưa rõ hướng"| EarlyEsc[⚡ Escalate sớm<br/>không chờ tới breach]
+
+    Proceed --> KB{Wiki có trường hợp<br/>tương tự không?}
+    KB -->|Có| WikiSol[Đọc Wiki solution<br/>áp dụng hướng xử lý đã ghi]
+    KB -->|Không| ManualDiag[Phân tích từ dữ liệu ticket<br/>battery history + alert gốc]
+
+    WikiSol --> CanSolve{Đủ cơ sở đưa ra<br/>solution không?}
+    ManualDiag --> CanSolve
+
+    CanSolve -->|Có| WriteSol[Viết solution vào ticket<br/>hướng xử lý cụ thể]
+    CanSolve -->|Không / Vượt skill| EscDecide
+
+    WriteSol --> LogEntry[Ghi Maintenance Log<br/>nguyên nhân + solution đề xuất]
+    LogEntry --> WikiCheck{Wiki đã có<br/>trường hợp này chưa?}
+    WikiCheck -->|Đã có| WikiUpdate[Bổ sung vào Wiki hiện có<br/>gắn mã Ticket]
+    WikiCheck -->|Chưa có| WikiCreate[Tạo Wiki mới<br/>B1→B2→B3 · ảnh đính kèm<br/>mã lỗi gắn mã Ticket]
+    WikiUpdate --> Resolve
+    WikiCreate --> Resolve
+    Resolve[Mark RESOLVED<br/>+ tóm tắt xử lý] --> WaitApprove{Manager review<br/>+ kiểm tra Wiki}
+    WaitApprove -->|Approve| Done[✅ CLOSED_PENDING_RATE]
+    WaitApprove -->|Reject — thiếu Wiki<br/>hoặc solution chưa rõ| Read
+
+    EscDecide{Còn trong<br/>window 1/2 → 2/3 SLA?}
+    EscDecide -->|Còn thời gian — thử tiếp| Proceed
+    EscDecide -->|Đã qua 2/3 SLA<br/>hoặc không tự tin| Escalate
+
+    EarlyEsc --> Escalate
+    Escalate[🔺 Request Escalation] --> EscReason[Ghi lý do bắt buộc<br/>— thiếu skill / vượt scope<br/>— đã qua 2/3 SLA chưa có solution<br/>— % SLA đã dùng: X%]
+    EscReason --> EscSend[Submit → Manager nhận<br/>ticket vào queue của Manager]
+    EscSend --> BackDash[Back to Dashboard<br/>xử lý ticket tiếp theo]
+
+    MyT --> SLAMon[🕐 SLA Monitor — real-time<br/>tất cả ticket đang mở<br/>màu: xanh / vàng / đỏ]
+    SLAMon --> Threshold{"Ticket nào đang<br/>ở vùng 1/2 → 2/3 SLA?"}
+    Threshold -->|Có và chưa có solution| EscDecide
+    Threshold -->|Tất cả trong zone an toàn| MyT
+  </div>
+</section>
+
+<!-- ============== CUSTOMER ============== -->
+<section id="customer" class="role">
+  <h2>🟣 Customer <span class="badge">MOBILE APP</span></h2>
+  <div class="platform">Hành vi chia 3 loại: monitoring daily · react-to-alert · ticket management.</div>
+
+  <table class="meta-table">
+    <tr><td>Entry</td><td>Mobile App (iOS/Android) · Push notification</td></tr>
+    <tr><td>Task chính</td><td>Xem pin · Nhận cảnh báo · Tạo/theo dõi ticket · Rate service</td></tr>
+    <tr><td>Tần suất</td><td>Daily check + khi có alert</td></tr>
+    <tr><td>Self-service</td><td>Xem history · Export data · Cài đặt notification · Quản lý thiết bị pin</td></tr>
+  </table>
+
+  <div class="mermaid">
+flowchart TD
+    Start([Mở Mobile App]) --> First{Lần đầu?}
+
+    First -->|Có| Reg[Đăng ký<br/>email/SĐT]
+    Reg --> OTP[Nhập OTP]
+    OTP --> Link[Link thiết bị pin<br/>scan QR / serial]
+    Link --> Home
+
+    First -->|Không| Login[Login<br/>email + password]
+    Login --> LC{OK?}
+    LC -->|Sai| Login
+    LC -->|Đúng| Home[Home Dashboard]
+
+    Home --> Asset[Chọn Battery Asset<br/>nếu có nhiều thiết bị]
+    Asset --> Mon[📊 Daily Monitoring]
+    Mon --> View[Xem real-time<br/>V · I · T · SOC %]
+    View --> Health{Trạng thái?}
+    Health -->|Normal 🟢| Idle[Idle, đóng app]
+    Health -->|Warning 🟡| CheckChart[Xem chart<br/>7d/30d]
+    Health -->|Critical 🔴| AlertFlow
+
+    CheckChart --> Decide{Có cần báo?}
+    Decide -->|Không| Idle
+    Decide -->|Có| CreateT
+
+    Home --> Alert[🔔 Push notification]
+    Alert --> AlertFlow[Mở alert<br/>xem lý do + ngưỡng vượt<br/>+ thông số cục pin]
+    AlertFlow --> AS{System đã<br/>tạo ticket chưa?}
+    AS -->|Đã tạo tự động| GoTrack[Vào xem ticket<br/>đang được xử lý]
+    AS -->|Chưa — chỉ cảnh báo<br/>thông tin, chưa ảnh hưởng| InfoOnly[Đọc thông tin<br/>theo dõi tiếp]
+    GoTrack --> Track
+    InfoOnly --> Idle
+
+    CreateT[Tạo Ticket thủ công] --> CT0[Chọn battery asset<br/>đúng serial/thiết bị]
+    CT0 --> CT1[Chọn loại sự cố<br/>Charging · Overheat · No power ...]
+    CT1 --> CT2[Mô tả chi tiết hiện tượng]
+    CT2 --> CT3[Upload ảnh/video<br/>tối đa 5 files<br/>⚠️ ảnh giúp Manager xem xét chính xác hơn]
+    CT3 --> CT4[Xem priority gợi ý<br/>do System tính tự động<br/>Customer không tự chọn priority]
+    CT4 --> CT5[Submit]
+    CT5 --> CT6[Nhận ticket ID<br/>+ thời gian phản hồi dự kiến<br/>theo priority]
+
+    CT6 --> Track
+
+    Home --> MyT[📋 My Tickets]
+    MyT --> Track[Xem tiến trình<br/>OPEN → IN_PROGRESS → RESOLVED]
+
+    Track --> TS{Status hiện tại?}
+    TS -->|Staff hỏi| Reply[Trả lời comment<br/>+ ảnh bổ sung]
+    TS -->|WAITING_CUSTOMER| Reply
+    TS -->|IN_PROGRESS lâu| ChaseCheck{Quá SLA?}
+    TS -->|RESOLVED/PENDING RATE| ReviewRes
+
+    Home --> WaitPush[🔔 Push: Staff cần thông tin<br/>từ bạn · ticket đang chờ]
+    WaitPush --> OpenTicket[Mở ticket từ notification<br/>xem comment Staff]
+    OpenTicket --> Reply
+
+    ChaseCheck -->|Có| Chase[Nhắc qua comment<br/>hoặc liên hệ hotline]
+    ChaseCheck -->|Chưa| Track
+
+    Reply --> Track
+    Chase --> Track
+
+    ReviewRes[Review kết quả xử lý<br/>đọc maintenance log] --> Verdict{Hài lòng?}
+    Verdict -->|Có| Rate[Rate 1-5 sao<br/>+ comment]
+    Rate --> Closed[✅ Ticket CLOSED]
+    Verdict -->|Không| ReopenCheck{Trong 7 ngày?}
+    ReopenCheck -->|Có| Reopen[Reopen<br/>mô tả vấn đề còn]
+    ReopenCheck -->|Không| NewTicket[Tạo ticket mới]
+    Reopen --> Track
+    NewTicket --> CreateT
+    Verdict -->|Không action 7d| Auto[System auto-close]
+
+    Home --> Profile[👤 Profile]
+    Profile --> P1[Sửa thông tin]
+    Profile --> P2[Đổi mật khẩu]
+    Profile --> P3[Notification settings<br/>- Push on/off<br/>- Email digest<br/>- Alert threshold cá nhân]
+    Profile --> P4[My Battery Assets<br/>serial, warranty, history]
+  </div>
+</section>
+
+<div class="legend">
+  <div class="legend-item"><span class="legend-color" style="background:#fee2e2;border-color:#ef4444"></span>Admin</div>
+  <div class="legend-item"><span class="legend-color" style="background:#dbeafe;border-color:#3b82f6"></span>Manager</div>
+  <div class="legend-item"><span class="legend-color" style="background:#d1fae5;border-color:#10b981"></span>Staff</div>
+  <div class="legend-item"><span class="legend-color" style="background:#ede9fe;border-color:#8b5cf6"></span>Customer</div>
+  <div class="legend-item"><span class="legend-color" style="background:#fef3c7;border-color:#f59e0b"></span>Decision Point</div>
+</div>
+
+</main>
+
+<footer>
+  Project GSU26SE55 · Core Business Flow · SRS-ready · SE-only scope
+</footer>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'default',
+    flowchart: {
+      curve: 'basis',
+      padding: 20,
+      nodeSpacing: 50,
+      rankSpacing: 60
+    }
+  });
+</script>
+
+</body>
+</html>

@@ -12,12 +12,15 @@
 | Auth token | expo-secure-store | Lưu token an toàn (không dùng AsyncStorage cho token) |
 | Notifications | expo-notifications | Push notification khi có cảnh báo |
 | Charts | Victory Native | Battery health chart, SOH trend |
+| Image picker | expo-image-picker | Pick ảnh từ gallery/camera để upload avatar (GH-4) |
+| QR Code | react-native-qrcode-svg + react-native-svg | Hiển thị QR code 2FA setup (GH-4) |
+| Validation | Zod | Schema-first validation cho form — nhất quán với Web. Không dùng React Hook Form (thiết kế cho web DOM) — parse thủ công bằng `schema.safeParse()` |
 
 ## Packages cần cài
 
 ```bash
-npx expo install expo-router expo-secure-store expo-notifications
-npm install @tanstack/react-query zustand axios
+npx expo install expo-router expo-secure-store expo-notifications expo-image-picker react-native-svg
+npm install @tanstack/react-query zustand axios react-native-qrcode-svg zod
 ```
 
 ---

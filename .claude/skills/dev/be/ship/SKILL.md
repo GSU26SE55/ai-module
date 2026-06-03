@@ -9,7 +9,7 @@
 
 1. **Kiểm tra cuối**
    ```bash
-   git status && git log main...HEAD --oneline
+   git status && git log dev...HEAD --oneline
    ```
    Không có: `.env`, migration chưa apply, file build artifact
 
@@ -21,12 +21,13 @@
 
 3. **Push branch**
    ```bash
-   git push origin feature/GH-$ISSUE_NUMBER-ten-tinh-nang || { echo "❌ Push thất bại — chạy: gh auth status"; exit 1; }
+   git push origin feat/GH-$ISSUE_NUMBER-ten-tinh-nang || { echo "❌ Push thất bại — chạy: gh auth status"; exit 1; }
    ```
 
 4. **Tạo PR**
    ```bash
    gh pr create \
+     --base dev \
      --title "feat(#$ISSUE_NUMBER): [tóm tắt ngắn gọn]" \
      --body "$(cat <<'PREOF'
    ## Closes #ISSUE_NUMBER
@@ -55,10 +56,12 @@
    gh issue comment $ISSUE_NUMBER --body "## 👀 PR đã tạo — chờ review
 
    **PR:** #$PR_NUMBER
-   **Reviewer:** ping @[tên reviewer] để chạy \`/kltn-reviewpr $ISSUE_NUMBER\`
+   **Reviewer:** ping người review để xem PR trên GitHub và approve
 
    - reviewcode: ✅ PASS
-   - test: ✅ PASS"
+   - test: ✅ PASS
+
+   Sau khi được APPROVE, author chạy \`/kltn-complete $ISSUE_NUMBER\` để merge."
    ```
    > Sau bước này, ticket tự động chuyển từ **In Progress → In Review** trên Sprint Board.
 

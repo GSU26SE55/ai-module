@@ -129,7 +129,7 @@ You are implementing GitHub Issue #$ISSUE_NUMBER for an AI/ML module project (Py
 
 Follow ALL coding conventions in .codex/skills/ai/ (FastAPI endpoints, model inference, data preprocessing, seed=42, scaler handling).
 
-Branch to create: feature/GH-$ISSUE_NUMBER-$SLUG
+Branch to create: feat/GH-$ISSUE_NUMBER-$SLUG
 
 == IMPLEMENTATION PLAN ==
 [toàn bộ nội dung logs/GH-$ISSUE_NUMBER/plan.md được paste ở đây]
@@ -154,7 +154,7 @@ Rules:
 ### Bước 3 — Tạo branch
 ```bash
 # Slug: viết thường, chỉ a-z/0-9/gạch ngang, tối đa 5 từ
-# Ví dụ: "Add LSTM inference endpoint" → feature/GH-42-add-lstm-inference-endpoint
+# Ví dụ: "Add LSTM inference endpoint" → feat/GH-42-add-lstm-inference-endpoint
 SLUG=$(gh issue view $ISSUE_NUMBER --json title -q '.title' \
   | tr '[:upper:]' '[:lower:]' \
   | tr -cs 'a-z0-9' '-' \
@@ -162,7 +162,7 @@ SLUG=$(gh issue view $ISSUE_NUMBER --json title -q '.title' \
   | cut -d'-' -f1-5 \
   | sed 's/-$//')
 
-git checkout -b feature/GH-$ISSUE_NUMBER-$SLUG
+git checkout -b feat/GH-$ISSUE_NUMBER-$SLUG
 ```
 
 ### Bước 4 — Implement theo đúng cấu trúc

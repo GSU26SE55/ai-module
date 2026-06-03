@@ -38,15 +38,19 @@ Chi tiết rules → [tech/fe.md](tech/fe.md)
 
 3 portal theo role: Admin / Manager / Staff
 
-**SLA theo ITIL — Priority-based:**
+**SLA theo ITIL 4 SVS (B2B) — Priority-based:**
+
+> **Stance (B5/ADR 0005):** Áp dụng **ITIL 4 Service Value System** góc nhìn Service Provider → External Customer, KHÔNG áp dụng ITIL phiên bản internal-IT. Xem `docs/adr/0005-b2b-itil-stance.md`.
+
 | Priority | SLA | Trigger | Breach action |
 |----------|-----|---------|---------------|
-| P1 Critical | < 4h | Pin mất điện / nguy cơ an toàn | Reassign Senior + notify Admin |
-| P2 High | < 24h | Degradation đáng kể | Manager reassign |
-| P3 Standard | < 72h | Bất thường nhẹ / bảo trì định kỳ | Manager review |
+| P1 Critical | < 4h | Pin mất điện / nguy cơ an toàn / scope Site hoặc MultiSite | Reassign Senior (Tier 3) + notify Admin |
+| P2 High | < 24h | Degradation đáng kể / SingleAsset urgency cao hoặc Site urgency thấp–TB | Manager reassign Tier 2/3 |
+| P3 Standard | < 72h | Bất thường nhẹ / bảo trì định kỳ / scope SingleAsset | Manager review |
 
-- Priority do Manager gán khi triage, **không thay đổi** trong vòng đời ticket
-- Breach → escalate thêm nhân lực/cấp bậc, không extend deadline
+- Priority **tính từ Priority Matrix Impact × Urgency** (`overall.md §2.4bis`), KHÔNG nhập thẳng
+- Priority cố định trong vòng đời ticket — Breach → escalate thêm nhân lực/cấp bậc, không extend deadline
+- Staff phân tầng theo `StaffSkillTierEnum` (`overall.md §7` — Tier 1/2/3) khớp với SLA priority
 
 ---
 
@@ -63,16 +67,21 @@ Chi tiết rules → [tech/mobile.md](tech/mobile.md)
 
 ## Priority Policy ⚠️
 
-Priority do **Manager gán 1 lần duy nhất** khi triage (state chuyển OPEN → ASSIGNED). Sau đó **KHÔNG thay đổi** trong toàn bộ vòng đời ticket — kể cả khi escalate hay reassign.
+Priority **tính ra** từ `ImpactScope × UrgencyLevel` matrix (xem `overall.md §2.4bis` B3) khi Manager triage (state chuyển OPEN → ASSIGNED). Sau đó **KHÔNG thay đổi** trong toàn bộ vòng đời ticket — kể cả khi escalate hay reassign.
 
-| Role | Quyền đổi priority |
-|------|-------------------|
-| Manager, Admin | ❌ KHÔNG — đã gán là cố định |
-| Staff | ❌ KHÔNG |
+| Role | Quyền đổi `ImpactScope`/`UrgencyLevel` | Quyền đổi `Priority` |
+|------|---|---|
+| Manager (triage) | ✅ Gán 1 lần | ❌ Auto từ matrix |
+| Manager, Admin (sau triage) | ❌ KHÔNG | ❌ KHÔNG |
+| Staff | ❌ KHÔNG | ❌ KHÔNG |
 
-> **Lý do:** SLA breach → escalate thêm *nhân lực/cấp bậc*, không phải đổi deadline hay priority. Giữ priority cố định đảm bảo audit trail chính xác và SLA report không bị skew.
+**Override safety:** Manager có thể override Priority duy nhất trong 1 trường hợp — safety reason (vd Critical bypass) — phải có `PriorityOverrideReason` ghi vào `TicketActivity`.
+
+> **Lý do giữ cố định:** SLA breach → escalate thêm *nhân lực/cấp bậc*, không phải đổi deadline hay priority. Giữ priority cố định đảm bảo audit trail chính xác và SLA report không bị skew.
 >
 > Chi tiết SLA Escalation Flow xem [docs/core-business-flow.md § 5](docs/core-business-flow.md).
+>
+> **Reference (B2 + B5):** ITIL 4 Foundation — Incident Prioritization (Impact × Urgency); ISO/IEC 20000-1:2018 §8.5.2.2. Xem `.claude/docs/ai-research-references.md` Phụ lục B5.
 
 **Breach action (SLA timer hết):**
 - **P1:** Manager reassign Senior + notify Admin → Critical Incident nếu vẫn fail
