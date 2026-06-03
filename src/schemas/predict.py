@@ -30,9 +30,42 @@ class PredictRequest(BaseModel):
         return v
 
 
+class WarningItem(BaseModel):
+    code: str       # e.g. "VOLTAGE_LOW", "TEMP_CRITICAL", "SOH_LOW"
+    severity: str   # "warning" | "critical"
+    message: str
+
+
+class FeatureStat(BaseModel):
+    mean: float
+    min: float
+    max: float
+
+
 class PredictResponse(BaseModel):
     battery_id: str
     soh_percent: float
-    classification: str  # "Normal" | "Degrading" | "Failed"
-    confidence: float
+    classification: str     # "Normal" | "Degrading" | "Failed"
+    confidence: float       # |IsolationForest score|, range [0, 1]
     inference_ms: float
+
+    # ── Extended diagnostics ──────────────────────────────────────────────
+    rul_cycles_estimate: int
+    """Estimated remaining charge-discharge cycles until EOL (SOH=80%)."""
+
+    anomaly_score: float
+    """Raw IsolationForest decision_function score. Negative = more anomalous."""
+
+    recommended_action: str
+    """
+    MONITOR               — SOH healthy, no action needed
+    SCHEDULE_MAINTENANCE  — SOH 85-90%, plan a check
+    SCHEDULE_REPLACEMENT  — SOH 80-85%, replacement upcoming
+    REPLACE_IMMEDIATELY   — SOH < 80%, battery at/past EOL
+    """
+
+    warnings: list[WarningItem]
+    """Threshold-based warnings ordered by severity (critical first)."""
+
+    feature_summary: dict[str, FeatureStat]
+    """Mean/min/max for each sensor feature across the 30-step window."""

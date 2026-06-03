@@ -67,11 +67,13 @@ class TestPredictRouter:
     def test_predict_response_schema(self, client):
         resp = client.post("/predict/", json=self._valid_payload())
         data = resp.json()
-        assert "battery_id" in data
-        assert "soh_percent" in data
-        assert "classification" in data
-        assert "confidence" in data
-        assert "inference_ms" in data
+        required = {
+            "battery_id", "soh_percent", "classification", "confidence",
+            "inference_ms", "rul_cycles_estimate", "anomaly_score",
+            "recommended_action", "warnings", "feature_summary",
+        }
+        for key in required:
+            assert key in data, f"Missing key: {key}"
 
     def test_predict_battery_id_echoed(self, client):
         resp = client.post("/predict/", json=self._valid_payload())

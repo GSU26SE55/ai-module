@@ -6,6 +6,18 @@ import pytest
 
 from src.models.soh_predictor import MambaSOHPredictor
 
+REQUIRED_KEYS = {
+    "soh_percent",
+    "classification",
+    "confidence",
+    "inference_ms",
+    "rul_cycles_estimate",
+    "anomaly_score",
+    "recommended_action",
+    "warnings",
+    "feature_summary",
+}
+
 
 def make_dummy_readings(n: int = 30) -> list[list[float]]:
     return [[3.7 + i * 0.001, 1.5, 25.0] for i in range(n)]
@@ -27,9 +39,7 @@ class TestInferencePipeline:
         dummy_iso = IsolationForest(n_estimators=10, random_state=42)
         dummy_iso.fit(np.random.rand(50, 90))
 
-        with (
-            patch("src.services.inference.model_loader") as mock_loader,
-        ):
+        with patch("src.services.inference.model_loader") as mock_loader:
             mock_loader.scaler = dummy_scaler
             mock_loader.soh_model = dummy_model
             mock_loader.iso_model = dummy_iso
@@ -39,10 +49,9 @@ class TestInferencePipeline:
         from src.services.inference import run_inference
 
         result = run_inference(make_dummy_readings())
-        assert "soh_percent" in result
-        assert "classification" in result
-        assert "confidence" in result
-        assert "inference_ms" in result
+        assert REQUIRED_KEYS.issubset(result.keys()), (
+            f"Missing keys: {REQUIRED_KEYS - result.keys()}"
+        )
 
     def test_classification_is_valid(self):
         from src.services.inference import run_inference
@@ -61,6 +70,48 @@ class TestInferencePipeline:
 
         result = run_inference(make_dummy_readings())
         assert 0.0 <= result["confidence"] <= 1.0
+
+    def test_rul_is_non_negative_int(self):
+        from src.services.inference import run_inference
+
+        result = run_inference(make_dummy_readings())
+        assert isinstance(result["rul_cycles_estimate"], int)
+        assert result["rul_cycles_estimate"] >= 0
+
+    def test_recommended_action_is_valid(self):
+        from src.services.inference import run_inference
+
+        valid_actions = {
+            "MONITOR",
+            "SCHEDULE_MAINTENANCE",
+            "SCHEDULE_REPLACEMENT",
+            "REPLACE_IMMEDIATELY",
+        }
+        result = run_inference(make_dummy_readings())
+        assert result["recommended_action"] in valid_actions
+
+    def test_warnings_is_list(self):
+        from src.services.inference import run_inference
+
+        result = run_inference(make_dummy_readings())
+        assert isinstance(result["warnings"], list)
+
+    def test_warnings_have_required_fields(self):
+        from src.services.inference import run_inference
+
+        result = run_inference(make_dummy_readings())
+        for w in result["warnings"]:
+            assert "code" in w
+            assert "severity" in w
+            assert "message" in w
+
+    def test_feature_summary_has_voltage(self):
+        from src.services.inference import run_inference
+
+        result = run_inference(make_dummy_readings())
+        assert "voltage" in result["feature_summary"]
+        stat = result["feature_summary"]["voltage"]
+        assert "mean" in stat and "min" in stat and "max" in stat
 
     def test_latency_under_100ms(self):
         """Inference must complete within 100ms (P1 SLA requirement)."""
