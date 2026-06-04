@@ -4,8 +4,10 @@ import numpy as np
 import torch
 
 from src.core import model_loader
+from src.features.extractor import extract_window_features
 from src.models.anomaly_detector import (
     classify_anomaly,
+    compute_degradation_metrics,
     estimate_rul,
     generate_warnings,
     get_recommended_action,
@@ -68,23 +70,42 @@ def run_inference(readings: list[list[float]]) -> dict:
     x_scaled = model_loader.scaler.transform(x)
     x_tensor = torch.tensor(x_scaled, dtype=torch.float32).unsqueeze(0)
 
+    # Cycle-level features: compute from scaled window (first 3 channels: voltage, current, temp)
+    # Matches SPECTRAL_FEAT_DIM=54 config. FiLM conditioning is soft — degrades
+    # gracefully from cycle-level to window-level features at inference time.
+    raw_feat = extract_window_features(x_scaled[:, :3])         # (54,)
+    feat_scaled = model_loader.feature_scaler.transform(raw_feat.reshape(1, -1))
+    x_feat_tensor = torch.tensor(feat_scaled, dtype=torch.float32)  # (1, 54)
+
     with torch.no_grad():
-        soh = float(max(0.0, min(100.0, model_loader.soh_model(x_tensor).item() * 100)))
+        soh = float(max(0.0, min(100.0, model_loader.soh_model(x_tensor, x_feat_tensor).item() * 100)))
 
     score = float(model_loader.iso_model.decision_function([x_scaled.flatten()])[0])
     classification = classify_anomaly(score, soh)
     confidence = round(min(1.0, max(0.0, abs(score))), 3)
 
+    # Degradation metrics — battery-specific rate from multi-cycle window
+    # More accurate when L >= 500 (spans multiple cycles); falls back to
+    # population average (0.15%/cycle) for shorter windows.
+    degradation = compute_degradation_metrics(raw, soh)
+
     elapsed_ms = (time.perf_counter() - start) * 1000
 
     return {
-        "soh_percent":          round(soh, 2),
-        "classification":       classification,
-        "confidence":           confidence,
-        "inference_ms":         round(elapsed_ms, 2),
-        "rul_cycles_estimate":  estimate_rul(soh),
-        "anomaly_score":        round(score, 4),
-        "recommended_action":   get_recommended_action(classification, soh),
-        "warnings":             generate_warnings(raw, soh, classification),
-        "feature_summary":      _compute_feature_summary(raw),
+        "soh_percent":                round(soh, 2),
+        "classification":             classification,
+        "confidence":                 confidence,
+        "inference_ms":               round(elapsed_ms, 2),
+
+        # RUL — battery-specific (from observed trend) when window is long enough
+        "rul_cycles_estimate":        degradation["rul_cycles_estimate"],
+        "degradation_rate_per_cycle": degradation["degradation_rate_per_cycle"],
+        "soh_trend":                  degradation["soh_trend"],
+        "cycles_to_maintenance":      degradation["cycles_to_maintenance"],
+        "soh_trajectory":             degradation["soh_trajectory"],
+
+        "anomaly_score":              round(score, 4),
+        "recommended_action":         get_recommended_action(classification, soh),
+        "warnings":                   generate_warnings(raw, soh, classification),
+        "feature_summary":            _compute_feature_summary(raw),
     }

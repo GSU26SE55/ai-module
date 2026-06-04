@@ -49,10 +49,26 @@ class PredictResponse(BaseModel):
     confidence: float       # |IsolationForest score|, range [0, 1]
     inference_ms: float
 
-    # ── Extended diagnostics ──────────────────────────────────────────────
+    # ── RUL & Degradation Trend ───────────────────────────────────────────
     rul_cycles_estimate: int
-    """Estimated remaining charge-discharge cycles until EOL (SOH=80%)."""
+    """Remaining useful life in cycles until SOH=80% (EOL).
+    Battery-specific when window spans ≥2 cycles; falls back to NASA average."""
 
+    degradation_rate_per_cycle: float
+    """Observed %SOH lost per charge-discharge cycle.
+    Computed from voltage fade trend across multi-cycle window.
+    Falls back to NASA population average (0.15%) for short windows."""
+
+    soh_trend: str
+    """Degradation velocity: 'accelerating' | 'stable' | 'slowing'."""
+
+    cycles_to_maintenance: int
+    """Estimated cycles until SOH crosses 85% maintenance threshold. 0 if already below."""
+
+    soh_trajectory: list[float]
+    """Predicted SOH for next 5 cycles based on observed degradation rate."""
+
+    # ── Anomaly Detection ─────────────────────────────────────────────────
     anomaly_score: float
     """Raw IsolationForest decision_function score. Negative = more anomalous."""
 
@@ -68,4 +84,4 @@ class PredictResponse(BaseModel):
     """Threshold-based warnings ordered by severity (critical first)."""
 
     feature_summary: dict[str, FeatureStat]
-    """Mean/min/max for each sensor feature across the 30-step window."""
+    """Mean/min/max for each sensor feature across the window."""
