@@ -32,7 +32,7 @@ random.seed(SEED)
 np.random.seed(SEED)
 torch.manual_seed(SEED)
 
-BATCH_SIZE = 32
+BATCH_SIZE = 8      # L=256: tensor (8,256,128,16)=134MB, fit RAM
 LR         = 5e-4
 PATIENCE   = 15
 

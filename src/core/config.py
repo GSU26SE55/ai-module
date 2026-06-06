@@ -1,6 +1,6 @@
 import os
 
-MODEL_VERSION = "1.1"
+MODEL_VERSION = "1.2"
 SCALER_VERSION = "1.0"
 FEATURE_SCALER_VERSION = "1.1"
 
@@ -10,10 +10,10 @@ WEIGHTS_DIR = os.path.join(BASE_DIR, "models", "weights")
 SCALER_PATH = os.path.join(WEIGHTS_DIR, "scaler.pkl")
 FEATURE_SCALER_PATH = os.path.join(WEIGHTS_DIR, "feature_scaler.pkl")
 MAMBA_PATH = os.path.join(WEIGHTS_DIR, f"soh_mamba_v{MODEL_VERSION}.pth")
-ISO_FOREST_PATH = os.path.join(WEIGHTS_DIR, "isolation_forest_v1.0.pkl")
+ISO_FOREST_PATH = os.path.join(WEIGHTS_DIR, "isolation_forest_v1.2.pkl")
 
-WINDOW_SIZE = 30
-WINDOW_STRIDE = 30
+WINDOW_SIZE = 128   # ~45% of discharge cycle
+WINDOW_STRIDE = 50  # overlap 61% → ít overfit hơn, đủ samples
 INPUT_FEATURES = 6
 SPECTRAL_FEAT_DIM = 54   # 9 spectral + 9 statistical × 3 channels (voltage, current, temperature)
 D_MODEL = 64

@@ -1,0 +1,10 @@
+2026-06-06 11:53:09  INFO     Log file: logs/training\train_20260606_115309.log
+2026-06-06 11:53:09  INFO     Loading data...
+2026-06-06 11:53:09  INFO       Train: 1998 | Val: 347 | Test: 80
+2026-06-06 11:53:09  INFO     MambaSOHPredictor — 73,729 trainable params
+2026-06-06 11:53:09  INFO     Config: lr=0.0005, batch=8, epochs=100, patience=15
+2026-06-06 11:53:09  INFO     Starting training...
+2026-06-06 11:53:09  INFO      Epoch   TrainLoss     ValLoss   ValMAE%   ValRMSE%
+2026-06-06 11:53:09  INFO     -------------------------------------------------------
+2026-06-06 11:54:09  DEBUG         1    0.026181    0.000542    1.8063     2.3289
+2026-06-06 11:55:12  DEBUG         2    0.010168    0.000372    1.6809     1.9277
