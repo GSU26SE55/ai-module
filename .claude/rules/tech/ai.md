@@ -5,7 +5,7 @@
 | Quyết định | Lựa chọn | Ghi chú |
 |------------|----------|---------|
 | Language | Python 3.11 | — |
-| ML Framework | PyTorch | Mamba (pure PyTorch SSM) |
+| ML Framework | PyTorch | LSTM/CNN-LSTM |
 | Anomaly | scikit-learn Isolation Forest | Đủ cho scope capstone |
 | Serving | FastAPI | REST endpoint cho BE gọi |
 | Dataset | NASA Ames (ưu tiên) | CALCE backup |
@@ -37,28 +37,41 @@
 
 ## Model Architecture (bắt buộc nhất quán train & inference)
 
-### 1. Mamba — SOH Prediction
-
-> **Pure PyTorch SSM** — không dùng `mamba-ssm` CUDA library, chạy được Windows 11 native.
-> Artifact: `models/weights/soh_mamba_v1.0.pth`
+### 1. LSTM/CNN-LSTM — SOH Prediction
 
 ```python
-import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
-class MambaBlock(nn.Module):
-    """d_model=64, d_state=16, d_conv=4, expand=2 → d_inner=128"""
-    # Pre-norm → in_proj → causal depthwise Conv1d → SiLU
-    # → selective SSM scan (ZOH discretization, sequential for L=30)
-    # → gate với SiLU(z) → out_proj → residual +
-
-class MambaSOHPredictor(nn.Module):
+class SOHPredictor(nn.Module):
     """
     Input:  (batch, 30, 3)  — 30 timestep, 3 features [voltage, current, temp]
-    Output: (batch,)        — SOH% trong khoảng [0, 100]
+    Output: (batch, 1)      — SOH% trong khoảng [0, 100]
     """
-    # Linear(3→64) → MambaBlock×2 → LayerNorm → last token → Linear(64→32) → GELU+Dropout(0.2) → Linear(32→1)
+    def __init__(self):
+        super().__init__()
+        # CNN block — trích xuất local pattern
+        self.conv1 = nn.Conv1d(in_channels=3, out_channels=32, kernel_size=3, padding=1)
+        self.relu  = nn.ReLU()
+        self.pool  = nn.MaxPool1d(kernel_size=2)          # (batch, 32, 15)
+
+        # LSTM block — học temporal dependency
+        self.lstm  = nn.LSTM(input_size=32, hidden_size=64,
+                             num_layers=2, batch_first=True,
+                             dropout=0.2)                 # dropout giữa layers
+
+        # FC head
+        self.fc1   = nn.Linear(64, 32)
+        self.fc2   = nn.Linear(32, 1)
+        self.dropout = nn.Dropout(0.2)
+
+    def forward(self, x):                                 # x: (batch, 30, 3)
+        x = x.permute(0, 2, 1)                           # → (batch, 3, 30) cho Conv1d
+        x = self.pool(self.relu(self.conv1(x)))           # → (batch, 32, 15)
+        x = x.permute(0, 2, 1)                           # → (batch, 15, 32) cho LSTM
+        _, (h_n, _) = self.lstm(x)
+        x = h_n[-1]                                       # hidden state lớp cuối
+        x = self.dropout(self.relu(self.fc1(x)))
+        return self.fc2(x).squeeze(-1)                    # → (batch,)
 
 # Training config (BẮT BUỘC)
 OPTIMIZER  = "Adam"
@@ -68,8 +81,6 @@ EPOCHS     = 50
 PATIENCE   = 10          # early stopping
 BATCH_SIZE = 32
 ```
-
-> Implementation đầy đủ: `src/models/soh_predictor.py`
 
 ### 2. Isolation Forest — Anomaly Detection
 
@@ -106,8 +117,8 @@ def classify_anomaly(score: float, soh: float) -> str:
 
 # Lưu model sau khi train
 import joblib
-joblib.dump(iso_forest, "models/weights/isolation_forest_v1.0.pkl")
-# isolation_forest_v1.0.pkl PHẢI commit vào Git (như scaler.pkl)
+joblib.dump(iso_forest, "models/weights/isolation_forest.pkl")
+# isolation_forest.pkl PHẢI commit vào Git (như scaler.pkl)
 ```
 
 > **Cơ sở khoa học (B2):** Mọi anomaly type và hyperparameter trong file này PHẢI cite paper hoặc industry standard. Xem `.claude/docs/ai-research-references.md`:
@@ -172,7 +183,7 @@ ai-module/
 └── models/
     └── weights/
         ├── scaler.pkl                    # MinMaxScaler — fit trên train set
-        ├── soh_mamba_v{major}.{minor}.pth # Mamba SOH predictor weights
+        ├── soh_lstm_v{major}.{minor}.pth # LSTM/CNN-LSTM weights
         └── isolation_forest_v{major}.{minor}.pkl  # Isolation Forest
 ```
 

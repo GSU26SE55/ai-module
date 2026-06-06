@@ -44,7 +44,7 @@ gh api repos/$(gh repo view --json nameWithOwner -q .nameWithOwner)/issues/$ARGU
 ```
 
 Đọc kỹ:
-- **Issue chính:** title, body (Mục tiêu + Acceptance Criteria + Ghi chú kỹ thuật), labels, milestone, assignees.
+- **Issue chính:** title, body (Mô tả + Scope + Endpoints + Approach + Steps + Edge Cases + Acceptance Criteria), labels, milestone, assignees.
 - **Sub-issues (nếu có):** title, body, state của từng sub-issue — plan chi tiết hoặc scope có thể đã được cập nhật tại đây. Tổng hợp thông tin từ tất cả sub-issues vào phân tích ở Bước 2.
 
 ---
@@ -120,8 +120,18 @@ Tạo `logs/GH-$ARGUMENTS/plan.md`:
 [1–3 dòng: issue yêu cầu gì, output mong đợi — dựa trên đã hiểu rõ ở Bước 2–3]
 
 ## Scope
-- Trong scope: ...
-- Ngoài scope: ...
+**Trong scope:**
+- ...
+
+**Ngoài scope:**
+- ...
+
+## Endpoints
+| Method | Path | Mục đích / Request / Response |
+|--------|------|-------------------------------|
+| GET | `/api/...` | ... |
+
+(Bỏ section này nếu task không có endpoint)
 
 ## Files
 | File | Action | Ghi chú |
@@ -135,10 +145,9 @@ Tạo `logs/GH-$ARGUMENTS/plan.md`:
 - Input không hợp lệ: ...
 - Error handling: ...
 
-## Success Criteria
-| Tiêu chí | Cách verify |
-|----------|------------|
-| [Mô tả outcome cụ thể] | [Lệnh / bước kiểm tra] |
+## Acceptance Criteria
+- [ ] [Tiêu chí cụ thể, verify được]
+- [ ] ...
 
 ## Steps
 [Dùng bảng template bên dưới theo role — mỗi dòng là 1 checkbox]
@@ -189,8 +198,8 @@ gh issue edit $ARGUMENTS --body "$(cat <<EOF
 **Dev:** [tên từ CLAUDE.local.md]
 **Ngày lập plan:** $(date +%Y-%m-%d)
 
-## Mục tiêu
-[copy từ plan.md]
+## Mô tả
+[copy Mục tiêu từ plan.md]
 
 ## Scope
 **Trong scope:**
@@ -198,6 +207,9 @@ gh issue edit $ARGUMENTS --body "$(cat <<EOF
 
 **Ngoài scope:**
 [copy từ plan.md]
+
+## Endpoints
+[copy từ plan.md — bỏ section này nếu không có endpoint]
 
 ## Approach
 [copy từ plan.md]
@@ -208,11 +220,11 @@ gh issue edit $ARGUMENTS --body "$(cat <<EOF
 ## Edge Cases
 [copy từ plan.md]
 
-## Success Criteria
-[copy từ plan.md]
+## Acceptance Criteria
+[copy Success Criteria từ plan.md dưới dạng checklist]
 
 ---
-> Plan đầy đủ (bao gồm files, câu hỏi đã giải đáp): \`logs/GH-$ARGUMENTS/plan.md\`
+> Plan đầy đủ (files, câu hỏi đã giải đáp): \`logs/GH-$ARGUMENTS/plan.md\`
 EOF
 )"
 
