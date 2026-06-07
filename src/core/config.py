@@ -12,8 +12,8 @@ FEATURE_SCALER_PATH = os.path.join(WEIGHTS_DIR, "feature_scaler.pkl")
 MAMBA_PATH = os.path.join(WEIGHTS_DIR, f"soh_mamba_v{MODEL_VERSION}.pth")
 ISO_FOREST_PATH = os.path.join(WEIGHTS_DIR, "isolation_forest_v1.2.pkl")
 
-WINDOW_SIZE = 128   # ~45% of discharge cycle
-WINDOW_STRIDE = 50  # overlap 61% → ít overfit hơn, đủ samples
+WINDOW_SIZE = 4096  # long-sequence health prediction length
+WINDOW_STRIDE = 4096  # kept for compatibility; preprocess uses full-cycle resampling
 INPUT_FEATURES = 6
 SPECTRAL_FEAT_DIM = 54   # 9 spectral + 9 statistical × 3 channels (voltage, current, temperature)
 D_MODEL = 64

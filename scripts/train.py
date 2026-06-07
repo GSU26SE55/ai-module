@@ -32,7 +32,7 @@ random.seed(SEED)
 np.random.seed(SEED)
 torch.manual_seed(SEED)
 
-BATCH_SIZE = 8      # L=256: tensor (8,256,128,16)=134MB, fit RAM
+BATCH_SIZE = 2      # L=4096: keep small for Colab GPU/CPU memory
 LR         = 5e-4
 PATIENCE   = 15
 
@@ -83,21 +83,36 @@ def load_split(path: str) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     return data["X"], data["X_feat"], data["y"]
 
 
-def evaluate(model: nn.Module, X: torch.Tensor, X_feat: torch.Tensor, y: torch.Tensor) -> dict:
+def evaluate(
+    model: nn.Module,
+    X: torch.Tensor,
+    X_feat: torch.Tensor,
+    y: torch.Tensor,
+    batch_size: int,
+    device: torch.device,
+) -> dict:
     model.eval()
+    preds = []
     with torch.no_grad():
-        pred = model(X, X_feat) * 100.0
-        mae  = torch.mean(torch.abs(pred - y)).item()
-        rmse = torch.sqrt(torch.mean((pred - y) ** 2)).item()
-    return {"mae": round(mae, 4), "rmse": round(rmse, 4)}
+        loader = DataLoader(TensorDataset(X, X_feat, y), batch_size=batch_size, shuffle=False)
+        for X_batch, X_feat_batch, _ in loader:
+            pred = model(X_batch.to(device), X_feat_batch.to(device)) * 100.0
+            preds.append(pred.cpu())
+    pred_all = torch.cat(preds)
+    mae  = torch.mean(torch.abs(pred_all - y)).item()
+    rmse = torch.sqrt(torch.mean((pred_all - y) ** 2)).item()
+    mse  = torch.mean(((pred_all / 100.0) - (y / 100.0)) ** 2).item()
+    return {"mae": round(mae, 4), "rmse": round(rmse, 4), "mse": mse}
 
 
 # ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
 
-def train(data_dir: str, epochs: int, log_dir: str) -> None:
+def train(data_dir: str, epochs: int, log_dir: str, batch_size: int) -> None:
     logger = setup_logger(log_dir)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    logger.info(f"Device: {device}")
 
     # ── Load data ──────────────────────────────────────────────────────────
     logger.info("Loading data...")
@@ -117,11 +132,11 @@ def train(data_dir: str, epochs: int, log_dir: str) -> None:
         )
 
     train_loader = DataLoader(
-        TensorDataset(X_train, X_feat_train, y_train), batch_size=BATCH_SIZE, shuffle=True
+        TensorDataset(X_train, X_feat_train, y_train), batch_size=batch_size, shuffle=True
     )
 
     # ── Model ──────────────────────────────────────────────────────────────
-    model     = MambaSOHPredictor(input_features=INPUT_FEATURES, feat_dim=SPECTRAL_FEAT_DIM, d_model=D_MODEL, d_state=D_STATE)
+    model     = MambaSOHPredictor(input_features=INPUT_FEATURES, feat_dim=SPECTRAL_FEAT_DIM, d_model=D_MODEL, d_state=D_STATE).to(device)
     # torch.compile disabled: crashes on Windows with non-ASCII source files (cp1252 codec issue)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=1e-5)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
@@ -131,7 +146,7 @@ def train(data_dir: str, epochs: int, log_dir: str) -> None:
     GRAD_CLIP = 1.0  # gradient clipping — tránh exploding gradients trong SSM
     n_params  = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info(f"MambaSOHPredictor — {n_params:,} trainable params")
-    logger.info(f"Config: lr={LR}, batch={BATCH_SIZE}, epochs={epochs}, patience={PATIENCE}")
+    logger.info(f"Config: lr={LR}, batch={batch_size}, epochs={epochs}, patience={PATIENCE}")
 
     # ── Training loop ──────────────────────────────────────────────────────
     best_val_loss    = float("inf")
@@ -147,6 +162,9 @@ def train(data_dir: str, epochs: int, log_dir: str) -> None:
         model.train()
         train_loss = 0.0
         for X_batch, X_feat_batch, y_batch in train_loader:
+            X_batch = X_batch.to(device)
+            X_feat_batch = X_feat_batch.to(device)
+            y_batch = y_batch.to(device)
             optimizer.zero_grad()
             pred  = model(X_batch, X_feat_batch)
             loss  = criterion(pred, y_batch / 100.0)
@@ -158,10 +176,8 @@ def train(data_dir: str, epochs: int, log_dir: str) -> None:
 
         # Val
         model.eval()
-        with torch.no_grad():
-            val_pred = model(X_val, X_feat_val)
-            val_loss = criterion(val_pred, y_val / 100.0).item()
-        val_metrics = evaluate(model, X_val, X_feat_val, y_val)
+        val_metrics = evaluate(model, X_val, X_feat_val, y_val, batch_size, device)
+        val_loss = val_metrics["mse"]
         current_lr = optimizer.param_groups[0]["lr"]
 
         logger.debug(
@@ -182,7 +198,7 @@ def train(data_dir: str, epochs: int, log_dir: str) -> None:
 
         if val_loss < best_val_loss:
             best_val_loss    = val_loss
-            best_state       = {k: v.clone() for k, v in model.state_dict().items()}
+            best_state       = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
             patience_counter = 0
         else:
             patience_counter += 1
@@ -193,7 +209,7 @@ def train(data_dir: str, epochs: int, log_dir: str) -> None:
 
     # ── Eval on test set ───────────────────────────────────────────────────
     model.load_state_dict(best_state)
-    test_metrics = evaluate(model, X_test, X_feat_test, y_test)
+    test_metrics = evaluate(model, X_test, X_feat_test, y_test, batch_size, device)
     logger.info("-" * 55)
     logger.info(f"Test MAE : {test_metrics['mae']:.4f}%  (target < 2.0%)")
     logger.info(f"Test RMSE: {test_metrics['rmse']:.4f}%  (target < 3.0%)")
@@ -212,7 +228,7 @@ def train(data_dir: str, epochs: int, log_dir: str) -> None:
     os.makedirs(os.path.dirname(MAMBA_PATH), exist_ok=True)
     torch.save(
         {
-            "model_state_dict": model.state_dict(),
+            "model_state_dict": {k: v.detach().cpu() for k, v in model.state_dict().items()},
             "version":          MODEL_VERSION,
             "window_size":      WINDOW_SIZE,
             "input_features":   INPUT_FEATURES,
@@ -246,8 +262,9 @@ def main() -> None:
     parser.add_argument("--data-dir", default="data/processed")
     parser.add_argument("--epochs",   type=int, default=50)
     parser.add_argument("--log-dir",  default="logs/training")
+    parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
     args = parser.parse_args()
-    train(args.data_dir, args.epochs, args.log_dir)
+    train(args.data_dir, args.epochs, args.log_dir, args.batch_size)
 
 
 if __name__ == "__main__":

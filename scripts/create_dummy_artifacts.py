@@ -13,16 +13,21 @@ import joblib
 import numpy as np
 import torch
 from sklearn.ensemble import IsolationForest
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.core.config import (
+    FEATURE_SCALER_PATH,
+    FEATURE_SCALER_VERSION,
     FEATURES,
     INPUT_FEATURES,
     ISO_FOREST_PATH,
     MAMBA_PATH,
+    MODEL_VERSION,
     SCALER_PATH,
+    SCALER_VERSION,
+    SPECTRAL_FEAT_DIM,
     WEIGHTS_DIR,
     WINDOW_SIZE,
 )
@@ -41,22 +46,35 @@ scaler.fit(np.random.rand(200, INPUT_FEATURES))
 joblib.dump(
     {
         "scaler": scaler,
-        "version": "1.0",
+        "version": SCALER_VERSION,
         "trained_on": ["dummy"],
         "features": FEATURES,
     },
     SCALER_PATH,
 )
 print(f"✓ Saved dummy scaler → {SCALER_PATH}")
+feat_scaler = StandardScaler()
+feat_scaler.fit(np.random.rand(200, SPECTRAL_FEAT_DIM))
+joblib.dump(
+    {
+        "scaler": feat_scaler,
+        "version": FEATURE_SCALER_VERSION,
+        "n_features": SPECTRAL_FEAT_DIM,
+    },
+    FEATURE_SCALER_PATH,
+)
+print(f"Saved dummy feature scaler -> {FEATURE_SCALER_PATH}")
+
 
 # Dummy Mamba — random weights, correct architecture
-model = MambaSOHPredictor(input_features=INPUT_FEATURES)
+model = MambaSOHPredictor(input_features=INPUT_FEATURES, feat_dim=SPECTRAL_FEAT_DIM)
 torch.save(
     {
         "model_state_dict": model.state_dict(),
-        "version": "1.0",
+        "version": MODEL_VERSION,
         "window_size": WINDOW_SIZE,
         "input_features": INPUT_FEATURES,
+        "feat_dim": SPECTRAL_FEAT_DIM,
     },
     MAMBA_PATH,
 )

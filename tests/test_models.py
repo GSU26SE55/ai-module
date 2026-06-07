@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 
-from src.core.config import INPUT_FEATURES, SPECTRAL_FEAT_DIM
+from src.core.config import INPUT_FEATURES, SPECTRAL_FEAT_DIM, WINDOW_SIZE
 from src.models.anomaly_detector import (
     classify_anomaly,
     estimate_rul,
@@ -12,14 +12,23 @@ from src.models.soh_predictor import MambaSOHPredictor
 
 
 def _make_inputs(batch: int = 1):
-    x      = torch.randn(batch, 30, INPUT_FEATURES)
+    x      = torch.randn(batch, WINDOW_SIZE, INPUT_FEATURES)
     x_feat = torch.randn(batch, SPECTRAL_FEAT_DIM)
     return x, x_feat
 
 
+def _make_model() -> MambaSOHPredictor:
+    return MambaSOHPredictor(
+        input_features=INPUT_FEATURES,
+        feat_dim=SPECTRAL_FEAT_DIM,
+        d_model=8,
+        d_state=4,
+    )
+
+
 class TestMambaSOHPredictor:
     def test_output_shape_single(self):
-        model = MambaSOHPredictor(input_features=INPUT_FEATURES, feat_dim=SPECTRAL_FEAT_DIM)
+        model = _make_model()
         model.eval()
         x, x_feat = _make_inputs(1)
         with torch.no_grad():
@@ -27,7 +36,7 @@ class TestMambaSOHPredictor:
         assert out.shape == (1,), f"Expected (1,), got {out.shape}"
 
     def test_output_shape_batch(self):
-        model = MambaSOHPredictor(input_features=INPUT_FEATURES, feat_dim=SPECTRAL_FEAT_DIM)
+        model = _make_model()
         model.eval()
         x, x_feat = _make_inputs(8)
         with torch.no_grad():
@@ -35,7 +44,7 @@ class TestMambaSOHPredictor:
         assert out.shape == (8,), f"Expected (8,), got {out.shape}"
 
     def test_output_is_float(self):
-        model = MambaSOHPredictor(input_features=INPUT_FEATURES, feat_dim=SPECTRAL_FEAT_DIM)
+        model = _make_model()
         model.eval()
         x, x_feat = _make_inputs(2)
         with torch.no_grad():
@@ -43,7 +52,7 @@ class TestMambaSOHPredictor:
         assert out.dtype == torch.float32
 
     def test_gradients_flow(self):
-        model = MambaSOHPredictor(input_features=INPUT_FEATURES, feat_dim=SPECTRAL_FEAT_DIM)
+        model = _make_model()
         x, x_feat = _make_inputs(2)
         out = model(x, x_feat)
         loss = out.sum()
@@ -53,9 +62,9 @@ class TestMambaSOHPredictor:
 
     def test_film_modulation_changes_output(self):
         """Different x_feat should produce different SOH predictions."""
-        model = MambaSOHPredictor(input_features=INPUT_FEATURES, feat_dim=SPECTRAL_FEAT_DIM)
+        model = _make_model()
         model.eval()
-        x = torch.randn(1, 30, INPUT_FEATURES)
+        x = torch.randn(1, WINDOW_SIZE, INPUT_FEATURES)
         feat_a = torch.zeros(1, SPECTRAL_FEAT_DIM)
         feat_b = torch.ones(1, SPECTRAL_FEAT_DIM)
         with torch.no_grad():

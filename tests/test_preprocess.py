@@ -1,21 +1,23 @@
 import pytest
 
+from src.core.config import WINDOW_SIZE
+
 
 class TestWindowUtils:
-    def test_window_size_30(self):
-        """A valid reading sequence must have exactly 30 timesteps."""
-        readings = [[3.7, 1.5, 25.0, 1.0, 3.5, 12.0]] * 30
-        assert len(readings) == 30
+    def test_window_size(self):
+        """A valid reading sequence must have exactly WINDOW_SIZE timesteps."""
+        readings = [[3.7, 1.5, 25.0, 1.0, 3.5, 12.0]] * WINDOW_SIZE
+        assert len(readings) == WINDOW_SIZE
         assert all(len(r) == 6 for r in readings)
 
     def test_invalid_window_size_raises(self):
-        """PredictRequest validator must reject sequences != 30 timesteps."""
+        """PredictRequest validator must reject sequences != WINDOW_SIZE timesteps."""
         from pydantic import ValidationError
 
         from src.schemas.predict import PredictRequest
 
-        with pytest.raises(ValidationError, match="30 timesteps"):
-            PredictRequest(battery_id="B0005", readings=[[3.7, 1.5, 25.0, 1.0, 3.5, 12.0]] * 29)
+        with pytest.raises(ValidationError, match=f"{WINDOW_SIZE} timesteps"):
+            PredictRequest(battery_id="B0005", readings=[[3.7, 1.5, 25.0, 1.0, 3.5, 12.0]] * (WINDOW_SIZE - 1))
 
     def test_invalid_feature_count_raises(self):
         """PredictRequest validator must reject rows with unsupported feature count."""
@@ -24,22 +26,22 @@ class TestWindowUtils:
         from src.schemas.predict import PredictRequest
 
         with pytest.raises(ValidationError, match="feature counts"):
-            PredictRequest(battery_id="B0005", readings=[[3.7, 1.5]] * 30)
+            PredictRequest(battery_id="B0005", readings=[[3.7, 1.5]] * WINDOW_SIZE)
 
     def test_valid_request_passes(self):
         from src.schemas.predict import PredictRequest
 
         req = PredictRequest(
             battery_id="B0005",
-            readings=[[3.7, 1.5, 25.0, 1.0, 3.5, 12.0]] * 30,
+            readings=[[3.7, 1.5, 25.0, 1.0, 3.5, 12.0]] * WINDOW_SIZE,
         )
         assert req.battery_id == "B0005"
-        assert len(req.readings) == 30
+        assert len(req.readings) == WINDOW_SIZE
 
     def test_legacy_three_feature_request_passes(self):
         from src.schemas.predict import PredictRequest
 
-        req = PredictRequest(battery_id="B0005", readings=[[3.7, 1.5, 25.0]] * 30)
+        req = PredictRequest(battery_id="B0005", readings=[[3.7, 1.5, 25.0]] * WINDOW_SIZE)
         assert len(req.readings[0]) == 3
 
 

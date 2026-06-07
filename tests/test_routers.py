@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
+from src.core.config import WINDOW_SIZE
 from src.models.soh_predictor import MambaSOHPredictor
 
 
@@ -19,11 +20,16 @@ def make_dummy_loader():
     feat_scaler = StandardScaler()
     feat_scaler.fit(np.random.rand(50, SPECTRAL_FEAT_DIM))
 
-    model = MambaSOHPredictor(input_features=INPUT_FEATURES, feat_dim=SPECTRAL_FEAT_DIM)
+    model = MambaSOHPredictor(
+        input_features=INPUT_FEATURES,
+        feat_dim=SPECTRAL_FEAT_DIM,
+        d_model=8,
+        d_state=4,
+    )
     model.eval()
 
     iso = IsolationForest(n_estimators=10, random_state=42)
-    iso.fit(np.random.rand(50, 30 * INPUT_FEATURES))
+    iso.fit(np.random.rand(50, WINDOW_SIZE * INPUT_FEATURES))
 
     return scaler, feat_scaler, model, iso
 
@@ -63,7 +69,7 @@ class TestPredictRouter:
     def _valid_payload(self):
         return {
             "battery_id": "B0005",
-            "readings": [[3.7 + i * 0.001, 1.5, 25.0, 1.5, 3.7, float(i)] for i in range(30)],
+            "readings": [[3.7 + i * 0.001, 1.5, 25.0, 1.5, 3.7, float(i)] for i in range(WINDOW_SIZE)],
         }
 
     def test_predict_returns_200(self, client):
@@ -86,11 +92,11 @@ class TestPredictRouter:
         assert resp.json()["battery_id"] == "B0005"
 
     def test_predict_invalid_shape_returns_422(self, client):
-        payload = {"battery_id": "B0005", "readings": [[3.7, 1.5, 25.0]] * 29}
+        payload = {"battery_id": "B0005", "readings": [[3.7, 1.5, 25.0]] * (WINDOW_SIZE - 1)}
         resp = client.post("/predict/", json=payload)
         assert resp.status_code == 422
 
     def test_predict_invalid_features_returns_422(self, client):
-        payload = {"battery_id": "B0005", "readings": [[3.7, 1.5]] * 30}
+        payload = {"battery_id": "B0005", "readings": [[3.7, 1.5]] * WINDOW_SIZE}
         resp = client.post("/predict/", json=payload)
         assert resp.status_code == 422
