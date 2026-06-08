@@ -32,7 +32,7 @@ random.seed(SEED)
 np.random.seed(SEED)
 torch.manual_seed(SEED)
 
-BATCH_SIZE = 2      # L=4096: keep small for Colab GPU/CPU memory
+BATCH_SIZE = 1      # physical batch; accumulation keeps the effective batch larger
 LR         = 5e-4
 PATIENCE   = 15
 
@@ -90,18 +90,32 @@ def evaluate(
     y: torch.Tensor,
     batch_size: int,
     device: torch.device,
+    amp_enabled: bool,
+    max_batches: int | None = None,
 ) -> dict:
     model.eval()
     preds = []
+    targets = []
     with torch.no_grad():
         loader = DataLoader(TensorDataset(X, X_feat, y), batch_size=batch_size, shuffle=False)
-        for X_batch, X_feat_batch, _ in loader:
-            pred = model(X_batch.to(device), X_feat_batch.to(device)) * 100.0
+        for step, (X_batch, X_feat_batch, y_batch) in enumerate(loader, start=1):
+            if max_batches is not None and step > max_batches:
+                break
+            X_batch = X_batch.to(device, non_blocking=True)
+            X_feat_batch = X_feat_batch.to(device, non_blocking=True)
+            with torch.autocast(
+                device_type=device.type,
+                dtype=torch.float16,
+                enabled=amp_enabled,
+            ):
+                pred = model(X_batch, X_feat_batch) * 100.0
             preds.append(pred.cpu())
+            targets.append(y_batch)
     pred_all = torch.cat(preds)
-    mae  = torch.mean(torch.abs(pred_all - y)).item()
-    rmse = torch.sqrt(torch.mean((pred_all - y) ** 2)).item()
-    mse  = torch.mean(((pred_all / 100.0) - (y / 100.0)) ** 2).item()
+    target_all = torch.cat(targets)
+    mae  = torch.mean(torch.abs(pred_all - target_all)).item()
+    rmse = torch.sqrt(torch.mean((pred_all - target_all) ** 2)).item()
+    mse  = torch.mean(((pred_all / 100.0) - (target_all / 100.0)) ** 2).item()
     return {"mae": round(mae, 4), "rmse": round(rmse, 4), "mse": mse}
 
 
@@ -109,7 +123,19 @@ def evaluate(
 # Training
 # ---------------------------------------------------------------------------
 
-def train(data_dir: str, epochs: int, log_dir: str, batch_size: int) -> None:
+def train(
+    data_dir: str,
+    epochs: int,
+    log_dir: str,
+    batch_size: int,
+    accumulation_steps: int,
+    checkpoint_dir: str,
+    resume: str | None,
+    use_amp: bool,
+    max_train_batches: int | None,
+    max_eval_batches: int | None,
+    skip_final_artifacts: bool,
+) -> None:
     logger = setup_logger(log_dir)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Device: {device}")
@@ -132,7 +158,10 @@ def train(data_dir: str, epochs: int, log_dir: str, batch_size: int) -> None:
         )
 
     train_loader = DataLoader(
-        TensorDataset(X_train, X_feat_train, y_train), batch_size=batch_size, shuffle=True
+        TensorDataset(X_train, X_feat_train, y_train),
+        batch_size=batch_size,
+        shuffle=True,
+        pin_memory=device.type == "cuda",
     )
 
     # ── Model ──────────────────────────────────────────────────────────────
@@ -143,40 +172,94 @@ def train(data_dir: str, epochs: int, log_dir: str, batch_size: int) -> None:
         optimizer, mode="min", factor=0.5, patience=5, min_lr=1e-6
     )
     criterion = nn.MSELoss()
+    amp_enabled = use_amp and device.type == "cuda"
+    scaler = torch.cuda.amp.GradScaler(enabled=amp_enabled)
     GRAD_CLIP = 1.0  # gradient clipping — tránh exploding gradients trong SSM
     n_params  = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info(f"MambaSOHPredictor — {n_params:,} trainable params")
-    logger.info(f"Config: lr={LR}, batch={batch_size}, epochs={epochs}, patience={PATIENCE}")
+    logger.info(
+        f"Config: lr={LR}, batch={batch_size}, accumulation={accumulation_steps}, "
+        f"effective_batch={batch_size * accumulation_steps}, epochs={epochs}, "
+        f"patience={PATIENCE}, amp={amp_enabled}"
+    )
 
     # ── Training loop ──────────────────────────────────────────────────────
     best_val_loss    = float("inf")
     patience_counter = 0
     best_state       = None
+    start_epoch      = 1
+
+    if resume:
+        checkpoint = torch.load(resume, map_location=device, weights_only=False)
+        model.load_state_dict(checkpoint["model_state_dict"])
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+        scaler.load_state_dict(checkpoint["scaler_state_dict"])
+        start_epoch = checkpoint["epoch"] + 1
+        best_val_loss = checkpoint["best_val_loss"]
+        patience_counter = checkpoint["patience_counter"]
+        best_state = checkpoint.get("best_state")
+        logger.info(f"Resumed from {resume} at epoch {start_epoch}")
+
+    os.makedirs(checkpoint_dir, exist_ok=True)
 
     logger.info("Starting training...")
     logger.info(f"{'Epoch':>6}  {'TrainLoss':>10}  {'ValLoss':>10}  {'ValMAE%':>8}  {'ValRMSE%':>9}")
     logger.info("-" * 55)
 
-    for epoch in range(1, epochs + 1):
+    for epoch in range(start_epoch, epochs + 1):
         # Train
         model.train()
         train_loss = 0.0
-        for X_batch, X_feat_batch, y_batch in train_loader:
-            X_batch = X_batch.to(device)
-            X_feat_batch = X_feat_batch.to(device)
-            y_batch = y_batch.to(device)
-            optimizer.zero_grad()
-            pred  = model(X_batch, X_feat_batch)
-            loss  = criterion(pred, y_batch / 100.0)
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
-            optimizer.step()
-            train_loss += loss.item() * len(X_batch)
-        train_loss /= len(X_train)
+        train_seen = 0
+        optimizer.zero_grad(set_to_none=True)
+        for step, (X_batch, X_feat_batch, y_batch) in enumerate(train_loader, start=1):
+            if max_train_batches is not None and step > max_train_batches:
+                break
+            X_batch = X_batch.to(device, non_blocking=True)
+            X_feat_batch = X_feat_batch.to(device, non_blocking=True)
+            y_batch = y_batch.to(device, non_blocking=True)
+            with torch.autocast(
+                device_type=device.type,
+                dtype=torch.float16,
+                enabled=amp_enabled,
+            ):
+                pred = model(X_batch, X_feat_batch)
+                raw_loss = criterion(pred, y_batch / 100.0)
+                loss = raw_loss / accumulation_steps
+            scaler.scale(loss).backward()
+
+            should_step = (
+                step % accumulation_steps == 0
+                or step == len(train_loader)
+                or (
+                    max_train_batches is not None
+                    and step == max_train_batches
+                )
+            )
+            if should_step:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad(set_to_none=True)
+
+            train_loss += raw_loss.item() * len(X_batch)
+            train_seen += len(X_batch)
+        train_loss /= max(train_seen, 1)
 
         # Val
         model.eval()
-        val_metrics = evaluate(model, X_val, X_feat_val, y_val, batch_size, device)
+        val_metrics = evaluate(
+            model,
+            X_val,
+            X_feat_val,
+            y_val,
+            batch_size,
+            device,
+            amp_enabled,
+            max_eval_batches,
+        )
         val_loss = val_metrics["mse"]
         current_lr = optimizer.param_groups[0]["lr"]
 
@@ -203,13 +286,36 @@ def train(data_dir: str, epochs: int, log_dir: str, batch_size: int) -> None:
         else:
             patience_counter += 1
 
+        torch.save(
+            {
+                "epoch": epoch,
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "scheduler_state_dict": scheduler.state_dict(),
+                "scaler_state_dict": scaler.state_dict(),
+                "best_val_loss": best_val_loss,
+                "patience_counter": patience_counter,
+                "best_state": best_state,
+            },
+            os.path.join(checkpoint_dir, "latest.pt"),
+        )
+
         if patience_counter >= PATIENCE:
             logger.info(f"Early stopping at epoch {epoch} (patience={PATIENCE})")
             break
 
     # ── Eval on test set ───────────────────────────────────────────────────
     model.load_state_dict(best_state)
-    test_metrics = evaluate(model, X_test, X_feat_test, y_test, batch_size, device)
+    test_metrics = evaluate(
+        model,
+        X_test,
+        X_feat_test,
+        y_test,
+        batch_size,
+        device,
+        amp_enabled,
+        max_eval_batches,
+    )
     logger.info("-" * 55)
     logger.info(f"Test MAE : {test_metrics['mae']:.4f}%  (target < 2.0%)")
     logger.info(f"Test RMSE: {test_metrics['rmse']:.4f}%  (target < 3.0%)")
@@ -225,6 +331,10 @@ def train(data_dir: str, epochs: int, log_dir: str, batch_size: int) -> None:
             logger.warning(f"RMSE {test_metrics['rmse']:.4f}% >= 3.0% target — consider more epochs or d_model=128")
 
     # ── Save Mamba model ───────────────────────────────────────────────────
+    if skip_final_artifacts:
+        logger.info("Skipping final model/IsolationForest artifacts (--skip-final-artifacts).")
+        return
+
     os.makedirs(os.path.dirname(MAMBA_PATH), exist_ok=True)
     torch.save(
         {
@@ -263,8 +373,31 @@ def main() -> None:
     parser.add_argument("--epochs",   type=int, default=50)
     parser.add_argument("--log-dir",  default="logs/training")
     parser.add_argument("--batch-size", type=int, default=BATCH_SIZE)
+    parser.add_argument("--accumulation-steps", type=int, default=8)
+    parser.add_argument("--checkpoint-dir", default="models/checkpoints")
+    parser.add_argument("--resume", default=None)
+    parser.add_argument("--no-amp", action="store_true")
+    parser.add_argument("--max-train-batches", type=int, default=None)
+    parser.add_argument("--max-eval-batches", type=int, default=None)
+    parser.add_argument("--skip-final-artifacts", action="store_true")
     args = parser.parse_args()
-    train(args.data_dir, args.epochs, args.log_dir, args.batch_size)
+    if args.batch_size < 1:
+        parser.error("--batch-size must be at least 1")
+    if args.accumulation_steps < 1:
+        parser.error("--accumulation-steps must be at least 1")
+    train(
+        args.data_dir,
+        args.epochs,
+        args.log_dir,
+        args.batch_size,
+        args.accumulation_steps,
+        args.checkpoint_dir,
+        args.resume,
+        not args.no_amp,
+        args.max_train_batches,
+        args.max_eval_batches,
+        args.skip_final_artifacts,
+    )
 
 
 if __name__ == "__main__":

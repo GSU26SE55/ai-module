@@ -8,7 +8,7 @@ from src.models.anomaly_detector import (
     generate_warnings,
     get_recommended_action,
 )
-from src.models.soh_predictor import MambaSOHPredictor
+from src.models.soh_predictor import MambaBlock, MambaSOHPredictor
 
 
 def _make_inputs(batch: int = 1):
@@ -71,6 +71,26 @@ class TestMambaSOHPredictor:
             out_a = model(x, feat_a)
             out_b = model(x, feat_b)
         assert not torch.allclose(out_a, out_b), "FiLM conditioning has no effect"
+
+
+def test_streaming_scan_matches_full_sequential_scan():
+    block = MambaBlock(d_model=4, d_state=3, expand=2)
+    block.eval()
+    x = torch.randn(2, 600, block.d_inner)
+
+    with torch.no_grad():
+        actual = block._selective_scan(x, chunk_size=128)
+
+        x_dbl = block.x_proj(x)
+        dt_raw, b_proj, c_proj = x_dbl.split([1, 3, 3], dim=-1)
+        dt = torch.nn.functional.softplus(block.dt_proj(dt_raw))
+        a = -torch.exp(block.A_log.float())
+        da = torch.exp(dt.unsqueeze(-1) * a)
+        dbx = dt.unsqueeze(-1) * b_proj.unsqueeze(2) * x.unsqueeze(-1)
+        h = block._sequential_scan(da, dbx)
+        expected = (h * c_proj.unsqueeze(2)).sum(-1) + x * block.D
+
+    assert torch.allclose(actual, expected, atol=1e-5, rtol=1e-4)
 
 
 class TestClassifyAnomaly:

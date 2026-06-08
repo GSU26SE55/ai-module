@@ -71,42 +71,62 @@ class MambaBlock(nn.Module):
         x_b = self.conv1d(x_b.transpose(1, 2))[..., :L].transpose(1, 2)
         x_b = F.silu(x_b)                            # (B, L, d_inner)
 
-        # Gradient checkpointing for L > 256: trades memory for recompute
-        if self.training and L > 256:
-            y = grad_checkpoint(self._selective_scan, x_b, use_reentrant=False)
-        else:
-            y = self._selective_scan(x_b)            # (B, L, d_inner)
+        y = self._selective_scan(x_b)                # (B, L, d_inner)
 
         y = y * F.silu(z)
         return self.out_proj(y) + residual
 
-    def _selective_scan(self, x: torch.Tensor) -> torch.Tensor:
-        # x: (B, L, d_inner)
-        B, L, d_inner = x.shape
-
-        x_dbl = self.x_proj(x)                       # (B, L, d_state*2 + 1)
+    def _selective_scan_chunk(
+        self,
+        x: torch.Tensor,
+        h_carry: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Run one scan chunk and return its output plus final SSM state."""
+        x_dbl = self.x_proj(x)
         dt_raw, B_proj, C_proj = x_dbl.split(
             [1, self.d_state, self.d_state], dim=-1
         )
 
-        dt = F.softplus(self.dt_proj(dt_raw))         # (B, L, d_inner)
-        A  = -torch.exp(self.A_log.float())           # (d_inner, d_state)
+        dt = F.softplus(self.dt_proj(dt_raw))
+        A = -torch.exp(self.A_log.float())
 
-        # ZOH discretization — vectorised over all L timesteps at once
-        dA  = torch.exp(dt.unsqueeze(-1) * A)         # (B, L, d_inner, d_state)
+        # Only materialize four-dimensional SSM tensors for this chunk.
+        dA = torch.exp(dt.unsqueeze(-1) * A)
         dBx = dt.unsqueeze(-1) * B_proj.unsqueeze(2) * x.unsqueeze(-1)
-        #     (B, L, d_inner, d_state) — combined B·x contribution
+        dBx = dBx.clone()
+        dBx[:, 0] = dA[:, 0] * h_carry + dBx[:, 0]
 
-        # Auto-select scan strategy:
-        # Sequential O(L) is faster on CPU for L <= 512 (less memory, no torch.cat overhead)
-        # Parallel O(L log L) is faster on GPU or L > 512 (true parallelism)
-        if dA.shape[1] <= 512:
-            h = self._sequential_scan(dA, dBx)
-        else:
-            h = self._parallel_scan(dA, dBx)          # (B, L, d_inner, d_state)
+        h = self._scan_chunk(dA, dBx)
+        y = (h * C_proj.unsqueeze(2)).sum(-1)
+        return y + x * self.D, h[:, -1]
 
-        y = (h * C_proj.unsqueeze(2)).sum(-1)         # (B, L, d_inner)
-        return y + x * self.D
+    def _selective_scan(self, x: torch.Tensor, chunk_size: int = 256) -> torch.Tensor:
+        """
+        Scan the full sequence while limiting SSM activation memory to one chunk.
+
+        The carry state connects chunks, so all timesteps remain part of the
+        same sequence and no input token is dropped.
+        """
+        B, L, d_inner = x.shape
+        h_carry = torch.zeros(
+            B, d_inner, self.d_state, device=x.device, dtype=x.dtype
+        )
+        chunks_y = []
+
+        for start in range(0, L, chunk_size):
+            x_chunk = x[:, start : start + chunk_size]
+            if self.training and x_chunk.requires_grad:
+                y_chunk, h_carry = grad_checkpoint(
+                    self._selective_scan_chunk,
+                    x_chunk,
+                    h_carry,
+                    use_reentrant=False,
+                )
+            else:
+                y_chunk, h_carry = self._selective_scan_chunk(x_chunk, h_carry)
+            chunks_y.append(y_chunk)
+
+        return torch.cat(chunks_y, dim=1)
 
     @staticmethod
     def _sequential_scan(dA: torch.Tensor, dBx: torch.Tensor) -> torch.Tensor:
