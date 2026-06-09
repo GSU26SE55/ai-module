@@ -42,6 +42,83 @@ def classify_anomaly(score: float, soh: float) -> str:
         return "Degrading" if score < -0.1 else "Normal"
 
 
+def classify_health_stage(soh: float) -> str:
+    """Classify battery health using SOH only."""
+    if soh < EOL_SOH:
+        return "End Of Life"
+    if soh < MAINTENANCE_SOH:
+        return "Maintenance Required"
+    if soh < 90.0:
+        return "Degrading"
+    return "Healthy"
+
+
+def classify_anomaly_status(score: float) -> str:
+    """Classify IsolationForest score separately from SOH health state."""
+    if score <= -0.3:
+        return "Anomaly"
+    if score <= -0.1:
+        return "Warning"
+    return "Normal"
+
+
+def compute_risk_profile(
+    health_stage: str,
+    anomaly_status: str,
+    warnings: list[dict],
+    soh: float,
+    cycles_to_maintenance: int,
+) -> dict:
+    """Build RAG/ticket-friendly risk level, priority, action code, and reasons."""
+    has_critical_warning = any(w.get("severity") == "critical" for w in warnings)
+    has_warning = any(w.get("severity") == "warning" for w in warnings)
+
+    if health_stage == "End Of Life" or has_critical_warning:
+        risk_level = "Critical"
+        priority = "P1"
+    elif health_stage == "Maintenance Required" or anomaly_status == "Anomaly":
+        risk_level = "High"
+        priority = "P2"
+    elif health_stage == "Degrading" or anomaly_status == "Warning" or has_warning:
+        risk_level = "Medium"
+        priority = "P3"
+    else:
+        risk_level = "Low"
+        priority = "None"
+
+    if health_stage == "End Of Life":
+        action_code = "REPLACE_IMMEDIATELY"
+    elif health_stage == "Maintenance Required":
+        action_code = "SCHEDULE_REPLACEMENT"
+    elif health_stage == "Degrading" or anomaly_status in {"Warning", "Anomaly"}:
+        action_code = "SCHEDULE_MAINTENANCE"
+    else:
+        action_code = "MONITOR"
+
+    reasons = []
+    if soh < EOL_SOH:
+        reasons.append(f"SOH {soh:.1f}% is below {EOL_SOH:.0f}% end-of-life threshold")
+    elif soh < MAINTENANCE_SOH:
+        reasons.append(f"SOH {soh:.1f}% is below {MAINTENANCE_SOH:.0f}% maintenance threshold")
+    elif soh < 90.0:
+        reasons.append(f"SOH {soh:.1f}% indicates degradation below 90%")
+
+    if anomaly_status != "Normal":
+        reasons.append(f"Sensor anomaly status is {anomaly_status}")
+    if cycles_to_maintenance == 0 and soh < MAINTENANCE_SOH:
+        reasons.append("Battery is already at or below maintenance planning threshold")
+    reasons.extend(w["message"] for w in warnings[:3])
+    if not reasons:
+        reasons.append("Battery readings are within normal operating range")
+
+    return {
+        "risk_level": risk_level,
+        "priority": priority,
+        "action_code": action_code,
+        "reasons": reasons,
+    }
+
+
 def estimate_rul(soh: float, rate: float | None = None) -> int:
     """
     Estimate remaining useful life in charge-discharge cycles.

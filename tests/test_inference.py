@@ -8,6 +8,11 @@ from src.core.config import INPUT_FEATURES, SPECTRAL_FEAT_DIM, WINDOW_SIZE
 from src.models.soh_predictor import MambaSOHPredictor
 
 REQUIRED_KEYS = {
+    "prediction",
+    "anomaly",
+    "risk",
+    "evidence",
+    "metadata",
     "soh_percent",
     "classification",
     "confidence",
@@ -66,6 +71,9 @@ class TestInferencePipeline:
         from src.services.inference import run_inference
         result = run_inference(make_dummy_readings())
         assert result["classification"] in {"Normal", "Degrading", "Failed"}
+        assert result["prediction"]["health_stage"] in {
+            "Healthy", "Degrading", "Maintenance Required", "End Of Life",
+        }
 
     def test_soh_is_float(self):
         from src.services.inference import run_inference
@@ -76,6 +84,18 @@ class TestInferencePipeline:
         from src.services.inference import run_inference
         result = run_inference(make_dummy_readings())
         assert 0.0 <= result["confidence"] <= 1.0
+        assert result["confidence"] == result["anomaly"]["anomaly_confidence"]
+
+    def test_nested_rag_fields_are_present(self):
+        from src.services.inference import run_inference
+        result = run_inference(make_dummy_readings())
+        assert "soh_percent" in result["prediction"]
+        assert "anomaly_status" in result["anomaly"]
+        assert "risk_level" in result["risk"]
+        assert "priority" in result["risk"]
+        assert "reasons" in result["risk"]
+        assert "warnings" in result["evidence"]
+        assert "model_version" in result["metadata"]
 
     def test_rul_is_non_negative_int(self):
         from src.services.inference import run_inference
@@ -91,11 +111,13 @@ class TestInferencePipeline:
         }
         result = run_inference(make_dummy_readings())
         assert result["recommended_action"] in valid_actions
+        assert result["recommended_action"] == result["risk"]["action_code"]
 
     def test_warnings_is_list(self):
         from src.services.inference import run_inference
         result = run_inference(make_dummy_readings())
         assert isinstance(result["warnings"], list)
+        assert result["warnings"] == result["evidence"]["warnings"]
 
     def test_warnings_have_required_fields(self):
         from src.services.inference import run_inference

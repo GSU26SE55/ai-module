@@ -4,6 +4,9 @@ import torch
 from src.core.config import INPUT_FEATURES, SPECTRAL_FEAT_DIM, WINDOW_SIZE
 from src.models.anomaly_detector import (
     classify_anomaly,
+    classify_anomaly_status,
+    classify_health_stage,
+    compute_risk_profile,
     estimate_rul,
     generate_warnings,
     get_recommended_action,
@@ -119,6 +122,30 @@ class TestClassifyAnomaly:
 
     def test_sensor_anomaly_does_not_affect_failed(self):
         assert classify_anomaly(0.9, 70.0) == "Failed"
+
+
+class TestRiskProfile:
+    def test_health_stage_from_soh(self):
+        assert classify_health_stage(95.0) == "Healthy"
+        assert classify_health_stage(87.0) == "Degrading"
+        assert classify_health_stage(82.0) == "Maintenance Required"
+        assert classify_health_stage(79.0) == "End Of Life"
+
+    def test_anomaly_status_from_score(self):
+        assert classify_anomaly_status(0.1) == "Normal"
+        assert classify_anomaly_status(-0.2) == "Warning"
+        assert classify_anomaly_status(-0.4) == "Anomaly"
+
+    def test_critical_warning_maps_to_p1(self):
+        risk = compute_risk_profile(
+            health_stage="Healthy",
+            anomaly_status="Normal",
+            warnings=[{"severity": "critical", "message": "Temperature critical"}],
+            soh=95.0,
+            cycles_to_maintenance=20,
+        )
+        assert risk["risk_level"] == "Critical"
+        assert risk["priority"] == "P1"
 
 
 class TestEstimateRul:
