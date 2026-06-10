@@ -51,31 +51,63 @@ app/
 └── +not-found.tsx               ← 404 screen
 
 src/
-├── components/
-│   ├── ui/                      ← Base components (Button, Card, Badge...)
-│   ├── layout/
-│   │   └── TabBar.tsx           ← Custom tab bar
-│   └── common/                  ← LoadingSpinner, ErrorBoundary, EmptyState
+├── context/
+│   └── authContext.tsx           ← AuthProvider: isHydrating + 3-case boot logic
+├── hooks/
+│   └── useAuthGuard.ts           ← useSegments + useRouter redirect logic
+├── shared/
+│   └── enums/                    ← `as const` object + type alias — KHÔNG dùng TypeScript enum
+│       ├── session.enum.ts        ← UserRole
+│       └── ticket.enum.ts         ← TicketStatusEnum, TicketPriorityEnum, ...
 ├── features/
 │   ├── auth/
-│   │   ├── hooks/               ← useLogin, useLogout
-│   │   ├── services/            ← auth.service.ts
+│   │   ├── hooks/                ← useLogin, useLogout
+│   │   ├── services/             ← auth.service.ts
 │   │   └── types/
+│   ├── account/
+│   │   ├── enums/                ← account.enum.ts (RefreshTokenStatus)
+│   │   ├── hooks/
+│   │   ├── services/
+│   │   └── types/                ← re-export từ enums/
 │   ├── batteries/
-│   │   ├── components/          ← BatteryCard, SOHChart, StatusBadge
-│   │   ├── hooks/               ← useBatteries, useBatteryDetail
-│   │   ├── services/            ← battery.service.ts
-│   │   └── types/
+│   │   ├── enums/                ← battery.enum.ts (BatteryStatusEnum)
+│   │   ├── components/           ← BatteryCard, SOHChart, StatusBadge
+│   │   ├── hooks/                ← useBatteries, useBatteryDetail
+│   │   ├── services/             ← battery.service.ts
+│   │   └── types/                ← re-export từ enums/
+│   ├── notifications/
+│   │   ├── enums/                ← notification.enum.ts
+│   │   ├── hooks/
+│   │   ├── services/
+│   │   └── types/                ← re-export từ enums/
+│   ├── profile/
+│   │   ├── enums/                ← profile.enum.ts (AccountStatusEnum, AvatarSourceEnum)
+│   │   ├── hooks/
+│   │   ├── services/
+│   │   └── types/                ← re-export từ enums/
+│   ├── staff/
+│   │   ├── enums/                ← staff.enum.ts (HoldReasonEnum, StaffSkillTierEnum)
+│   │   ├── hooks/
+│   │   ├── services/
+│   │   └── types/                ← re-export từ enums/
 │   └── tickets/
-│       ├── components/          ← TicketCard, CreateTicketForm
-│       ├── hooks/               ← useTickets, useCreateTicket
-│       ├── services/            ← ticket.service.ts
-│       └── types/
+│       ├── components/           ← TicketCard, CreateTicketForm
+│       ├── hooks/                ← useTickets, useCreateTicket
+│       ├── services/             ← ticket.service.ts
+│       └── types/                ← re-export từ shared/enums/ticket.enum
 ├── lib/
-│   ├── axios.ts                 ← Axios instance + interceptors
-│   └── secureStore.ts           ← Wrapper expo-secure-store (getToken, setToken, clearToken)
-└── stores/
-    └── sessionStore.ts          ← Zustand: token, user (nhất quán với Web)
+│   ├── axios.ts                  ← Axios instance + interceptors
+│   ├── secureStore.ts            ← Wrapper expo-secure-store (getToken, setToken, clearToken)
+│   ├── endpoints.ts              ← ENDPOINTS — single source of truth cho API paths
+│   ├── queryKeys.ts              ← KEY (root) + QUERY_KEY (factories)
+│   ├── errors.ts                 ← HttpError, EntityError, handleErrorApi
+│   └── theme.ts                  ← color tokens
+├── stores/
+│   ├── sessionStore.ts           ← Zustand: user, setSession, clearSession
+│   └── alertsStore.ts
+└── types/
+    ├── api.types.ts              ← CommonResponse<T>, ErrorEntity
+    └── session.types.ts          ← SessionUser, UserRole, decodeToken, redirectByRole
 ```
 
 ---

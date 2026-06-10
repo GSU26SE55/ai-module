@@ -78,10 +78,89 @@ src/
     ├── utils/
     │   ├── queryKeys.ts            ← KEY (root) + QUERY_KEY (factories)
     │   └── endpoints.ts            ← ENDPOINTS — single source of truth cho API paths
+    ├── enums/                      ← `as const` object + type alias — KHÔNG dùng TypeScript enum
+    │   ├── session.enum.ts         ← UserRole
+    │   ├── account.enum.ts         ← AccountStatusEnum, AvatarSourceEnum, RefreshTokenStatus
+    │   ├── ticket.enum.ts          ← TicketStatusEnum, TicketPriorityEnum, ImpactScopeEnum, UrgencyLevelEnum, PauseReasonEnum, EscalationReasonEnum, SlaTimerStatusEnum, MaintenanceLogTypeEnum, ActivityActionEnum, ActorRoleEnum, TicketCategoryEnum, TicketOriginEnum
+    │   ├── battery.enum.ts         ← BatteryStatusEnum
+    │   ├── site.enum.ts            ← SiteStatusEnum
+    │   └── common.enum.ts          ← TrendDir
     └── types/
         ├── api.types.ts            ← CommonResponse<T>, PaginationResponse<T>, ErrorEntity
         ├── session.types.ts        ← SessionUser, JwtPayload, UserRole, decodeToken, redirectByRole
+        ├── ticket.types.ts         ← TicketDTO, TicketDetailDTO, SlaTimerDTO, action payloads, filter params (re-export từ shared/enums/ticket.enum)
+        ├── battery.types.ts        ← BatteryDTO (re-export BatteryStatusEnum)
+        ├── site.types.ts           ← SiteDTO (re-export SiteStatusEnum)
+        ├── account.types.ts        ← AccountDTO (re-export AccountStatusEnum, AvatarSourceEnum)
         └── common.types.ts         ← BaseFilterPagination, shared query types
+```
+
+**Feature enums** (chỉ dùng trong 1 feature — không đặt ở shared):
+```
+src/features/admin/enums/
+├── role.enum.ts          ← RoleStatusEnum, RoleTypeFilter
+├── audit.enum.ts         ← LoginAttemptResult, AuditActionEnum
+└── battery-asset.enum.ts ← WarrantyStatusEnum, ChargingStateEnum, BatteryChemistryEnum
+
+src/features/staff/enums/
+└── notification.enum.ts  ← NotificationTypeEnum, NotificationChannelEnum, NotificationStatusEnum
+```
+
+---
+
+## Enum Pattern
+
+**Không dùng TypeScript `enum`** — dùng `as const` object + type alias:
+
+```ts
+// ✅ ĐÚNG — pattern chuẩn toàn app
+export const TicketStatusEnum = {
+  New: "New",
+  Open: "Open",
+  InProgress: "InProgress",
+  // ...
+} as const;
+export type TicketStatusEnum = (typeof TicketStatusEnum)[keyof typeof TicketStatusEnum];
+
+// ❌ SAI — TypeScript native enum
+enum TicketStatus { New = "New", Open = "Open" }
+```
+
+**Quy tắc đặt file:**
+
+| Scope | Nơi đặt | Ví dụ |
+|-------|---------|-------|
+| Dùng ≥ 2 feature | `src/shared/enums/{domain}.enum.ts` | `ticket.enum.ts`, `account.enum.ts` |
+| Chỉ 1 feature dùng | `src/features/{feature}/enums/{domain}.enum.ts` | `admin/enums/audit.enum.ts` |
+
+**Types re-export enum** — `types/*.ts` **không định nghĩa enum inline**, chỉ import từ `enums/` và re-export:
+
+```ts
+// shared/types/ticket.types.ts
+import type { TicketStatusEnum } from "@/shared/enums/ticket.enum";
+export { TicketStatusEnum } from "@/shared/enums/ticket.enum";
+
+export interface TicketDTO {
+  status: TicketStatusEnum;  // dùng enum type ở đây
+}
+```
+
+**Trong Zod schema** — dùng `z.nativeEnum()` với `as const` object:
+
+```ts
+import { ImpactScopeEnum } from "@/shared/enums/ticket.enum";
+z.nativeEnum(ImpactScopeEnum)  // ✅ hoạt động với as const object
+```
+
+**Lưu ý đặc biệt — `AccountStatusEnum`:**
+`PendingVerification: 0` là ngoại lệ có chủ ý — BE trả số 0 cho trạng thái này. Không treat `0` là falsy trong conditional checks:
+
+```ts
+// ❌ SAI
+if (account.status) { ... }  // 0 sẽ bị bỏ qua
+
+// ✅ ĐÚNG
+if (account.status !== undefined) { ... }
 ```
 
 ---
@@ -313,8 +392,17 @@ Plan cho ticket FE **bắt buộc** có đủ các section sau. Thiếu bất k�
 | `src/features/auth/types/auth.types.ts` | create | LoginPayload, AuthUser |
 | `src/features/auth/hooks/useLogin.ts` | create | useMutation |
 
+## Enums
+[Liệt kê enums sẽ dùng — tên enum + file nguồn. KHÔNG define inline trong types file.]
+```
+| Enum | File nguồn |
+|------|-----------|
+| TicketStatusEnum | shared/enums/ticket.enum.ts |
+| AccountStatusEnum | shared/enums/account.enum.ts |
+```
+
 ## Types
-[Liệt kê types/interfaces sẽ tạo — tên + shape ngắn gọn]
+[Liệt kê types/interfaces sẽ tạo — tên + shape ngắn gọn. Import enum từ enums/ rồi dùng làm type.]
 ```ts
 interface LoginPayload { email: string; password: string; }
 interface AuthUser { accountId: string; role: UserRole; }
