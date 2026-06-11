@@ -32,9 +32,10 @@ random.seed(SEED)
 np.random.seed(SEED)
 torch.manual_seed(SEED)
 
-BATCH_SIZE = 32
-LR         = 5e-4
-PATIENCE   = 15
+BATCH_SIZE     = 32
+VAL_BATCH_SIZE = 256
+LR             = 5e-4
+PATIENCE       = 15
 
 
 # ---------------------------------------------------------------------------
@@ -78,13 +79,17 @@ def load_split(path: str) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     return data["X"], data["X_feat"], data["y"]
 
 
-def evaluate(model: nn.Module, X: torch.Tensor, X_feat: torch.Tensor, y: torch.Tensor) -> dict:
+def evaluate(model: nn.Module, X: torch.Tensor, X_feat: torch.Tensor, y: torch.Tensor, device: torch.device) -> dict:
     model.eval()
+    preds = []
+    loader = DataLoader(TensorDataset(X, X_feat), batch_size=VAL_BATCH_SIZE)
     with torch.no_grad():
-        pred = model(X, X_feat) * 100.0
-        mae  = torch.mean(torch.abs(pred - y)).item()
-        rmse = torch.sqrt(torch.mean((pred - y) ** 2)).item()
-        loss = torch.mean(((pred / 100.0) - (y / 100.0)) ** 2).item()
+        for X_b, Xf_b in loader:
+            preds.append(model(X_b.to(device), Xf_b.to(device)).cpu())
+    pred = torch.cat(preds) * 100.0
+    mae  = torch.mean(torch.abs(pred - y)).item()
+    rmse = torch.sqrt(torch.mean((pred - y) ** 2)).item()
+    loss = torch.mean(((pred / 100.0) - (y / 100.0)) ** 2).item()
     return {"mae": round(mae, 4), "rmse": round(rmse, 4), "loss": loss}
 
 
@@ -113,8 +118,11 @@ def train(data_dir: str, epochs: int, log_dir: str) -> None:
 
     # Re-seed right before model init — JIT compilation at module import
     # may consume PyTorch random state, causing different weight initialization
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    logger.info(f"Device: {device}")
+
     torch.manual_seed(SEED)
-    model     = MambaSOHPredictor(input_features=INPUT_FEATURES, feat_dim=SPECTRAL_FEAT_DIM, d_model=D_MODEL, d_state=D_STATE)
+    model     = MambaSOHPredictor(input_features=INPUT_FEATURES, feat_dim=SPECTRAL_FEAT_DIM, d_model=D_MODEL, d_state=D_STATE).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=1e-5)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.5, patience=5, min_lr=1e-6
@@ -138,19 +146,16 @@ def train(data_dir: str, epochs: int, log_dir: str) -> None:
         train_loss = 0.0
         for X_batch, X_feat_batch, y_batch in train_loader:
             optimizer.zero_grad()
-            pred  = model(X_batch, X_feat_batch)
-            loss  = criterion(pred, y_batch / 100.0)
+            pred  = model(X_batch.to(device), X_feat_batch.to(device))
+            loss  = criterion(pred, (y_batch / 100.0).to(device))
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
             optimizer.step()
             train_loss += loss.item() * len(X_batch)
         train_loss /= len(X_train)
 
-        model.eval()
-        with torch.no_grad():
-            val_pred = model(X_val, X_feat_val)
-            val_loss = criterion(val_pred, y_val / 100.0).item()
-        val_metrics = evaluate(model, X_val, X_feat_val, y_val)
+        val_metrics = evaluate(model, X_val, X_feat_val, y_val, device)
+        val_loss    = val_metrics["loss"]
         current_lr  = optimizer.param_groups[0]["lr"]
 
         logger.debug(
@@ -179,7 +184,7 @@ def train(data_dir: str, epochs: int, log_dir: str) -> None:
             break
 
     model.load_state_dict(best_state)
-    test_metrics = evaluate(model, X_test, X_feat_test, y_test)
+    test_metrics = evaluate(model, X_test, X_feat_test, y_test, device)
     logger.info("-" * 55)
     logger.info(f"Test MAE : {test_metrics['mae']:.4f}%  (target < 2.0%)")
     logger.info(f"Test RMSE: {test_metrics['rmse']:.4f}%  (target < 3.0%)")
