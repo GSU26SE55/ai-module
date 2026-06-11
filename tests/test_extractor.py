@@ -1,7 +1,11 @@
 import numpy as np
 import pytest
 
-from src.features.extractor import extract_batch_features, extract_window_features
+from src.features.extractor import (
+    _spectral_features,
+    extract_batch_features,
+    extract_window_features,
+)
 
 
 class TestExtractWindowFeatures:
@@ -38,6 +42,35 @@ class TestExtractWindowFeatures:
         f_healthy  = extract_window_features(healthy)
         f_degraded = extract_window_features(degraded)
         assert not np.allclose(f_healthy, f_degraded)
+
+    def test_long_sequence_shape(self):
+        window = np.random.rand(4096, 3).astype(np.float32)
+        assert extract_window_features(window).shape == (54,)
+
+    def test_spectral_features_ignore_dc_offset(self):
+        x = np.sin(np.linspace(0, 16 * np.pi, 4096)).astype(np.float32)
+        np.testing.assert_allclose(
+            _spectral_features(x),
+            _spectral_features(x + 10.0),
+            atol=1e-5,
+            rtol=1e-5,
+        )
+
+    def test_spectral_kurtosis_responds_to_transient(self):
+        smooth = np.sin(np.linspace(0, 16 * np.pi, 4096)).astype(np.float32)
+        transient = smooth.copy()
+        transient[2048] += 20.0
+        smooth_kurtosis = _spectral_features(smooth)[3]
+        transient_kurtosis = _spectral_features(transient)[3]
+        assert transient_kurtosis != pytest.approx(smooth_kurtosis)
+
+    def test_spectral_slope_responds_to_frequency_content(self):
+        t = np.arange(4096, dtype=np.float32)
+        low_frequency = np.sin(2 * np.pi * 8 * t / len(t))
+        high_frequency = np.sin(2 * np.pi * 256 * t / len(t))
+        low_slope = _spectral_features(low_frequency)[2]
+        high_slope = _spectral_features(high_frequency)[2]
+        assert high_slope != pytest.approx(low_slope)
 
 
 class TestExtractBatchFeatures:

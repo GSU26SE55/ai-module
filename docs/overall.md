@@ -83,7 +83,7 @@ Dependencies duoc pin trong `requirements.txt`.
 Nguon cau hinh: `src/core/config.py`.
 
 ```text
-MODEL_VERSION = 1.2
+MODEL_VERSION = 1.3
 WINDOW_SIZE = 4096
 INPUT_FEATURES = 6
 SPECTRAL_FEAT_DIM = 54
@@ -211,6 +211,15 @@ test.pt:
   X_feat (40, 54)
   y      (40,)
 ```
+
+Moi processed file con co:
+
+```text
+feature_scaler_version = 1.2
+```
+
+`train.py` tu choi processed data cu/missing version de tranh train v1.3 bang
+feature semantics v1.2.
 
 Chay preprocess:
 
@@ -340,8 +349,8 @@ Production startup can:
 ```text
 models/weights/scaler.pkl
 models/weights/feature_scaler.pkl
-models/weights/soh_mamba_v1.2.pth
-models/weights/isolation_forest_v1.2.pkl
+models/weights/soh_mamba_v1.3.pth
+models/weights/isolation_forest_v1.3.pkl
 ```
 
 `src/core/model_loader.py` validate:
@@ -408,7 +417,7 @@ http://localhost:8000/docs
 ```json
 {
   "status": "ok",
-  "model_version": "1.2",
+  "model_version": "1.3",
   "scaler_loaded": true,
   "mamba_loaded": true,
   "isolation_forest_loaded": true
@@ -468,7 +477,7 @@ Structured response:
     }
   },
   "metadata": {
-    "model_version": "1.2",
+    "model_version": "1.3",
     "window_size": 4096,
     "input_features": 6,
     "inference_ms": 120.5
@@ -684,7 +693,7 @@ Prescription output must include:
 
 Current recommended order:
 
-1. Full-train and validate Mamba v1.2 artifacts.
+1. Full-train and validate Mamba v1.3 artifacts.
 2. Fix reviewed risk/action inconsistency.
 3. Finalize nested `/predict` contract with Backend.
 4. Update Backend event/ticket mapping.

@@ -50,8 +50,9 @@ class TestInferencePipeline:
         )
         dummy_model.eval()
 
+        # IF now trained on spectral features (SPECTRAL_FEAT_DIM), not raw flatten
         dummy_iso = IsolationForest(n_estimators=10, random_state=42)
-        dummy_iso.fit(np.random.rand(50, WINDOW_SIZE * INPUT_FEATURES))
+        dummy_iso.fit(np.random.rand(50, SPECTRAL_FEAT_DIM))
 
         with patch("src.services.inference.model_loader") as mock_loader:
             mock_loader.scaler         = dummy_scaler
@@ -84,7 +85,8 @@ class TestInferencePipeline:
         from src.services.inference import run_inference
         result = run_inference(make_dummy_readings())
         assert 0.0 <= result["confidence"] <= 1.0
-        assert result["confidence"] == result["anomaly"]["anomaly_confidence"]
+        # confidence = soh_confidence (MC Dropout), anomaly_confidence = IF-based — different values
+        assert 0.0 <= result["anomaly"]["anomaly_confidence"] <= 1.0
 
     def test_nested_rag_fields_are_present(self):
         from src.services.inference import run_inference

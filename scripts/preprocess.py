@@ -33,6 +33,7 @@ from src.core.config import (
     FEATURES,
     RAW_FEATURES,
     WINDOW_SIZE,
+    WINDOW_STRIDE,
 )
 from src.features.extractor import extract_window_features
 
@@ -76,7 +77,7 @@ def load_cycles(data_dir: str, battery_id: str) -> list[tuple[np.ndarray, float]
         n     = min(len(df[col]) for col in RAW_FEATURES)
         cycle = np.stack([df[col].values[:n].astype(np.float32) for col in RAW_FEATURES], axis=1)
         soh   = float(row["Capacity"]) / NOMINAL_CAPACITY * 100
-        if n >= 2:
+        if n >= WINDOW_SIZE:
             cycles.append((cycle, soh))
 
     return cycles
@@ -91,37 +92,29 @@ def collect_cycles(data_dir: str, battery_ids: list[str]) -> list[tuple[np.ndarr
     return all_cycles
 
 
-def resample_cycle(cycle: np.ndarray, target_len: int = WINDOW_SIZE) -> np.ndarray:
-    """Linearly resample one variable-length cycle to a fixed sequence length."""
-    old_x = np.linspace(0.0, 1.0, num=len(cycle), dtype=np.float32)
-    new_x = np.linspace(0.0, 1.0, num=target_len, dtype=np.float32)
-    resampled = np.empty((target_len, cycle.shape[1]), dtype=np.float32)
-    for col in range(cycle.shape[1]):
-        resampled[:, col] = np.interp(new_x, old_x, cycle[:, col]).astype(np.float32)
-    return resampled
-
-
-def cycles_to_sequences(
+def cycles_to_windows(
     cycles: list[tuple[np.ndarray, float]],
     scaler: MinMaxScaler,
     feat_scaler: StandardScaler | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Scale cycles, resample each full cycle to WINDOW_SIZE, and compute
-    spectral+kurtosis features on the resampled sequence.
+    Scale cycles, compute cycle-level features on full cycle, then slice windows.
+    All WINDOW_SIZE-step windows of a cycle share the same feature vector.
     """
     all_X, all_feat, all_y = [], [], []
 
     for cycle_raw, soh in cycles:
+        T = len(cycle_raw)
         cycle_scaled = scaler.transform(cycle_raw).astype(np.float32)
-        seq = resample_cycle(cycle_scaled, WINDOW_SIZE)
 
-        # Sequence-level features: FFT + kurtosis on voltage/current/temperature.
-        cycle_feat = extract_window_features(seq[:, :3])  # (54,)
+        # Cycle-level features: FFT on full cycle (voltage, current, temperature only)
+        cycle_feat = extract_window_features(cycle_scaled[:, :3])  # (54,)
 
-        all_X.append(seq)
-        all_feat.append(cycle_feat)
-        all_y.append(soh)
+        # Non-overlapping sliding windows
+        for i in range(0, T - WINDOW_SIZE + 1, WINDOW_STRIDE):
+            all_X.append(cycle_scaled[i : i + WINDOW_SIZE])
+            all_feat.append(cycle_feat)
+            all_y.append(soh)
 
     X      = np.array(all_X,    dtype=np.float32)
     X_feat = np.array(all_feat, dtype=np.float32)
@@ -140,7 +133,7 @@ def main() -> None:
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
-    print(f"Resampled sequence length: {WINDOW_SIZE}")
+    print(f"Window size: {WINDOW_SIZE} | Stride: {WINDOW_STRIDE}")
 
     print("\nLoading train cycles...")
     train_cycles = collect_cycles(args.data_dir, TRAIN_IDS)
@@ -148,7 +141,7 @@ def main() -> None:
     print("Loading val/test cycles (B0018)...")
     b0018_cycles = collect_cycles(args.data_dir, VAL_IDS)
 
-    split      = int(len(b0018_cycles) * 0.7)
+    split       = int(len(b0018_cycles) * 0.7)
     val_cycles  = b0018_cycles[:split]
     test_cycles = b0018_cycles[split:]
 
@@ -165,10 +158,10 @@ def main() -> None:
     )
     print("Saved scaler -> models/weights/scaler.pkl")
 
-    # Extract cycle-level features
+    # Extract cycle-level features for train
     print("\nExtracting cycle-level Spectral+Kurtosis features...")
-    X_train_raw, X_feat_train_raw, y_train = cycles_to_sequences(train_cycles, scaler)
-    print(f"  Train: {len(X_train_raw)} sequences, feat shape: {X_feat_train_raw.shape}")
+    X_train_raw, X_feat_train_raw, y_train = cycles_to_windows(train_cycles, scaler)
+    print(f"  Train: {len(X_train_raw)} windows, feat shape: {X_feat_train_raw.shape}")
 
     feat_scaler  = StandardScaler()
     X_feat_train = feat_scaler.fit_transform(X_feat_train_raw).astype(np.float32)
@@ -180,13 +173,13 @@ def main() -> None:
     )
     print(f"Saved feature_scaler -> {FEATURE_SCALER_PATH}")
 
-    X_val,  X_feat_val,  y_val  = cycles_to_sequences(val_cycles,  scaler, feat_scaler)
-    X_test, X_feat_test, y_test = cycles_to_sequences(test_cycles, scaler, feat_scaler)
+    X_val,  X_feat_val,  y_val  = cycles_to_windows(val_cycles,  scaler, feat_scaler)
+    X_test, X_feat_test, y_test = cycles_to_windows(test_cycles, scaler, feat_scaler)
 
     print(f"\nSplit summary:")
-    print(f"  Train: {len(X_train_raw):>5} sequences from {len(train_cycles)} cycles")
-    print(f"  Val  : {len(X_val):>5} sequences from {len(val_cycles)} cycles")
-    print(f"  Test : {len(X_test):>5} sequences from {len(test_cycles)} cycles")
+    print(f"  Train: {len(X_train_raw):>5} windows from {len(train_cycles)} cycles")
+    print(f"  Val  : {len(X_val):>5} windows from {len(val_cycles)} cycles")
+    print(f"  Test : {len(X_test):>5} windows from {len(test_cycles)} cycles")
 
     for name, X, X_feat, y in [
         ("train", X_train_raw,  X_feat_train, y_train),
@@ -196,9 +189,10 @@ def main() -> None:
         path = os.path.join(args.output_dir, f"{name}.pt")
         torch.save(
             {
-                "X":      torch.tensor(X,      dtype=torch.float32),
-                "X_feat": torch.tensor(X_feat, dtype=torch.float32),
-                "y":      torch.tensor(y,      dtype=torch.float32),
+                "X":                     torch.tensor(X,      dtype=torch.float32),
+                "X_feat":                torch.tensor(X_feat, dtype=torch.float32),
+                "y":                     torch.tensor(y,      dtype=torch.float32),
+                "feature_scaler_version": "1.1",
             },
             path,
         )
