@@ -29,7 +29,7 @@ def make_dummy_loader():
     model.eval()
 
     iso = IsolationForest(n_estimators=10, random_state=42)
-    iso.fit(np.random.rand(50, WINDOW_SIZE * INPUT_FEATURES))
+    iso.fit(np.random.rand(50, SPECTRAL_FEAT_DIM))
 
     return scaler, feat_scaler, model, iso
 

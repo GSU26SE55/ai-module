@@ -81,12 +81,27 @@ def run_inference(readings: list[list[float]]) -> dict:
     feat_scaled = model_loader.feature_scaler.transform(raw_feat.reshape(1, -1))
     x_feat_tensor = torch.tensor(feat_scaled, dtype=torch.float32)  # (1, 54)
 
+    # MC Dropout: run 20 forward passes with Dropout ON → measure prediction uncertainty
+    # High std (>3%) = model unsure → low confidence | Low std (<1%) = model confident
+    MC_RUNS = 20
+    model_loader.soh_model.train()   # enable Dropout
     with torch.no_grad():
-        soh = float(max(0.0, min(100.0, model_loader.soh_model(x_tensor, x_feat_tensor).item() * 100)))
+        mc_preds = [
+            model_loader.soh_model(x_tensor, x_feat_tensor).item() * 100
+            for _ in range(MC_RUNS)
+        ]
+    model_loader.soh_model.eval()    # restore eval mode
 
-    score = float(model_loader.iso_model.decision_function([x_scaled.flatten()])[0])
+    soh      = float(max(0.0, min(100.0, float(np.mean(mc_preds)))))
+    soh_std  = float(np.std(mc_preds))
+    # confidence: std=0% → 1.0, std=5% → 0.0 (linear scale)
+    soh_confidence = round(float(max(0.0, min(1.0, 1.0 - soh_std / 5.0))), 3)
+
+    # IsolationForest trained on spectral features (54 dims) — use same features at inference
+    score = float(model_loader.iso_model.decision_function(feat_scaled)[0])
     classification = classify_anomaly(score, soh)
     anomaly_confidence = round(min(1.0, max(0.0, abs(score))), 3)
+    # soh_confidence already computed above via MC Dropout
     health_stage = classify_health_stage(soh)
     anomaly_status = classify_anomaly_status(score)
 
@@ -109,6 +124,8 @@ def run_inference(readings: list[list[float]]) -> dict:
     return {
         "prediction": {
             "soh_percent":                round(soh, 2),
+            "soh_confidence":             soh_confidence,   # MC Dropout uncertainty
+            "soh_std":                    round(soh_std, 3),
             "rul_cycles_estimate":        degradation["rul_cycles_estimate"],
             "degradation_rate_per_cycle": degradation["degradation_rate_per_cycle"],
             "soh_trend":                  degradation["soh_trend"],
@@ -134,7 +151,7 @@ def run_inference(readings: list[list[float]]) -> dict:
         },
         "soh_percent":                round(soh, 2),
         "classification":             classification,
-        "confidence":                 anomaly_confidence,
+        "confidence":                 soh_confidence,     # MC Dropout (SOH uncertainty)
         "inference_ms":               elapsed_ms,
 
         # RUL — battery-specific (from observed trend) when window is long enough

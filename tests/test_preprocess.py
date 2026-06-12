@@ -1,6 +1,8 @@
 import pytest
+import torch
 
-from src.core.config import WINDOW_SIZE
+from scripts.train import load_split
+from src.core.config import FEATURE_SCALER_VERSION, WINDOW_SIZE
 
 
 class TestWindowUtils:
@@ -61,3 +63,35 @@ class TestSOHFormula:
         capacity_at_80 = 1.6
         soh = capacity_at_80 / nominal * 100
         assert soh == pytest.approx(80.0)
+
+
+class TestProcessedFeatureVersion:
+    def test_load_split_accepts_current_feature_version(self, tmp_path):
+        path = tmp_path / "train.pt"
+        torch.save(
+            {
+                "X": torch.zeros(1, WINDOW_SIZE, 6),
+                "X_feat": torch.zeros(1, 54),
+                "y": torch.zeros(1),
+                "feature_scaler_version": FEATURE_SCALER_VERSION,
+            },
+            path,
+        )
+        X, X_feat, y = load_split(str(path))
+        assert X.shape == (1, WINDOW_SIZE, 6)
+        assert X_feat.shape == (1, 54)
+        assert y.shape == (1,)
+
+    def test_load_split_rejects_stale_feature_version(self, tmp_path):
+        path = tmp_path / "train.pt"
+        torch.save(
+            {
+                "X": torch.zeros(1, WINDOW_SIZE, 6),
+                "X_feat": torch.zeros(1, 54),
+                "y": torch.zeros(1),
+                "feature_scaler_version": "0.9",  # outdated — should trigger mismatch
+            },
+            path,
+        )
+        with pytest.raises(ValueError, match="feature version mismatch"):
+            load_split(str(path))
