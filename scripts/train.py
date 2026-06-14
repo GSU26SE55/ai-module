@@ -19,7 +19,12 @@ import joblib
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.cuda.amp import GradScaler, autocast
+try:
+    from torch.amp import GradScaler, autocast  # PyTorch 2.x unified API
+    _AMP_DEVICE = "cuda"
+except ImportError:
+    from torch.cuda.amp import GradScaler, autocast  # type: ignore[assignment]
+    _AMP_DEVICE = None
 from sklearn.ensemble import IsolationForest
 from torch.utils.data import DataLoader, TensorDataset
 
@@ -116,8 +121,13 @@ def train(data_dir: str, epochs: int, log_dir: str) -> None:
     # may consume PyTorch random state, causing different weight initialization
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Device: {device}")
-    use_amp    = device.type == "cuda"
-    amp_scaler = GradScaler(enabled=use_amp)
+    use_amp = device.type == "cuda"
+    if _AMP_DEVICE:
+        amp_scaler = GradScaler(_AMP_DEVICE, enabled=use_amp)
+        def _amp_ctx(): return autocast(_AMP_DEVICE, enabled=use_amp)
+    else:
+        amp_scaler = GradScaler(enabled=use_amp)
+        def _amp_ctx(): return autocast(enabled=use_amp)
     logger.info(f"AMP: {'enabled (fp16)' if use_amp else 'disabled'}")
 
     train_loader = DataLoader(
@@ -158,7 +168,7 @@ def train(data_dir: str, epochs: int, log_dir: str) -> None:
         train_loss = 0.0
         for X_batch, X_feat_batch, y_batch in train_loader:
             optimizer.zero_grad(set_to_none=True)
-            with autocast(enabled=use_amp):
+            with _amp_ctx():
                 pred  = model(X_batch.to(device), X_feat_batch.to(device))
                 loss  = criterion(pred, (y_batch / 100.0).to(device))
             amp_scaler.scale(loss).backward()

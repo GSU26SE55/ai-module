@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint as _ckpt
 
 
 
@@ -196,7 +197,8 @@ class MambaSOHPredictor(nn.Module):
         # x_feat: (batch, feat_dim)
         h = self.input_proj(x)                        # (batch, 30, d_model)
         for layer in self.mamba_layers:
-            h = layer(h)
+            # gradient checkpointing: activations recomputed on backward → ~4GB peak vs 12GB
+            h = _ckpt(layer, h, use_reentrant=False) if h.requires_grad else layer(h)
         h = self.norm(h)
         h = h[:, -1, :]                               # (batch, d_model)
 
