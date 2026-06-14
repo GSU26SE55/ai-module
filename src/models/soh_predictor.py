@@ -74,24 +74,33 @@ class MambaBlock(nn.Module):
         dt = F.softplus(self.dt_proj(dt_raw))         # (B, L, d_inner)
         A  = -torch.exp(self.A_log.float())           # (d_inner, d_state)
 
-        # ZOH discretization — vectorised over all L timesteps
-        dA  = torch.exp(dt.unsqueeze(-1) * A)         # (B, L, d_inner, d_state)
-        dBx = dt.unsqueeze(-1) * B_proj.unsqueeze(2) * x.unsqueeze(-1)
-
         if L <= 512:
-            # Sequential scan during training — correct gradient flow, fast for short L
+            # Sequential scan for short sequences (L=30 production use)
+            dA  = torch.exp(dt.unsqueeze(-1) * A)
+            dBx = dt.unsqueeze(-1) * B_proj.unsqueeze(2) * x.unsqueeze(-1)
             h = torch.zeros(B, d_inner, self.d_state, device=x.device, dtype=x.dtype)
             ys = []
             for t in range(L):
                 h = dA[:, t] * h + dBx[:, t]
-                y_t = (h * C_proj[:, t].unsqueeze(1)).sum(-1)
-                ys.append(y_t)
+                ys.append((h * C_proj[:, t].unsqueeze(1)).sum(-1))
             y = torch.stack(ys, dim=1)
         else:
-            # Parallel scan for long-sequence inference (L > 512)
-            # O(log L) depth — enables L=4096 in <300ms on CPU
-            h = MambaBlock._parallel_scan(dA, dBx)    # (B, L, d_inner, d_state)
-            y = (h * C_proj.unsqueeze(2)).sum(-1)      # (B, L, d_inner)
+            # Chunked scan: each chunk materialises (B, 256, d_inner, d_state) ~100MB
+            # vs materialising the full (B, L, d_inner, d_state) ~6GB upfront.
+            # Full gradient flow preserved — _scan_forward_chunk is checkpointed so
+            # dA_c/dBx_c/h_c are recomputed during backward instead of stored.
+            CHUNK   = 256
+            y       = torch.zeros(B, L, d_inner, device=x.device, dtype=x.dtype)
+            h_carry = torch.zeros(B, d_inner, self.d_state, device=x.device, dtype=dt.dtype)
+            for start in range(0, L, CHUNK):
+                end = min(start + CHUNK, L)
+                y_c, h_carry = _ckpt(
+                    MambaBlock._scan_forward_chunk,
+                    dt[:, start:end], B_proj[:, start:end], C_proj[:, start:end],
+                    x[:, start:end], h_carry, A,
+                    use_reentrant=False,
+                )
+                y[:, start:end] = y_c
 
         return y + x * self.D
 
@@ -110,6 +119,24 @@ class MambaBlock(nn.Module):
             b = torch.cat([b[:, :step], new_b], dim=1)
             step <<= 1
         return b
+
+    @staticmethod
+    def _scan_forward_chunk(
+        dt_c: torch.Tensor,     # (B, cs, d_inner)
+        Bp_c: torch.Tensor,     # (B, cs, d_state)
+        C_c: torch.Tensor,      # (B, cs, d_state)
+        x_c: torch.Tensor,      # (B, cs, d_inner)
+        h_carry: torch.Tensor,  # (B, d_inner, d_state)
+        A: torch.Tensor,        # (d_inner, d_state)
+    ) -> tuple:
+        """One SSM chunk: returns (y_c, h_last). Checkpointed by caller."""
+        dA_c  = torch.exp(dt_c.unsqueeze(-1) * A)                          # (B, cs, d_inner, d_state)
+        dBx_c = dt_c.unsqueeze(-1) * Bp_c.unsqueeze(2) * x_c.unsqueeze(-1)
+        dBx_c = dBx_c.clone()
+        dBx_c[:, 0] = dA_c[:, 0] * h_carry + dBx_c[:, 0]                 # inject carry
+        h_c   = MambaBlock._scan_chunk(dA_c, dBx_c)                        # (B, cs, d_inner, d_state)
+        y_c   = (h_c * C_c.unsqueeze(2)).sum(-1)                            # (B, cs, d_inner)
+        return y_c, h_c[:, -1]                                              # h_last: (B, d_inner, d_state)
 
     @staticmethod
     def _parallel_scan(
@@ -197,8 +224,7 @@ class MambaSOHPredictor(nn.Module):
         # x_feat: (batch, feat_dim)
         h = self.input_proj(x)                        # (batch, 30, d_model)
         for layer in self.mamba_layers:
-            # gradient checkpointing: activations recomputed on backward → ~4GB peak vs 12GB
-            h = _ckpt(layer, h, use_reentrant=False) if h.requires_grad else layer(h)
+            h = layer(h)  # chunked scan inside _selective_scan handles peak memory
         h = self.norm(h)
         h = h[:, -1, :]                               # (batch, d_model)
 
