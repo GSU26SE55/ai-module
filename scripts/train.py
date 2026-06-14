@@ -19,6 +19,7 @@ import joblib
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.cuda.amp import GradScaler, autocast
 from sklearn.ensemble import IsolationForest
 from torch.utils.data import DataLoader, TensorDataset
 
@@ -111,15 +112,19 @@ def train(data_dir: str, epochs: int, log_dir: str) -> None:
     if X_feat_train.shape[-1] != SPECTRAL_FEAT_DIM:
         raise ValueError(f"Feature dim {X_feat_train.shape[-1]}, config expects {SPECTRAL_FEAT_DIM}.")
 
-    train_loader = DataLoader(
-        TensorDataset(X_train, X_feat_train, y_train),
-        batch_size=BATCH_SIZE, shuffle=True
-    )
-
     # Re-seed right before model init — JIT compilation at module import
     # may consume PyTorch random state, causing different weight initialization
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Device: {device}")
+    use_amp    = device.type == "cuda"
+    amp_scaler = GradScaler(enabled=use_amp)
+    logger.info(f"AMP: {'enabled (fp16)' if use_amp else 'disabled'}")
+
+    train_loader = DataLoader(
+        TensorDataset(X_train, X_feat_train, y_train),
+        batch_size=BATCH_SIZE, shuffle=True,
+        pin_memory=use_amp,
+    )
 
     torch.manual_seed(SEED)
     model     = MambaSOHPredictor(input_features=INPUT_FEATURES, feat_dim=SPECTRAL_FEAT_DIM, d_model=D_MODEL, d_state=D_STATE).to(device)
@@ -133,6 +138,13 @@ def train(data_dir: str, epochs: int, log_dir: str) -> None:
     logger.info(f"MambaSOHPredictor — {n_params:,} trainable params")
     logger.info(f"Config: lr={LR}, batch={BATCH_SIZE}, epochs={epochs}, patience={PATIENCE}")
 
+    if device.type == "cuda" and hasattr(torch, "compile") and epochs > 1:
+        try:
+            model = torch.compile(model, mode="reduce-overhead")
+            logger.info("torch.compile enabled (mode=reduce-overhead)")
+        except Exception as e:
+            logger.info(f"torch.compile skipped: {e}")
+
     best_val_loss    = float("inf")
     patience_counter = 0
     best_state       = None
@@ -145,12 +157,15 @@ def train(data_dir: str, epochs: int, log_dir: str) -> None:
         model.train()
         train_loss = 0.0
         for X_batch, X_feat_batch, y_batch in train_loader:
-            optimizer.zero_grad()
-            pred  = model(X_batch.to(device), X_feat_batch.to(device))
-            loss  = criterion(pred, (y_batch / 100.0).to(device))
-            loss.backward()
+            optimizer.zero_grad(set_to_none=True)
+            with autocast(enabled=use_amp):
+                pred  = model(X_batch.to(device), X_feat_batch.to(device))
+                loss  = criterion(pred, (y_batch / 100.0).to(device))
+            amp_scaler.scale(loss).backward()
+            amp_scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
-            optimizer.step()
+            amp_scaler.step(optimizer)
+            amp_scaler.update()
             train_loss += loss.item() * len(X_batch)
         train_loss /= len(X_train)
 

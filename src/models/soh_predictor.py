@@ -77,7 +77,7 @@ class MambaBlock(nn.Module):
         dA  = torch.exp(dt.unsqueeze(-1) * A)         # (B, L, d_inner, d_state)
         dBx = dt.unsqueeze(-1) * B_proj.unsqueeze(2) * x.unsqueeze(-1)
 
-        if self.training or L <= 512:
+        if L <= 512:
             # Sequential scan during training — correct gradient flow, fast for short L
             h = torch.zeros(B, d_inner, self.d_state, device=x.device, dtype=x.dtype)
             ys = []
