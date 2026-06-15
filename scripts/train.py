@@ -148,12 +148,6 @@ def train(data_dir: str, epochs: int, log_dir: str) -> None:
     logger.info(f"MambaSOHPredictor — {n_params:,} trainable params")
     logger.info(f"Config: lr={LR}, batch={BATCH_SIZE}, epochs={epochs}, patience={PATIENCE}")
 
-    if device.type == "cuda" and hasattr(torch, "compile") and epochs > 1:
-        try:
-            model = torch.compile(model, mode="reduce-overhead")
-            logger.info("torch.compile enabled (mode=reduce-overhead)")
-        except Exception as e:
-            logger.info(f"torch.compile skipped: {e}")
 
     best_val_loss    = float("inf")
     patience_counter = 0
