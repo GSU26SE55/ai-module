@@ -30,7 +30,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.core.config import D_MODEL, D_STATE, INPUT_FEATURES, ISO_FOREST_PATH, MAMBA_PATH, MODEL_VERSION, SPECTRAL_FEAT_DIM, WINDOW_SIZE  # noqa: E402
+from src.core.config import D_MODEL, D_STATE, INPUT_FEATURES, ISO_FOREST_PATH, LONG_MAMBA_PATH, LONG_MODEL_VERSION, MAMBA_PATH, MODEL_VERSION, SPECTRAL_FEAT_DIM, WARMUP_STAGES, WINDOW_SIZE  # noqa: E402
 from src.models.soh_predictor import MambaSOHPredictor  # noqa: E402
 
 SEED = 42
@@ -93,10 +93,11 @@ def load_split(path: str) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     return data["X"], data["X_feat"], data["y"]
 
 
-def evaluate(model: nn.Module, X: torch.Tensor, X_feat: torch.Tensor, y: torch.Tensor, device: torch.device) -> dict:
+def evaluate(model: nn.Module, X: torch.Tensor, X_feat: torch.Tensor, y: torch.Tensor,
+             device: torch.device, batch_size: int = VAL_BATCH_SIZE) -> dict:
     model.eval()
     preds = []
-    loader = DataLoader(TensorDataset(X, X_feat), batch_size=VAL_BATCH_SIZE)
+    loader = DataLoader(TensorDataset(X, X_feat), batch_size=batch_size)
     with torch.no_grad():
         for X_b, Xf_b in loader:
             preds.append(model(X_b.to(device), Xf_b.to(device)).cpu())
@@ -110,6 +111,26 @@ def evaluate(model: nn.Module, X: torch.Tensor, X_feat: torch.Tensor, y: torch.T
 # ---------------------------------------------------------------------------
 # Training
 # ---------------------------------------------------------------------------
+
+def _setup_device_amp(logger: logging.Logger):
+    """Resolve device, enable deterministic cuDNN, build AMP scaler + autocast ctx."""
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    logger.info(f"Device: {device}")
+    if device.type == "cuda":
+        # Reproducibility over autotuning: benchmark=True picks different conv
+        # algorithms run-to-run, making results non-reproducible across runs.
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+    use_amp = device.type == "cuda"
+    if _AMP_DEVICE:
+        amp_scaler = GradScaler(_AMP_DEVICE, enabled=use_amp)
+        def _amp_ctx(): return autocast(_AMP_DEVICE, enabled=use_amp)
+    else:
+        amp_scaler = GradScaler(enabled=use_amp)
+        def _amp_ctx(): return autocast(enabled=use_amp)
+    logger.info(f"AMP: {'enabled (fp16)' if use_amp else 'disabled'}")
+    return device, use_amp, amp_scaler, _amp_ctx
+
 
 def train(data_dir: str, epochs: int, log_dir: str) -> None:
     logger = setup_logger(log_dir)
@@ -127,21 +148,7 @@ def train(data_dir: str, epochs: int, log_dir: str) -> None:
 
     # Re-seed right before model init — JIT compilation at module import
     # may consume PyTorch random state, causing different weight initialization
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    logger.info(f"Device: {device}")
-    if device.type == "cuda":
-        # Reproducibility over autotuning: benchmark=True picks different conv
-        # algorithms run-to-run, making results non-reproducible across runs.
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
-    use_amp = device.type == "cuda"
-    if _AMP_DEVICE:
-        amp_scaler = GradScaler(_AMP_DEVICE, enabled=use_amp)
-        def _amp_ctx(): return autocast(_AMP_DEVICE, enabled=use_amp)
-    else:
-        amp_scaler = GradScaler(enabled=use_amp)
-        def _amp_ctx(): return autocast(enabled=use_amp)
-    logger.info(f"AMP: {'enabled (fp16)' if use_amp else 'disabled'}")
+    device, use_amp, amp_scaler, _amp_ctx = _setup_device_amp(logger)
 
     loader_gen = torch.Generator()
     loader_gen.manual_seed(SEED)
@@ -259,16 +266,179 @@ def train(data_dir: str, epochs: int, log_dir: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Long-sequence training (GH-10): progressive length warmup + grad accumulation
+# ---------------------------------------------------------------------------
+
+def truncate_seq(X: torch.Tensor, stage_len: int) -> torch.Tensor:
+    """Keep the LAST stage_len timesteps (label = current/last state, so the
+    tail is the relevant context). Returns X unchanged if already shorter."""
+    if X.shape[1] <= stage_len:
+        return X
+    return X[:, -stage_len:, :].contiguous()
+
+
+def _train_epoch_accum(model, loader, optimizer, criterion, amp_scaler, amp_ctx,
+                       device, grad_clip, n_samples, accum_steps) -> float:
+    """One epoch with gradient accumulation: step optimizer every `accum_steps`
+    micro-batches (and once at the end to flush the remainder), so effective
+    batch = micro_batch * accum_steps while peak memory stays at micro_batch."""
+    model.train()
+    total = 0.0
+    n_batches = len(loader)
+    optimizer.zero_grad(set_to_none=True)
+    for i, (X_b, X_feat_b, y_b) in enumerate(loader):
+        with amp_ctx():
+            pred = model(X_b.to(device), X_feat_b.to(device))
+            loss = criterion(pred, (y_b / 100.0).to(device))
+        amp_scaler.scale(loss / accum_steps).backward()
+        if (i + 1) % accum_steps == 0 or (i + 1) == n_batches:
+            amp_scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+            amp_scaler.step(optimizer)
+            amp_scaler.update()
+            optimizer.zero_grad(set_to_none=True)
+        total += loss.item() * len(X_b)
+    return total / n_samples
+
+
+def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: int = 8,
+               stage_epochs: int = 3, final_epochs: int = 50, stages: list[int] | None = None,
+               num_workers: int = 2, eval_batch: int = 16) -> None:
+    """Train the long-sequence model (L up to 4096) with progressive length warmup.
+
+    Each stage truncates sequences to a shorter length (cheap epochs), carrying
+    weights forward — Mamba params are length-independent so transfer is valid.
+    The final (full-length) stage uses early stopping. Uses attention pooling.
+    """
+    logger = setup_logger(log_dir)
+    logger.info("=== Long-sequence training (GH-10) ===")
+    X_train, X_feat_train, y_train = load_split(os.path.join(data_dir, "train.pt"))
+    X_val,   X_feat_val,   y_val   = load_split(os.path.join(data_dir, "val.pt"))
+    X_test,  X_feat_test,  y_test  = load_split(os.path.join(data_dir, "test.pt"))
+    seq_len = X_train.shape[1]
+    logger.info(f"  Train {len(X_train)} | Val {len(X_val)} | Test {len(X_test)} | seq_len={seq_len}")
+
+    device, use_amp, amp_scaler, _amp_ctx = _setup_device_amp(logger)
+
+    loader_gen = torch.Generator()
+    loader_gen.manual_seed(SEED)
+    torch.manual_seed(SEED)
+    model = MambaSOHPredictor(
+        input_features=INPUT_FEATURES, feat_dim=SPECTRAL_FEAT_DIM,
+        d_model=D_MODEL, d_state=D_STATE, pooling="attention",
+    ).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=1e-5)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="min", factor=0.5, patience=5, min_lr=1e-6
+    )
+    criterion = nn.MSELoss()
+    GRAD_CLIP = 1.0
+
+    # Warmup stages ≤ seq_len, always ending exactly at seq_len
+    base    = stages if stages is not None else WARMUP_STAGES
+    stages  = [s for s in base if s <= seq_len]
+    if not stages or stages[-1] != seq_len:
+        stages.append(seq_len)
+    logger.info(
+        f"Warmup stages: {stages} | micro_batch={micro_batch} accum={accum_steps} "
+        f"(eff batch={micro_batch * accum_steps})"
+    )
+
+    best_val_loss = float("inf")
+    best_state = None
+    patience_counter = 0
+    for si, stage_len in enumerate(stages):
+        is_final = (si == len(stages) - 1)
+        Xtr_s  = truncate_seq(X_train, stage_len)
+        Xval_s = truncate_seq(X_val,   stage_len)
+        loader = DataLoader(
+            TensorDataset(Xtr_s, X_feat_train, y_train),
+            batch_size=micro_batch, shuffle=True, pin_memory=use_amp,
+            num_workers=num_workers, persistent_workers=num_workers > 0,
+            generator=loader_gen, worker_init_fn=_seed_worker,
+        )
+        n_epochs = final_epochs if is_final else stage_epochs
+        logger.info(f"[stage {si + 1}/{len(stages)}] L={stage_len} epochs={n_epochs}{'  (final)' if is_final else ''}")
+        for epoch in range(1, n_epochs + 1):
+            train_loss  = _train_epoch_accum(
+                model, loader, optimizer, criterion, amp_scaler, _amp_ctx,
+                device, GRAD_CLIP, len(Xtr_s), accum_steps,
+            )
+            val_metrics = evaluate(model, Xval_s, X_feat_val, y_val, device, batch_size=eval_batch)
+            val_loss    = val_metrics["loss"]
+            scheduler.step(val_loss)
+            logger.debug(f"  L={stage_len} ep{epoch}  train={train_loss:.6f} val={val_loss:.6f} mae={val_metrics['mae']:.4f}")
+            if is_final:
+                if val_loss < best_val_loss:
+                    best_val_loss    = val_loss
+                    best_state       = {k: v.clone() for k, v in model.state_dict().items()}
+                    patience_counter = 0
+                else:
+                    patience_counter += 1
+                if patience_counter >= PATIENCE:
+                    logger.info(f"Early stopping at epoch {epoch} (final stage)")
+                    break
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
+
+    test_metrics = evaluate(model, X_test, X_feat_test, y_test, device, batch_size=eval_batch)
+    logger.info("-" * 55)
+    logger.info(f"Test MAE : {test_metrics['mae']:.4f}%  (target < 2.0%)")
+    logger.info(f"Test RMSE: {test_metrics['rmse']:.4f}%  (target < 3.0%)")
+    if test_metrics["mae"] >= 2.0:
+        logger.warning(f"MAE {test_metrics['mae']:.4f}% >= 2.0% target")
+    if test_metrics["rmse"] >= 3.0:
+        logger.warning(f"RMSE {test_metrics['rmse']:.4f}% >= 3.0% target")
+
+    os.makedirs(os.path.dirname(LONG_MAMBA_PATH), exist_ok=True)
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "version":          LONG_MODEL_VERSION,
+            "seq_len":          seq_len,
+            "pooling":          "attention",
+            "input_features":   INPUT_FEATURES,
+            "feat_dim":         SPECTRAL_FEAT_DIM,
+            "d_model":          D_MODEL,
+            "d_state":          D_STATE,
+            "test_mae":         test_metrics["mae"],
+            "test_rmse":        test_metrics["rmse"],
+        },
+        LONG_MAMBA_PATH,
+    )
+    logger.info(f"Saved long Mamba model -> {LONG_MAMBA_PATH}")
+    logger.info("Long-sequence training complete.")
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data-dir", default="data/processed")
+    parser.add_argument("--data-dir", default=None)
     parser.add_argument("--epochs",   type=int, default=100)
     parser.add_argument("--log-dir",  default="logs/training")
+    parser.add_argument("--long", action="store_true",
+                        help="Train long-sequence model (L up to 4096) with warmup + grad accumulation")
+    parser.add_argument("--accum-steps",  type=int, default=4)
+    parser.add_argument("--micro-batch",  type=int, default=8)
+    parser.add_argument("--stage-epochs", type=int, default=3)
+    parser.add_argument("--final-epochs", type=int, default=50)
+    parser.add_argument("--eval-batch",   type=int, default=16,
+                        help="Eval batch for long-seq — small to avoid OOM at L=4096")
     args = parser.parse_args()
-    train(args.data_dir, args.epochs, args.log_dir)
+    if args.long:
+        data_dir = args.data_dir or "data/processed_long"
+        train_long(
+            data_dir, args.log_dir,
+            accum_steps=args.accum_steps, micro_batch=args.micro_batch,
+            stage_epochs=args.stage_epochs, final_epochs=args.final_epochs,
+            eval_batch=args.eval_batch,
+        )
+    else:
+        train(args.data_dir or "data/processed", args.epochs, args.log_dir)
 
 
 if __name__ == "__main__":
