@@ -1,9 +1,10 @@
 # Plan — GH-10: Mở rộng MambaSOHPredictor chạy chuỗi dài L=4096
 
 ## Metadata
-- **Status:** TESTING | **Role:** AI | **Ngày:** 2026-06-15
+- **Status:** SHIPPED | **Role:** AI | **Ngày:** 2026-06-16
 - **Issue:** #10 — https://github.com/GSU26SE55/ai-module/issues/10
 - **Sprint:** Sprint 3 (due 2026-06-27)
+- **Base PR:** `feat/spectral_kurtosis` (GH-10 stacked trên fix #9)
 - **Liên quan:** #9 (fix fp32 SSM scan) — branch hiện tại `fix/GH-9-mamba-fp32-scan`
 
 ## Mục tiêu
