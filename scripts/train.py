@@ -37,6 +37,14 @@ SEED = 42
 random.seed(SEED)
 np.random.seed(SEED)
 torch.manual_seed(SEED)
+torch.cuda.manual_seed_all(SEED)  # seed all GPUs — no-op on CPU; needed for GPU reproducibility
+
+
+def _seed_worker(worker_id: int) -> None:
+    """Seed each DataLoader worker so shuffle order is reproducible across runs."""
+    worker_seed = SEED + worker_id
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
 
 BATCH_SIZE     = 32
 VAL_BATCH_SIZE = 256
@@ -121,6 +129,11 @@ def train(data_dir: str, epochs: int, log_dir: str) -> None:
     # may consume PyTorch random state, causing different weight initialization
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Device: {device}")
+    if device.type == "cuda":
+        # Reproducibility over autotuning: benchmark=True picks different conv
+        # algorithms run-to-run, making results non-reproducible across runs.
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
     use_amp = device.type == "cuda"
     if _AMP_DEVICE:
         amp_scaler = GradScaler(_AMP_DEVICE, enabled=use_amp)
@@ -130,10 +143,13 @@ def train(data_dir: str, epochs: int, log_dir: str) -> None:
         def _amp_ctx(): return autocast(enabled=use_amp)
     logger.info(f"AMP: {'enabled (fp16)' if use_amp else 'disabled'}")
 
+    loader_gen = torch.Generator()
+    loader_gen.manual_seed(SEED)
     train_loader = DataLoader(
         TensorDataset(X_train, X_feat_train, y_train),
         batch_size=BATCH_SIZE, shuffle=True,
-        pin_memory=use_amp,
+        pin_memory=use_amp, num_workers=2, persistent_workers=True,
+        generator=loader_gen, worker_init_fn=_seed_worker,
     )
 
     torch.manual_seed(SEED)

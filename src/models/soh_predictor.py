@@ -64,45 +64,62 @@ class MambaBlock(nn.Module):
 
     def _selective_scan(self, x: torch.Tensor) -> torch.Tensor:
         # x: (B, L, d_inner)
+        #
+        # The SSM recurrence runs in fp32 regardless of AMP. This matches the
+        # official Mamba reference (selective_scan_ref casts u/delta to float):
+        # the state h accumulates over L steps, so fp16 underflows / compounds
+        # error — and the longer the sequence (toward L=4096) the worse it gets.
+        # We disable autocast locally so x_proj/dt_proj/softplus/exp and the
+        # recurrence all stay fp32, then cast the output back to the input dtype
+        # so the large in_proj/out_proj matmuls keep running fp16 (memory-friendly
+        # at L=4096) — i.e. "fp16 matmul + fp32 accumulation" as in Mamba.
+        orig_dtype = x.dtype
         B, L, d_inner = x.shape
 
-        x_dbl = self.x_proj(x)
-        dt_raw, B_proj, C_proj = x_dbl.split(
-            [1, self.d_state, self.d_state], dim=-1
-        )
+        dev_type = "cuda" if x.is_cuda else "cpu"
+        with torch.autocast(device_type=dev_type, enabled=False):
+            x = x.float()
 
-        dt = F.softplus(self.dt_proj(dt_raw))         # (B, L, d_inner)
-        A  = -torch.exp(self.A_log.float())           # (d_inner, d_state)
+            x_dbl = self.x_proj(x)
+            dt_raw, B_proj, C_proj = x_dbl.split(
+                [1, self.d_state, self.d_state], dim=-1
+            )
 
-        if L <= 512:
-            # Sequential scan for short sequences (L=30 production use)
-            dA  = torch.exp(dt.unsqueeze(-1) * A)
-            dBx = dt.unsqueeze(-1) * B_proj.unsqueeze(2) * x.unsqueeze(-1)
-            h = torch.zeros(B, d_inner, self.d_state, device=x.device, dtype=x.dtype)
-            ys = []
-            for t in range(L):
-                h = dA[:, t] * h + dBx[:, t]
-                ys.append((h * C_proj[:, t].unsqueeze(1)).sum(-1))
-            y = torch.stack(ys, dim=1)
-        else:
-            # Chunked scan: each chunk materialises (B, 256, d_inner, d_state) ~100MB
-            # vs materialising the full (B, L, d_inner, d_state) ~6GB upfront.
-            # Full gradient flow preserved — _scan_forward_chunk is checkpointed so
-            # dA_c/dBx_c/h_c are recomputed during backward instead of stored.
-            CHUNK   = 256
-            y       = torch.zeros(B, L, d_inner, device=x.device, dtype=x.dtype)
-            h_carry = torch.zeros(B, d_inner, self.d_state, device=x.device, dtype=dt.dtype)
-            for start in range(0, L, CHUNK):
-                end = min(start + CHUNK, L)
-                y_c, h_carry = _ckpt(
-                    MambaBlock._scan_forward_chunk,
-                    dt[:, start:end], B_proj[:, start:end], C_proj[:, start:end],
-                    x[:, start:end], h_carry, A,
-                    use_reentrant=False,
-                )
-                y[:, start:end] = y_c
+            dt = F.softplus(self.dt_proj(dt_raw))         # (B, L, d_inner) fp32
+            A  = -torch.exp(self.A_log.float())           # (d_inner, d_state)
 
-        return y + x * self.D
+            if L <= 512:
+                # Sequential scan for short sequences (L=30 production use)
+                dA  = torch.exp(dt.unsqueeze(-1) * A)
+                dBx = dt.unsqueeze(-1) * B_proj.unsqueeze(2) * x.unsqueeze(-1)
+                h = torch.zeros(B, d_inner, self.d_state, device=x.device, dtype=torch.float32)
+                ys = []
+                for t in range(L):
+                    h = dA[:, t] * h + dBx[:, t]
+                    ys.append((h * C_proj[:, t].unsqueeze(1)).sum(-1))
+                y = torch.stack(ys, dim=1)
+            else:
+                # Chunked scan: each chunk materialises (B, 256, d_inner, d_state) ~100MB
+                # vs materialising the full (B, L, d_inner, d_state) ~6GB upfront.
+                # Full gradient flow preserved — _scan_forward_chunk is checkpointed so
+                # dA_c/dBx_c/h_c are recomputed during backward instead of stored.
+                # If fp32 makes L=4096 OOM, lower CHUNK (256 → 128) before reducing batch.
+                CHUNK   = 256
+                y       = torch.zeros(B, L, d_inner, device=x.device, dtype=torch.float32)
+                h_carry = torch.zeros(B, d_inner, self.d_state, device=x.device, dtype=torch.float32)
+                for start in range(0, L, CHUNK):
+                    end = min(start + CHUNK, L)
+                    y_c, h_carry = _ckpt(
+                        MambaBlock._scan_forward_chunk,
+                        dt[:, start:end], B_proj[:, start:end], C_proj[:, start:end],
+                        x[:, start:end], h_carry, A,
+                        use_reentrant=False,
+                    )
+                    y[:, start:end] = y_c
+
+            y = y + x * self.D
+
+        return y.to(orig_dtype)
 
 
     @staticmethod
@@ -129,7 +146,11 @@ class MambaBlock(nn.Module):
         h_carry: torch.Tensor,  # (B, d_inner, d_state)
         A: torch.Tensor,        # (d_inner, d_state)
     ) -> tuple:
-        """One SSM chunk: returns (y_c, h_last). Checkpointed by caller."""
+        """One SSM chunk: returns (y_c, h_last). Checkpointed by caller.
+
+        Inputs arrive fp32 (caller runs under autocast(enabled=False)), so dA_c,
+        dBx_c, h_c and h_last all stay fp32 — preserving recurrence precision.
+        """
         dA_c  = torch.exp(dt_c.unsqueeze(-1) * A)                          # (B, cs, d_inner, d_state)
         dBx_c = dt_c.unsqueeze(-1) * Bp_c.unsqueeze(2) * x_c.unsqueeze(-1)
         dBx_c = dBx_c.clone()

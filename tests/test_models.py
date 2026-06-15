@@ -77,23 +77,77 @@ class TestMambaSOHPredictor:
 
 
 def test_streaming_scan_matches_full_sequential_scan():
+    """Chunked scan (L>512 path, used toward L=4096) must equal a naive fp32
+    sequential recurrence over the same inputs."""
+    torch.manual_seed(0)
     block = MambaBlock(d_model=4, d_state=3, expand=2)
     block.eval()
-    x = torch.randn(2, 600, block.d_inner)
+    x = torch.randn(2, 600, block.d_inner)   # L=600 > 512 → chunked path
 
     with torch.no_grad():
-        actual = block._selective_scan(x, chunk_size=128)
+        actual = block._selective_scan(x)    # chunked scan
 
-        x_dbl = block.x_proj(x)
-        dt_raw, b_proj, c_proj = x_dbl.split([1, 3, 3], dim=-1)
+        # Manual fp32 sequential reference — same recurrence the L<=512 branch runs
+        xf = x.float()
+        x_dbl = block.x_proj(xf)
+        dt_raw, b_proj, c_proj = x_dbl.split([1, block.d_state, block.d_state], dim=-1)
         dt = torch.nn.functional.softplus(block.dt_proj(dt_raw))
-        a = -torch.exp(block.A_log.float())
-        da = torch.exp(dt.unsqueeze(-1) * a)
-        dbx = dt.unsqueeze(-1) * b_proj.unsqueeze(2) * x.unsqueeze(-1)
-        h = block._sequential_scan(da, dbx)
-        expected = (h * c_proj.unsqueeze(2)).sum(-1) + x * block.D
+        a  = -torch.exp(block.A_log.float())
+        dA  = torch.exp(dt.unsqueeze(-1) * a)
+        dBx = dt.unsqueeze(-1) * b_proj.unsqueeze(2) * xf.unsqueeze(-1)
+        B, L, d_inner = xf.shape
+        h = torch.zeros(B, d_inner, block.d_state)
+        ys = []
+        for t in range(L):
+            h = dA[:, t] * h + dBx[:, t]
+            ys.append((h * c_proj[:, t].unsqueeze(1)).sum(-1))
+        expected = torch.stack(ys, dim=1) + xf * block.D
 
     assert torch.allclose(actual, expected, atol=1e-5, rtol=1e-4)
+
+
+def test_selective_scan_preserves_input_dtype():
+    """GH-9: scan returns output in the input dtype (fp32 internally, cast back)."""
+    torch.manual_seed(0)
+    block = MambaBlock(d_model=4, d_state=3, expand=2)
+    block.eval()
+    x = torch.randn(2, 30, block.d_inner)
+    with torch.no_grad():
+        out = block._selective_scan(x)
+    assert out.dtype == x.dtype
+
+
+def test_selective_scan_runs_fp32_under_autocast():
+    """GH-9: the recurrence is shielded from AMP — output under autocast must
+    match the plain fp32 output, proving the scan never runs in reduced precision.
+    This is the root-cause fix for MAE inflating on GPU (AMP) vs CPU (fp32)."""
+    torch.manual_seed(0)
+    block = MambaBlock(d_model=4, d_state=3, expand=2)
+    block.eval()
+    x = torch.randn(2, 30, block.d_inner)   # fp32 input
+    with torch.no_grad():
+        out_plain = block._selective_scan(x)
+        with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+            out_autocast = block._selective_scan(x)
+    assert torch.allclose(out_plain, out_autocast, atol=1e-6)
+
+
+def test_model_forward_reproducible_same_seed():
+    """GH-9: two models built under the same seed produce identical forward output
+    — unit-level guard for the train-script reproducibility fix."""
+    def build():
+        torch.manual_seed(123)
+        return MambaSOHPredictor(
+            input_features=INPUT_FEATURES, feat_dim=SPECTRAL_FEAT_DIM,
+            d_model=8, d_state=4,
+        ).eval()
+
+    x      = torch.randn(4, WINDOW_SIZE, INPUT_FEATURES)
+    x_feat = torch.randn(4, SPECTRAL_FEAT_DIM)
+    with torch.no_grad():
+        out_a = build()(x, x_feat)
+        out_b = build()(x, x_feat)
+    assert torch.equal(out_a, out_b)
 
 
 class TestClassifyAnomaly:
