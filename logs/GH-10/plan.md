@@ -5,6 +5,7 @@
 - **Issue:** #10 — https://github.com/GSU26SE55/ai-module/issues/10
 - **Sprint:** Sprint 3 (due 2026-06-27)
 - **Base PR:** `feat/spectral_kurtosis` (GH-10 stacked trên fix #9)
+- **PR:** #11 — https://github.com/GSU26SE55/ai-module/pull/11
 - **Liên quan:** #9 (fix fp32 SSM scan) — branch hiện tại `fix/GH-9-mamba-fp32-scan`
 
 ## Mục tiêu
