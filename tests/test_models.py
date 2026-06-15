@@ -124,33 +124,36 @@ class TestMambaSOHPredictor:
 
 
 def test_streaming_scan_matches_full_sequential_scan():
-    """Chunked scan (L>512 path, used toward L=4096) must equal a naive fp32
-    sequential recurrence over the same inputs."""
+    """Chunked scan (L>256 path, used for warmup L=512 up to L=4096) must equal a
+    naive fp32 sequential recurrence. L=512 covers the GH-10 threshold change
+    (256) so warmup L=512 takes the chunked path; L=600 covers a non-multiple of
+    CHUNK."""
     torch.manual_seed(0)
     block = MambaBlock(d_model=4, d_state=3, expand=2)
     block.eval()
-    x = torch.randn(2, 600, block.d_inner)   # L=600 > 512 → chunked path
 
-    with torch.no_grad():
-        actual = block._selective_scan(x)    # chunked scan
+    for seq_len in (512, 600):   # both > 256 → chunked path
+        x = torch.randn(2, seq_len, block.d_inner)
+        with torch.no_grad():
+            actual = block._selective_scan(x)    # chunked scan
 
-        # Manual fp32 sequential reference — same recurrence the L<=512 branch runs
-        xf = x.float()
-        x_dbl = block.x_proj(xf)
-        dt_raw, b_proj, c_proj = x_dbl.split([1, block.d_state, block.d_state], dim=-1)
-        dt = torch.nn.functional.softplus(block.dt_proj(dt_raw))
-        a  = -torch.exp(block.A_log.float())
-        dA  = torch.exp(dt.unsqueeze(-1) * a)
-        dBx = dt.unsqueeze(-1) * b_proj.unsqueeze(2) * xf.unsqueeze(-1)
-        B, L, d_inner = xf.shape
-        h = torch.zeros(B, d_inner, block.d_state)
-        ys = []
-        for t in range(L):
-            h = dA[:, t] * h + dBx[:, t]
-            ys.append((h * c_proj[:, t].unsqueeze(1)).sum(-1))
-        expected = torch.stack(ys, dim=1) + xf * block.D
+            # Manual fp32 sequential reference — same recurrence the L<=256 branch runs
+            xf = x.float()
+            x_dbl = block.x_proj(xf)
+            dt_raw, b_proj, c_proj = x_dbl.split([1, block.d_state, block.d_state], dim=-1)
+            dt = torch.nn.functional.softplus(block.dt_proj(dt_raw))
+            a  = -torch.exp(block.A_log.float())
+            dA  = torch.exp(dt.unsqueeze(-1) * a)
+            dBx = dt.unsqueeze(-1) * b_proj.unsqueeze(2) * xf.unsqueeze(-1)
+            B, L, d_inner = xf.shape
+            h = torch.zeros(B, d_inner, block.d_state)
+            ys = []
+            for t in range(L):
+                h = dA[:, t] * h + dBx[:, t]
+                ys.append((h * c_proj[:, t].unsqueeze(1)).sum(-1))
+            expected = torch.stack(ys, dim=1) + xf * block.D
 
-    assert torch.allclose(actual, expected, atol=1e-5, rtol=1e-4)
+        assert torch.allclose(actual, expected, atol=1e-5, rtol=1e-4), f"mismatch at L={seq_len}"
 
 
 def test_selective_scan_preserves_input_dtype():

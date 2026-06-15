@@ -23,7 +23,7 @@ D_STATE = 16
 # Window=30 (above) stays the production/inference default; the long-seq pipeline is
 # a separate artifact for the L=4096 experiment, not a replacement.
 LONG_SEQ_LEN    = 4096
-LONG_SEQ_STRIDE = 512                       # slide stride over the concatenated timeline
+LONG_SEQ_STRIDE = 128                       # slide stride over the concatenated timeline (smaller = more windows)
 WARMUP_STAGES   = [256, 512, 1024, 2048, 4096]  # progressive length warmup (GH-10 P1)
 LONG_MODEL_VERSION       = "1.0"
 LONG_MAMBA_PATH          = os.path.join(WEIGHTS_DIR, f"soh_mamba_long_v{LONG_MODEL_VERSION}.pth")
