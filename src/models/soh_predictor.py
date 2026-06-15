@@ -101,20 +101,26 @@ class MambaBlock(nn.Module):
             else:
                 # Chunked scan: each chunk materialises (B, 256, d_inner, d_state) ~100MB
                 # vs materialising the full (B, L, d_inner, d_state) ~6GB upfront.
-                # Full gradient flow preserved — _scan_forward_chunk is checkpointed so
-                # dA_c/dBx_c/h_c are recomputed during backward instead of stored.
+                # Training: checkpoint each chunk so dA_c/dBx_c/h_c are recomputed in
+                # backward instead of stored (full gradient flow preserved).
+                # Inference fast-path: with grad disabled there is no backward, so
+                # checkpointing only adds overhead (and a no-grad warning) — call the
+                # chunk fn directly instead.
                 # If fp32 makes L=4096 OOM, lower CHUNK (256 → 128) before reducing batch.
-                CHUNK   = 256
-                y       = torch.zeros(B, L, d_inner, device=x.device, dtype=torch.float32)
-                h_carry = torch.zeros(B, d_inner, self.d_state, device=x.device, dtype=torch.float32)
+                CHUNK    = 256
+                use_ckpt = torch.is_grad_enabled()
+                y        = torch.zeros(B, L, d_inner, device=x.device, dtype=torch.float32)
+                h_carry  = torch.zeros(B, d_inner, self.d_state, device=x.device, dtype=torch.float32)
                 for start in range(0, L, CHUNK):
                     end = min(start + CHUNK, L)
-                    y_c, h_carry = _ckpt(
-                        MambaBlock._scan_forward_chunk,
+                    chunk_args = (
                         dt[:, start:end], B_proj[:, start:end], C_proj[:, start:end],
                         x[:, start:end], h_carry, A,
-                        use_reentrant=False,
                     )
+                    if use_ckpt:
+                        y_c, h_carry = _ckpt(MambaBlock._scan_forward_chunk, *chunk_args, use_reentrant=False)
+                    else:
+                        y_c, h_carry = MambaBlock._scan_forward_chunk(*chunk_args)
                     y[:, start:end] = y_c
 
             y = y + x * self.D
@@ -124,16 +130,20 @@ class MambaBlock(nn.Module):
 
     @staticmethod
     def _scan_chunk(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-        """Parallel prefix scan on a single chunk (C timesteps)."""
+        """Hillis-Steele parallel prefix scan on a single chunk (C timesteps).
+
+        Uses contiguous slices instead of arange + advanced indexing: the
+        positions updated each step are exactly [step:], reading their
+        partner at [:-step]. Slicing avoids building an index tensor and the
+        gather it triggers, and stays functional (cat) so autograd is intact.
+        """
         step = 1
         L = a.shape[1]
         while step < L:
-            idx  = torch.arange(step, L, device=a.device)
-            prev = idx - step
-            new_a = a[:, idx] * a[:, prev]
-            new_b = a[:, idx] * b[:, prev] + b[:, idx]
-            a = torch.cat([a[:, :step], new_a], dim=1)
-            b = torch.cat([b[:, :step], new_b], dim=1)
+            a_cur, a_prev = a[:, step:], a[:, :-step]
+            b_cur, b_prev = b[:, step:], b[:, :-step]
+            a = torch.cat([a[:, :step], a_cur * a_prev],         dim=1)
+            b = torch.cat([b[:, :step], a_cur * b_prev + b_cur], dim=1)
             step <<= 1
         return b
 
@@ -158,46 +168,6 @@ class MambaBlock(nn.Module):
         h_c   = MambaBlock._scan_chunk(dA_c, dBx_c)                        # (B, cs, d_inner, d_state)
         y_c   = (h_c * C_c.unsqueeze(2)).sum(-1)                            # (B, cs, d_inner)
         return y_c, h_c[:, -1]                                              # h_last: (B, d_inner, d_state)
-
-    @staticmethod
-    def _parallel_scan(
-        dA: torch.Tensor, dBx: torch.Tensor, chunk_size: int = 256
-    ) -> torch.Tensor:
-        """
-        Chunked parallel scan: h_t = dA_t ⊙ h_{t-1} + dBx_t  (h_{-1} = 0).
-
-        Splits L into chunks of `chunk_size` and chains them via carry state.
-        Keeps intermediate tensors at (B, chunk_size, D, N) regardless of L
-        → memory scales as O(chunk_size) not O(L), much better cache utilisation.
-
-        Carry injection: for the first element of each chunk,
-            b'[0] = a[0] ⊙ h_carry + b[0]
-        so scan with h_{-1}=0 produces h'[0] = a[0]⊙h_carry + b[0] ✓
-
-        Args:
-            dA, dBx:    (B, L, d_inner, d_state)
-            chunk_size: tokens per parallel-scan call (256 balances speed/memory)
-        Returns:
-            h:          (B, L, d_inner, d_state)
-        """
-        B, L, D, N = dA.shape
-
-        if L <= chunk_size:
-            return MambaBlock._scan_chunk(dA, dBx)
-
-        chunks_h = []
-        h_carry  = torch.zeros(B, D, N, device=dA.device, dtype=dA.dtype)
-
-        for start in range(0, L, chunk_size):
-            end     = min(start + chunk_size, L)
-            a_chunk = dA[:,  start:end]
-            b_chunk = dBx[:, start:end].clone()
-            b_chunk[:, 0] = a_chunk[:, 0] * h_carry + b_chunk[:, 0]
-            h_chunk  = MambaBlock._scan_chunk(a_chunk, b_chunk)
-            chunks_h.append(h_chunk)
-            h_carry  = h_chunk[:, -1]
-
-        return torch.cat(chunks_h, dim=1)
 
 
 class MambaSOHPredictor(nn.Module):
@@ -224,16 +194,25 @@ class MambaSOHPredictor(nn.Module):
         n_layers: int = 2,
         dropout: float = 0.2,
         feat_dim: int = 54,
+        pooling: str = "last",
     ):
         super().__init__()
+        if pooling not in ("last", "attention"):
+            raise ValueError(f"pooling must be 'last' or 'attention', got '{pooling}'")
         self.input_features = input_features
         self.feat_dim = feat_dim
+        self.pooling = pooling
         self.input_proj = nn.Linear(input_features, d_model)
         self.mamba_layers = nn.ModuleList(
             [MambaBlock(d_model=d_model, d_state=d_state) for _ in range(n_layers)]
         )
         self.norm = nn.LayerNorm(d_model)
         self.dropout = nn.Dropout(dropout)
+        # Attention pooling (long-seq, GH-10): score each timestep → softmax → weighted sum.
+        # Lets the model aggregate the full L=4096 history instead of only the last token.
+        # "last" stays default so window=30 inference is byte-for-byte unchanged.
+        if pooling == "attention":
+            self.attn_score = nn.Linear(d_model, 1)
         # FiLM: project cycle features → gamma + beta for hidden state modulation
         self.film_proj = nn.Linear(feat_dim, d_model * 2)
         # Head: same size as v1.0
@@ -241,13 +220,17 @@ class MambaSOHPredictor(nn.Module):
         self.fc2 = nn.Linear(32, 1)
 
     def forward(self, x: torch.Tensor, x_feat: torch.Tensor) -> torch.Tensor:
-        # x:      (batch, 30, input_features)
+        # x:      (batch, L, input_features)  — L=30 (window) or up to 4096 (long-seq)
         # x_feat: (batch, feat_dim)
-        h = self.input_proj(x)                        # (batch, 30, d_model)
+        h = self.input_proj(x)                        # (batch, L, d_model)
         for layer in self.mamba_layers:
             h = layer(h)  # chunked scan inside _selective_scan handles peak memory
         h = self.norm(h)
-        h = h[:, -1, :]                               # (batch, d_model)
+        if self.pooling == "attention":
+            w = torch.softmax(self.attn_score(h), dim=1)  # (batch, L, 1) over time
+            h = (w * h).sum(dim=1)                         # (batch, d_model)
+        else:  # "last" — most-recent token = current state
+            h = h[:, -1, :]                               # (batch, d_model)
 
         # FiLM conditioning — modulate Mamba output with cycle-level features
         film = self.film_proj(x_feat)                 # (batch, d_model*2)

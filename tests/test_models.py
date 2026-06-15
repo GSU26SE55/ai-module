@@ -29,6 +29,53 @@ def _make_model() -> MambaSOHPredictor:
     )
 
 
+class TestAttentionPooling:
+    """GH-10 P3: attention pooling for long sequences (default 'last' unchanged)."""
+
+    def _attn_model(self):
+        return MambaSOHPredictor(
+            input_features=INPUT_FEATURES, feat_dim=SPECTRAL_FEAT_DIM,
+            d_model=8, d_state=4, pooling="attention",
+        )
+
+    def test_invalid_pooling_raises(self):
+        import pytest
+        with pytest.raises(ValueError, match="pooling must be"):
+            MambaSOHPredictor(pooling="mean")
+
+    def test_attention_output_shape_long_seq(self):
+        model = self._attn_model()
+        model.eval()
+        x      = torch.randn(4, 64, INPUT_FEATURES)   # L=64 > window, exercises pooling
+        x_feat = torch.randn(4, SPECTRAL_FEAT_DIM)
+        with torch.no_grad():
+            out = model(x, x_feat)
+        assert out.shape == (4,)
+
+    def test_attention_weights_grad_flows(self):
+        model = self._attn_model()
+        x      = torch.randn(2, 48, INPUT_FEATURES)
+        x_feat = torch.randn(2, SPECTRAL_FEAT_DIM)
+        model(x, x_feat).sum().backward()
+        assert model.attn_score.weight.grad is not None
+
+    def test_attention_differs_from_last_token(self):
+        """Attention pool should generally not equal the last-token output."""
+        torch.manual_seed(0)
+        attn = self._attn_model()
+        attn.eval()
+        last = MambaSOHPredictor(
+            input_features=INPUT_FEATURES, feat_dim=SPECTRAL_FEAT_DIM,
+            d_model=8, d_state=4, pooling="last",
+        )
+        last.load_state_dict(attn.state_dict(), strict=False)  # share shared weights
+        last.eval()
+        x      = torch.randn(1, 64, INPUT_FEATURES)
+        x_feat = torch.randn(1, SPECTRAL_FEAT_DIM)
+        with torch.no_grad():
+            assert not torch.allclose(attn(x, x_feat), last(x, x_feat), atol=1e-4)
+
+
 class TestMambaSOHPredictor:
     def test_output_shape_single(self):
         model = _make_model()
