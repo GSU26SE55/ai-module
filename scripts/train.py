@@ -30,7 +30,8 @@ from torch.utils.data import DataLoader, TensorDataset
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.core.config import D_MODEL, D_STATE, INPUT_FEATURES, ISO_FOREST_PATH, LONG_MAMBA_PATH, LONG_MODEL_VERSION, MAMBA_PATH, MODEL_VERSION, SPECTRAL_FEAT_DIM, WARMUP_STAGES, WINDOW_SIZE  # noqa: E402
+from src.core.config import D_MODEL, D_STATE, EOL_SOH, INPUT_FEATURES, ISO_FOREST_PATH, LONG_MAMBA_PATH, LONG_MODEL_VERSION, MAMBA_PATH, MODEL_VERSION, RUL_FEAT_DIM, RUL_LOOKBACK, RUL_MAMBA_PATH, RUL_MODEL_VERSION, RUL_SCALE, SPECTRAL_FEAT_DIM, WARMUP_STAGES, WINDOW_SIZE  # noqa: E402
+from src.models.rul_predictor import RULPredictor  # noqa: E402
 from src.models.soh_predictor import MambaSOHPredictor  # noqa: E402
 
 SEED = 42
@@ -412,6 +413,136 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
 
 
 # ---------------------------------------------------------------------------
+# RUL training (GH-13): cycle-level Mamba, target = remaining cycles to EOL
+# ---------------------------------------------------------------------------
+
+def load_rul_split(path: str) -> tuple[torch.Tensor, torch.Tensor]:
+    data = torch.load(path, weights_only=False)
+    if "y" not in data or "X" not in data:
+        raise KeyError(f"'X'/'y' not found in {path}. Run scripts/preprocess_rul.py first.")
+    return data["X"], data["y"]
+
+
+def evaluate_rul(model: nn.Module, X: torch.Tensor, y: torch.Tensor,
+                 device: torch.device, batch_size: int = VAL_BATCH_SIZE) -> dict:
+    """RUL metrics in CYCLES. Model outputs normalised RUL (×RUL_SCALE = cycles)."""
+    model.eval()
+    preds = []
+    loader = DataLoader(TensorDataset(X), batch_size=batch_size)
+    with torch.no_grad():
+        for (X_b,) in loader:
+            preds.append(model(X_b.to(device)).cpu())
+    pred = torch.cat(preds) * RUL_SCALE
+    mae  = torch.mean(torch.abs(pred - y)).item()
+    rmse = torch.sqrt(torch.mean((pred - y) ** 2)).item()
+    loss = torch.mean(((pred / RUL_SCALE) - (y / RUL_SCALE)) ** 2).item()
+    return {"mae": round(mae, 4), "rmse": round(rmse, 4), "loss": loss}
+
+
+def train_rul(data_dir: str, epochs: int, log_dir: str, pooling: str = "last") -> None:
+    """Train the cycle-level RUL predictor. Target normalised by RUL_SCALE; metrics
+    reported in CYCLES. Split by battery (train B0005/06/07; B0018 val/test)."""
+    logger = setup_logger(log_dir)
+    logger.info("=== RUL training (GH-13, cycle-level) ===")
+
+    X_train, y_train = load_rul_split(os.path.join(data_dir, "train.pt"))
+    X_val,   y_val   = load_rul_split(os.path.join(data_dir, "val.pt"))
+    X_test,  y_test  = load_rul_split(os.path.join(data_dir, "test.pt"))
+    logger.info(f"  Train {len(X_train)} | Val {len(X_val)} | Test {len(X_test)} | lookback={X_train.shape[1]} cycles")
+    logger.info(f"  EOL=SOH<={EOL_SOH}% | RUL range train {y_train.min():.0f}..{y_train.max():.0f} cycles | scale={RUL_SCALE}")
+
+    if X_train.shape[-1] != RUL_FEAT_DIM:
+        raise ValueError(f"Feature dim {X_train.shape[-1]}, config expects {RUL_FEAT_DIM}.")
+
+    device, use_amp, amp_scaler, _amp_ctx = _setup_device_amp(logger)
+
+    loader_gen = torch.Generator()
+    loader_gen.manual_seed(SEED)
+    train_loader = DataLoader(
+        TensorDataset(X_train, y_train),
+        batch_size=BATCH_SIZE, shuffle=True,
+        pin_memory=use_amp, num_workers=2, persistent_workers=True,
+        generator=loader_gen, worker_init_fn=_seed_worker,
+    )
+
+    torch.manual_seed(SEED)
+    model     = RULPredictor(feat_dim=RUL_FEAT_DIM, d_model=D_MODEL, d_state=D_STATE, pooling=pooling).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=1e-5)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=5, min_lr=1e-6)
+    criterion = nn.MSELoss()
+    GRAD_CLIP = 1.0
+    n_params  = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    logger.info(f"RULPredictor — {n_params:,} trainable params | pooling={pooling}")
+    logger.info(f"Config: lr={LR}, batch={BATCH_SIZE}, epochs={epochs}, patience={PATIENCE}")
+
+    best_val_loss = float("inf")
+    patience_counter = 0
+    best_state = None
+
+    logger.info(f"{'Epoch':>6}  {'TrainLoss':>10}  {'ValLoss':>10}  {'ValMAE(cyc)':>11}  {'ValRMSE(cyc)':>12}")
+    logger.info("-" * 60)
+    for epoch in range(1, epochs + 1):
+        model.train()
+        train_loss = 0.0
+        for X_batch, y_batch in train_loader:
+            optimizer.zero_grad(set_to_none=True)
+            with _amp_ctx():
+                pred = model(X_batch.to(device))
+                loss = criterion(pred, (y_batch / RUL_SCALE).to(device))
+            amp_scaler.scale(loss).backward()
+            amp_scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
+            amp_scaler.step(optimizer)
+            amp_scaler.update()
+            train_loss += loss.item() * len(X_batch)
+        train_loss /= len(X_train)
+
+        val_metrics = evaluate_rul(model, X_val, y_val, device)
+        val_loss    = val_metrics["loss"]
+        logger.debug(f"{epoch:>6}  {train_loss:>10.6f}  {val_loss:>10.6f}  {val_metrics['mae']:>11.4f}  {val_metrics['rmse']:>12.4f}")
+        if epoch % 10 == 0:
+            logger.info(f"{epoch:>6}  {train_loss:>10.6f}  {val_loss:>10.6f}  {val_metrics['mae']:>11.4f}  {val_metrics['rmse']:>12.4f}")
+        scheduler.step(val_loss)
+
+        if val_loss < best_val_loss:
+            best_val_loss    = val_loss
+            best_state       = {k: v.clone() for k, v in model.state_dict().items()}
+            patience_counter = 0
+        else:
+            patience_counter += 1
+        if patience_counter >= PATIENCE:
+            logger.info(f"Early stopping at epoch {epoch} (patience={PATIENCE})")
+            break
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
+    test_metrics = evaluate_rul(model, X_test, y_test, device)
+    logger.info("-" * 60)
+    logger.info(f"Test MAE : {test_metrics['mae']:.4f} cycles")
+    logger.info(f"Test RMSE: {test_metrics['rmse']:.4f} cycles")
+
+    os.makedirs(os.path.dirname(RUL_MAMBA_PATH), exist_ok=True)
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "version":          RUL_MODEL_VERSION,
+            "lookback":         X_train.shape[1],
+            "feat_dim":         RUL_FEAT_DIM,
+            "rul_scale":        RUL_SCALE,
+            "eol_soh":          EOL_SOH,
+            "pooling":          pooling,
+            "d_model":          D_MODEL,
+            "d_state":          D_STATE,
+            "test_mae_cycles":  test_metrics["mae"],
+            "test_rmse_cycles": test_metrics["rmse"],
+        },
+        RUL_MAMBA_PATH,
+    )
+    logger.info(f"Saved RUL model -> {RUL_MAMBA_PATH}")
+    logger.info("RUL training complete.")
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -422,6 +553,10 @@ def main() -> None:
     parser.add_argument("--log-dir",  default="logs/training")
     parser.add_argument("--long", action="store_true",
                         help="Train long-sequence model (L up to 4096) with warmup + grad accumulation")
+    parser.add_argument("--rul", action="store_true",
+                        help="Train cycle-level RUL predictor (GH-13)")
+    parser.add_argument("--pooling", default="last", choices=["last", "attention"],
+                        help="Pooling for RUL model")
     parser.add_argument("--accum-steps",  type=int, default=4)
     parser.add_argument("--micro-batch",  type=int, default=8)
     parser.add_argument("--stage-epochs", type=int, default=3)
@@ -429,7 +564,9 @@ def main() -> None:
     parser.add_argument("--eval-batch",   type=int, default=16,
                         help="Eval batch for long-seq — small to avoid OOM at L=4096")
     args = parser.parse_args()
-    if args.long:
+    if args.rul:
+        train_rul(args.data_dir or "data/processed_rul", args.epochs, args.log_dir, pooling=args.pooling)
+    elif args.long:
         data_dir = args.data_dir or "data/processed_long"
         train_long(
             data_dir, args.log_dir,
