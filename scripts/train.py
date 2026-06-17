@@ -30,7 +30,8 @@ from torch.utils.data import DataLoader, TensorDataset
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.core.config import D_MODEL, D_STATE, INPUT_FEATURES, ISO_FOREST_PATH, LONG_MAMBA_PATH, LONG_MODEL_VERSION, MAMBA_PATH, MODEL_VERSION, SPECTRAL_FEAT_DIM, WARMUP_STAGES, WINDOW_SIZE  # noqa: E402
+from src.core.config import D_MODEL, D_STATE, EOL_SOH, INPUT_FEATURES, ISO_FOREST_PATH, LONG_MAMBA_PATH, LONG_MODEL_VERSION, MAMBA_PATH, MODEL_VERSION, RUL_FEAT_DIM, RUL_LOOKBACK, RUL_MAMBA_PATH, RUL_MODEL_VERSION, RUL_SCALE, SPECTRAL_FEAT_DIM, WARMUP_STAGES, WINDOW_SIZE  # noqa: E402
+from src.models.rul_predictor import RULPredictor  # noqa: E402
 from src.models.soh_predictor import MambaSOHPredictor  # noqa: E402
 
 SEED = 42
@@ -412,6 +413,353 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
 
 
 # ---------------------------------------------------------------------------
+# RUL training (GH-13): cycle-level Mamba, target = remaining cycles to EOL
+# ---------------------------------------------------------------------------
+
+def load_rul_split(path: str) -> tuple[torch.Tensor, torch.Tensor]:
+    data = torch.load(path, weights_only=False)
+    if "y" not in data or "X" not in data:
+        raise KeyError(f"'X'/'y' not found in {path}. Run scripts/preprocess_rul.py first.")
+    return data["X"], data["y"]
+
+
+def evaluate_seq(model: nn.Module, X: torch.Tensor, y: torch.Tensor, device: torch.device,
+                 scale: float = RUL_SCALE, batch_size: int = VAL_BATCH_SIZE) -> dict:
+    """Metrics for a cycle-sequence regressor whose output is normalised by `scale`
+    (RUL_SCALE → cycles; 100 → SOH%). mae/rmse are in the target's native unit."""
+    model.eval()
+    preds = []
+    loader = DataLoader(TensorDataset(X), batch_size=batch_size)
+    with torch.no_grad():
+        for (X_b,) in loader:
+            preds.append(model(X_b.to(device)).cpu())
+    pred = torch.cat(preds) * scale
+    mae  = torch.mean(torch.abs(pred - y)).item()
+    rmse = torch.sqrt(torch.mean((pred - y) ** 2)).item()
+    loss = torch.mean(((pred / scale) - (y / scale)) ** 2).item()
+    return {"mae": round(mae, 4), "rmse": round(rmse, 4), "loss": loss}
+
+
+def train_rul(data_dir: str, epochs: int, log_dir: str, pooling: str = "last") -> None:
+    """Train the cycle-level RUL predictor. Target normalised by RUL_SCALE; metrics
+    reported in CYCLES. Split by battery (train B0005/06/07; B0018 val/test)."""
+    logger = setup_logger(log_dir)
+    logger.info("=== RUL training (GH-13, cycle-level) ===")
+
+    X_train, y_train = load_rul_split(os.path.join(data_dir, "train.pt"))
+    X_val,   y_val   = load_rul_split(os.path.join(data_dir, "val.pt"))
+    X_test,  y_test  = load_rul_split(os.path.join(data_dir, "test.pt"))
+    logger.info(f"  Train {len(X_train)} | Val {len(X_val)} | Test {len(X_test)} | lookback={X_train.shape[1]} cycles")
+    logger.info(f"  EOL=SOH<={EOL_SOH}% | RUL range train {y_train.min():.0f}..{y_train.max():.0f} cycles | scale={RUL_SCALE}")
+
+    if X_train.shape[-1] != RUL_FEAT_DIM:
+        raise ValueError(f"Feature dim {X_train.shape[-1]}, config expects {RUL_FEAT_DIM}.")
+
+    device, use_amp, amp_scaler, _amp_ctx = _setup_device_amp(logger)
+
+    loader_gen = torch.Generator()
+    loader_gen.manual_seed(SEED)
+    train_loader = DataLoader(
+        TensorDataset(X_train, y_train),
+        batch_size=BATCH_SIZE, shuffle=True,
+        pin_memory=use_amp, num_workers=2, persistent_workers=True,
+        generator=loader_gen, worker_init_fn=_seed_worker,
+    )
+
+    torch.manual_seed(SEED)
+    model     = RULPredictor(feat_dim=RUL_FEAT_DIM, d_model=D_MODEL, d_state=D_STATE, pooling=pooling).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=1e-5)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode="min", factor=0.5, patience=5, min_lr=1e-6)
+    criterion = nn.MSELoss()
+    GRAD_CLIP = 1.0
+    n_params  = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    logger.info(f"RULPredictor — {n_params:,} trainable params | pooling={pooling}")
+    logger.info(f"Config: lr={LR}, batch={BATCH_SIZE}, epochs={epochs}, patience={PATIENCE}")
+
+    best_val_loss = float("inf")
+    patience_counter = 0
+    best_state = None
+
+    logger.info(f"{'Epoch':>6}  {'TrainLoss':>10}  {'ValLoss':>10}  {'ValMAE(cyc)':>11}  {'ValRMSE(cyc)':>12}")
+    logger.info("-" * 60)
+    for epoch in range(1, epochs + 1):
+        model.train()
+        train_loss = 0.0
+        for X_batch, y_batch in train_loader:
+            optimizer.zero_grad(set_to_none=True)
+            with _amp_ctx():
+                pred = model(X_batch.to(device))
+                loss = criterion(pred, (y_batch / RUL_SCALE).to(device))
+            amp_scaler.scale(loss).backward()
+            amp_scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
+            amp_scaler.step(optimizer)
+            amp_scaler.update()
+            train_loss += loss.item() * len(X_batch)
+        train_loss /= len(X_train)
+
+        val_metrics = evaluate_seq(model, X_val, y_val, device)
+        val_loss    = val_metrics["loss"]
+        logger.debug(f"{epoch:>6}  {train_loss:>10.6f}  {val_loss:>10.6f}  {val_metrics['mae']:>11.4f}  {val_metrics['rmse']:>12.4f}")
+        if epoch % 10 == 0:
+            logger.info(f"{epoch:>6}  {train_loss:>10.6f}  {val_loss:>10.6f}  {val_metrics['mae']:>11.4f}  {val_metrics['rmse']:>12.4f}")
+        scheduler.step(val_loss)
+
+        if val_loss < best_val_loss:
+            best_val_loss    = val_loss
+            best_state       = {k: v.clone() for k, v in model.state_dict().items()}
+            patience_counter = 0
+        else:
+            patience_counter += 1
+        if patience_counter >= PATIENCE:
+            logger.info(f"Early stopping at epoch {epoch} (patience={PATIENCE})")
+            break
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
+    test_metrics = evaluate_seq(model, X_test, y_test, device)
+    logger.info("-" * 60)
+    logger.info(f"Test MAE : {test_metrics['mae']:.4f} cycles")
+    logger.info(f"Test RMSE: {test_metrics['rmse']:.4f} cycles")
+
+    os.makedirs(os.path.dirname(RUL_MAMBA_PATH), exist_ok=True)
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "version":          RUL_MODEL_VERSION,
+            "lookback":         X_train.shape[1],
+            "feat_dim":         RUL_FEAT_DIM,
+            "rul_scale":        RUL_SCALE,
+            "eol_soh":          EOL_SOH,
+            "pooling":          pooling,
+            "d_model":          D_MODEL,
+            "d_state":          D_STATE,
+            "test_mae_cycles":  test_metrics["mae"],
+            "test_rmse_cycles": test_metrics["rmse"],
+        },
+        RUL_MAMBA_PATH,
+    )
+    logger.info(f"Saved RUL model -> {RUL_MAMBA_PATH}")
+    logger.info("RUL training complete.")
+
+
+def _lobo(by_battery_path: str, epochs: int, log_dir: str, scale: float, unit: str,
+          title: str, pooling: str = "last", val_frac: float = 0.15,
+          holdouts: list[str] | None = None) -> None:
+    """Generic leave-one-battery-out evaluation for a cycle-sequence regressor.
+
+    For each held-out battery: train on the others, test on the WHOLE held-out
+    battery. Feature StandardScaler is fit per fold on train batteries only (no
+    leakage). `scale` normalises the target (RUL_SCALE→cycles, 100→SOH%); `unit`
+    labels the metrics. Reports per-fold + macro-avg. Used by RUL and forecasting."""
+    from sklearn.preprocessing import StandardScaler
+
+    logger = setup_logger(log_dir)
+    logger.info(f"=== {title} (GH-13, leave-one-battery-out) ===")
+    blob = torch.load(by_battery_path, weights_only=False)
+    batteries = blob["batteries"]
+    ids = list(batteries.keys())
+    fold_ids = ids if holdouts is None else [h for h in holdouts if h in batteries]
+    logger.info(f"Pool: {len(ids)} batteries | held-out folds: {fold_ids} | lookback={blob.get('lookback')} | scale={scale} | unit={unit}")
+
+    device, use_amp, amp_scaler, _amp_ctx = _setup_device_amp(logger)
+    rng = np.random.RandomState(SEED)
+    GRAD_CLIP = 1.0
+    results = []
+
+    for held in fold_ids:
+        train_ids = [b for b in ids if b != held]
+        Xtr = torch.cat([batteries[b]["X"] for b in train_ids], dim=0).numpy()
+        ytr = torch.cat([batteries[b]["y"] for b in train_ids], dim=0).numpy()
+        Xte = batteries[held]["X"].numpy()
+        yte = batteries[held]["y"].numpy()
+        if len(Xte) == 0 or len(Xtr) == 0:
+            logger.warning(f"[hold {held}] empty fold (train {len(Xtr)} test {len(Xte)}) — skipped")
+            continue
+
+        # Per-fold feature scaler — fit on TRAIN batteries only
+        nf = Xtr.shape[-1]
+        sc = StandardScaler().fit(Xtr.reshape(-1, nf))
+        def _scale(X):
+            return sc.transform(X.reshape(-1, nf)).reshape(X.shape).astype(np.float32)
+        Xtr_s, Xte_s = _scale(Xtr), _scale(Xte)
+
+        # Carve val from train pool for early stopping
+        n = len(Xtr_s)
+        idx = rng.permutation(n)
+        n_val = max(1, int(n * val_frac))
+        val_idx, tr_idx = idx[:n_val], idx[n_val:]
+        Xt = torch.tensor(Xtr_s[tr_idx]); yt = torch.tensor(ytr[tr_idx])
+        Xv = torch.tensor(Xtr_s[val_idx]); yv = torch.tensor(ytr[val_idx])
+        Xe = torch.tensor(Xte_s);          ye = torch.tensor(yte)
+
+        gen = torch.Generator(); gen.manual_seed(SEED)
+        loader = DataLoader(
+            TensorDataset(Xt, yt), batch_size=BATCH_SIZE, shuffle=True,
+            pin_memory=use_amp, num_workers=2, persistent_workers=True,
+            generator=gen, worker_init_fn=_seed_worker,
+        )
+        torch.manual_seed(SEED)
+        model = RULPredictor(feat_dim=nf, d_model=D_MODEL, d_state=D_STATE, pooling=pooling).to(device)
+        opt = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=1e-5)
+        sched = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, mode="min", factor=0.5, patience=5, min_lr=1e-6)
+        crit = nn.MSELoss()
+
+        best, best_state, pc = float("inf"), None, 0
+        for _ in range(1, epochs + 1):
+            model.train()
+            for Xb, yb in loader:
+                opt.zero_grad(set_to_none=True)
+                with _amp_ctx():
+                    loss = crit(model(Xb.to(device)), (yb / scale).to(device))
+                amp_scaler.scale(loss).backward()
+                amp_scaler.unscale_(opt)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
+                amp_scaler.step(opt); amp_scaler.update()
+            vm = evaluate_seq(model, Xv, yv, device, scale=scale)
+            sched.step(vm["loss"])
+            if vm["loss"] < best:
+                best, best_state, pc = vm["loss"], {k: v.clone() for k, v in model.state_dict().items()}, 0
+            else:
+                pc += 1
+            if pc >= PATIENCE:
+                break
+        if best_state is not None:
+            model.load_state_dict(best_state)
+
+        tm = evaluate_seq(model, Xe, ye, device, scale=scale)
+        logger.info(
+            f"[hold {held}] train {len(Xt)} val {len(Xv)} test {len(Xe)} "
+            f"(target {yte.min():.1f}..{yte.max():.1f}) -> MAE {tm['mae']:.3f} | RMSE {tm['rmse']:.3f} {unit}"
+        )
+        results.append((held, tm["mae"], tm["rmse"]))
+
+    if results:
+        maes  = [r[1] for r in results]
+        rmses = [r[2] for r in results]
+        logger.info("-" * 60)
+        logger.info(f"LOBO macro-avg over {len(results)} folds: "
+                    f"MAE {np.mean(maes):.3f} ± {np.std(maes):.3f} | RMSE {np.mean(rmses):.3f} {unit}")
+    logger.info("LOBO evaluation complete.")
+
+
+def train_rul_lobo(data_dir: str, epochs: int, log_dir: str, pooling: str = "last") -> None:
+    _lobo(os.path.join(data_dir, "by_battery.pt"), epochs, log_dir,
+          scale=RUL_SCALE, unit="cycles", title="RUL", pooling=pooling)
+
+
+def train_forecast_lobo(data_dir: str, epochs: int, log_dir: str, pooling: str = "last",
+                        holdouts: list[str] | None = None) -> None:
+    _lobo(os.path.join(data_dir, "by_battery_forecast.pt"), epochs, log_dir,
+          scale=100.0, unit="%SOH", title="SOH-forecast", pooling=pooling, holdouts=holdouts)
+
+
+def train_forecast_delta(data_dir: str, epochs: int, log_dir: str, pooling: str = "last",
+                         holdouts: list[str] | None = None, val_frac: float = 0.15,
+                         scale: float = 50.0) -> None:
+    """SOH-forecasting via DELTA: predict (future SOH - last known SOH), anchored on
+    the lookback's last SOH. Deltas are small + on a common scale across batteries,
+    so adding batteries of different SOH regimes is safe (raw absolute → 42% disaster).
+    Reports reconstructed absolute SOH MAE + the persistence baseline (predict no change)."""
+    from sklearn.preprocessing import StandardScaler
+
+    logger = setup_logger(log_dir)
+    logger.info("=== SOH-forecast DELTA (GH-13, anchor=last SOH, multi-battery) ===")
+    blob = torch.load(os.path.join(data_dir, "by_battery_forecast.pt"), weights_only=False)
+    batteries = blob["batteries"]
+    if "anchor" not in next(iter(batteries.values())):
+        raise KeyError("by_battery_forecast.pt has no 'anchor' — rerun scripts/preprocess_forecast.py.")
+    ids = list(batteries.keys())
+    fold_ids = ids if holdouts is None else [h for h in holdouts if h in batteries]
+    logger.info(f"Pool: {len(ids)} batteries | folds: {fold_ids} | lookback={blob.get('lookback')} | horizon=+{blob.get('horizon')} | delta-scale={scale}")
+
+    device, use_amp, amp_scaler, _amp_ctx = _setup_device_amp(logger)
+    rng = np.random.RandomState(SEED)
+    GRAD_CLIP = 1.0
+    results = []
+
+    for held in fold_ids:
+        train_ids = [b for b in ids if b != held]
+        Xtr = torch.cat([batteries[b]["X"] for b in train_ids]).numpy()
+        ytr = torch.cat([batteries[b]["y"] for b in train_ids]).numpy()
+        atr = torch.cat([batteries[b]["anchor"] for b in train_ids]).numpy()
+        Xte = batteries[held]["X"].numpy()
+        yte = batteries[held]["y"].numpy()
+        ate = batteries[held]["anchor"].numpy()
+        if len(Xte) == 0 or len(Xtr) == 0:
+            logger.warning(f"[hold {held}] empty fold — skipped"); continue
+
+        dtr = ytr - atr  # delta target
+
+        nf = Xtr.shape[-1]
+        sc = StandardScaler().fit(Xtr.reshape(-1, nf))
+        def _scale(X): return sc.transform(X.reshape(-1, nf)).reshape(X.shape).astype(np.float32)
+        Xtr_s, Xte_s = _scale(Xtr), _scale(Xte)
+
+        n = len(Xtr_s); idx = rng.permutation(n); nv = max(1, int(n * val_frac))
+        vi, ti = idx[:nv], idx[nv:]
+        Xt = torch.tensor(Xtr_s[ti]); dt = torch.tensor(dtr[ti])
+        Xv = torch.tensor(Xtr_s[vi]); dv = torch.tensor(dtr[vi])
+
+        gen = torch.Generator(); gen.manual_seed(SEED)
+        loader = DataLoader(
+            TensorDataset(Xt, dt), batch_size=BATCH_SIZE, shuffle=True,
+            pin_memory=use_amp, num_workers=2, persistent_workers=True,
+            generator=gen, worker_init_fn=_seed_worker,
+        )
+        torch.manual_seed(SEED)
+        model = RULPredictor(feat_dim=nf, d_model=D_MODEL, d_state=D_STATE, pooling=pooling).to(device)
+        opt = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=1e-5)
+        sched = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, mode="min", factor=0.5, patience=5, min_lr=1e-6)
+        crit = nn.MSELoss()
+
+        best, best_state, pc = float("inf"), None, 0
+        for _ in range(1, epochs + 1):
+            model.train()
+            for Xb, db in loader:
+                opt.zero_grad(set_to_none=True)
+                with _amp_ctx():
+                    loss = crit(model(Xb.to(device)), (db / scale).to(device))
+                amp_scaler.scale(loss).backward()
+                amp_scaler.unscale_(opt)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
+                amp_scaler.step(opt); amp_scaler.update()
+            model.eval()
+            with torch.no_grad():
+                pv = (model(Xv.to(device)).cpu() * scale)
+            vloss = torch.mean(((pv - dv) / scale) ** 2).item()
+            sched.step(vloss)
+            if vloss < best:
+                best, best_state, pc = vloss, {k: v.clone() for k, v in model.state_dict().items()}, 0
+            else:
+                pc += 1
+            if pc >= PATIENCE:
+                break
+        if best_state is not None:
+            model.load_state_dict(best_state)
+
+        model.eval()
+        with torch.no_grad():
+            pred_delta = (model(torch.tensor(Xte_s).to(device)).cpu() * scale).numpy()
+        pred_abs = ate + pred_delta
+        mae  = float(np.mean(np.abs(pred_abs - yte)))
+        rmse = float(np.sqrt(np.mean((pred_abs - yte) ** 2)))
+        pers = float(np.mean(np.abs(ate - yte)))  # persistence: predict no change
+        verdict = "BEATS persistence" if mae < pers else "loses to persistence"
+        logger.info(
+            f"[hold {held}] train {len(Xt)} test {len(Xte_s)} -> "
+            f"DELTA-model MAE {mae:.3f} RMSE {rmse:.3f} | persistence MAE {pers:.3f} %SOH  [{verdict}]"
+        )
+        results.append((held, mae, rmse, pers))
+
+    if results:
+        logger.info("-" * 60)
+        logger.info(f"DELTA macro-avg: model MAE {np.mean([r[1] for r in results]):.3f} | "
+                    f"persistence MAE {np.mean([r[3] for r in results]):.3f} %SOH")
+    logger.info("DELTA forecast complete.")
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -422,6 +770,18 @@ def main() -> None:
     parser.add_argument("--log-dir",  default="logs/training")
     parser.add_argument("--long", action="store_true",
                         help="Train long-sequence model (L up to 4096) with warmup + grad accumulation")
+    parser.add_argument("--rul", action="store_true",
+                        help="Train cycle-level RUL predictor (GH-13)")
+    parser.add_argument("--lobo", action="store_true",
+                        help="RUL leave-one-battery-out evaluation (GH-13)")
+    parser.add_argument("--forecast", action="store_true",
+                        help="SOH-forecasting leave-one-battery-out (GH-13)")
+    parser.add_argument("--holdout", default=None,
+                        help="Comma list of held-out test batteries (default: all folds)")
+    parser.add_argument("--delta", action="store_true",
+                        help="Forecast via DELTA (anchor=last SOH) — safe multi-battery (GH-13)")
+    parser.add_argument("--pooling", default="last", choices=["last", "attention"],
+                        help="Pooling for RUL model")
     parser.add_argument("--accum-steps",  type=int, default=4)
     parser.add_argument("--micro-batch",  type=int, default=8)
     parser.add_argument("--stage-epochs", type=int, default=3)
@@ -429,7 +789,18 @@ def main() -> None:
     parser.add_argument("--eval-batch",   type=int, default=16,
                         help="Eval batch for long-seq — small to avoid OOM at L=4096")
     args = parser.parse_args()
-    if args.long:
+    if args.forecast:
+        holdouts = args.holdout.split(",") if args.holdout else None
+        fc_dir = args.data_dir or "data/processed_forecast"
+        if args.delta:
+            train_forecast_delta(fc_dir, args.epochs, args.log_dir, pooling=args.pooling, holdouts=holdouts)
+        else:
+            train_forecast_lobo(fc_dir, args.epochs, args.log_dir, pooling=args.pooling, holdouts=holdouts)
+    elif args.lobo:
+        train_rul_lobo(args.data_dir or "data/processed_rul", args.epochs, args.log_dir, pooling=args.pooling)
+    elif args.rul:
+        train_rul(args.data_dir or "data/processed_rul", args.epochs, args.log_dir, pooling=args.pooling)
+    elif args.long:
         data_dir = args.data_dir or "data/processed_long"
         train_long(
             data_dir, args.log_dir,
