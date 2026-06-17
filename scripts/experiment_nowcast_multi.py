@@ -48,6 +48,31 @@ def collect(data_dir, bids):
     return cycles
 
 
+def window_global(cycles):
+    """One MinMax fit on the whole pool (naive — extreme batteries distort scaling)."""
+    raw = np.concatenate([c for c, _ in cycles], axis=0)
+    mm = MinMaxScaler().fit(raw)
+    return cycles_to_windows(cycles, mm)
+
+
+def window_per_battery(data_dir, bids):
+    """Scale EACH battery by its OWN MinMax before windowing → extreme batteries
+    (e.g. B0036 SOH 122%) no longer distort the others. Returns concatenated X,F,y."""
+    Xs, Fs, ys = [], [], []
+    for bid in bids:
+        try:
+            cyc = load_cycles(data_dir, bid)
+        except Exception as e:
+            print(f"  {bid}: skipped ({e})"); continue
+        if not cyc:
+            continue
+        raw = np.concatenate([c for c, _ in cyc], axis=0)
+        mm = MinMaxScaler().fit(raw)
+        X, F, y = cycles_to_windows(cyc, mm)
+        Xs.append(X); Fs.append(F); ys.append(y)
+    return np.concatenate(Xs), np.concatenate(Fs), np.concatenate(ys)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--data-dir", default="data/raw/nasa/cleaned_dataset")
@@ -57,6 +82,8 @@ def main():
                     help="Use official CUDA mamba_ssm (Kaggle/Colab GPU only; same accuracy)")
     ap.add_argument("--temp", type=float, default=None,
                     help="restrict pool to batteries at this ambient temperature (e.g. 24) — same-condition, no domain shift")
+    ap.add_argument("--per-battery-norm", action="store_true",
+                    help="scale each battery by its own MinMax (fixes scaler distortion from extreme batteries)")
     args = ap.parse_args()
     logger = setup_logger("logs/training")
     logger.info("=== Multi-battery NOWCASTING experiment (GH-13 follow-up) ===")
@@ -69,17 +96,15 @@ def main():
     train_ids = [b for b in all_ids if b != args.test_id]
     logger.info(f"Train pool: {len(train_ids)} batteries (all except {args.test_id})")
 
-    train_cycles = collect(args.data_dir, train_ids)
-    test_cycles  = collect(args.data_dir, [args.test_id])
-    logger.info(f"Train cycles: {len(train_cycles)} | Test cycles: {len(test_cycles)}")
-
-    # Refit MinMax on the bigger train pool (raw timesteps)
-    raw = np.concatenate([c for c, _ in train_cycles], axis=0)
-    minmax = MinMaxScaler().fit(raw)
-
-    # Windows (window=30) + cycle-level 54-dim features
-    Xtr, Ftr_raw, ytr = cycles_to_windows(train_cycles, minmax)
-    Xte, Fte_raw, yte = cycles_to_windows(test_cycles, minmax)
+    logger.info(f"Normalization: {'per-battery MinMax' if args.per_battery_norm else 'global MinMax'}")
+    if args.per_battery_norm:
+        Xtr, Ftr_raw, ytr = window_per_battery(args.data_dir, train_ids)
+        Xte, Fte_raw, yte = window_per_battery(args.data_dir, [args.test_id])
+    else:
+        train_cycles = collect(args.data_dir, train_ids)
+        test_cycles  = collect(args.data_dir, [args.test_id])
+        Xtr, Ftr_raw, ytr = window_global(train_cycles)
+        Xte, Fte_raw, yte = window_global(test_cycles)
     feat_scaler = StandardScaler().fit(Ftr_raw)
     Ftr = feat_scaler.transform(Ftr_raw).astype(np.float32)
     Fte = feat_scaler.transform(Fte_raw).astype(np.float32)
