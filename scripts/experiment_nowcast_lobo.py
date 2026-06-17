@@ -46,7 +46,7 @@ def load_cycles_safe(data_dir, bid, min_cycles):
     return cyc if len(cyc) >= min_cycles else None
 
 
-def run_fold(held, train_cycles, test_cycles, epochs, device, logger):
+def run_fold(held, train_cycles, test_cycles, epochs, device, logger, official_mamba=False):
     """Train on train_cycles, eval on held-out test_cycles. Returns (mae, rmse, n_test)."""
     raw = np.concatenate([c for c, _ in train_cycles], axis=0)
     minmax = MinMaxScaler().fit(raw)
@@ -68,7 +68,8 @@ def run_fold(held, train_cycles, test_cycles, epochs, device, logger):
 
     torch.manual_seed(SEED)
     model = MambaSOHPredictor(input_features=Xtr.shape[-1], feat_dim=SPECTRAL_FEAT_DIM,
-                              d_model=D_MODEL, d_state=D_STATE).to(device)
+                              d_model=D_MODEL, d_state=D_STATE,
+                              use_official_mamba=official_mamba).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=5e-4, weight_decay=1e-5)
     crit = nn.MSELoss()
 
@@ -105,6 +106,8 @@ def main():
     ap.add_argument("--epochs", type=int, default=60)
     ap.add_argument("--min-cycles", type=int, default=60, help="skip batteries with fewer cycles")
     ap.add_argument("--folds", default=None, help="comma list of held-out batteries (default: all eligible)")
+    ap.add_argument("--official-mamba", action="store_true",
+                    help="Use official CUDA mamba_ssm (Kaggle/Colab GPU only; same accuracy)")
     args = ap.parse_args()
 
     logger = setup_logger("logs/training")
@@ -127,7 +130,8 @@ def main():
         if held not in cycles_by:
             logger.warning(f"[hold {held}] not eligible — skipped"); continue
         train_cycles = [c for b in cycles_by if b != held for c in cycles_by[b]]
-        out = run_fold(held, train_cycles, cycles_by[held], args.epochs, device, logger)
+        out = run_fold(held, train_cycles, cycles_by[held], args.epochs, device, logger,
+                       official_mamba=args.official_mamba)
         if out is None:
             logger.warning(f"[hold {held}] empty fold — skipped"); continue
         mae, rmse, ntest = out

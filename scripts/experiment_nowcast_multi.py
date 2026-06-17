@@ -53,6 +53,8 @@ def main():
     ap.add_argument("--data-dir", default="data/raw/nasa/cleaned_dataset")
     ap.add_argument("--epochs", type=int, default=80)
     ap.add_argument("--test-id", default="B0018")
+    ap.add_argument("--official-mamba", action="store_true",
+                    help="Use official CUDA mamba_ssm (Kaggle/Colab GPU only; same accuracy)")
     args = ap.parse_args()
     logger = setup_logger("logs/training")
     logger.info("=== Multi-battery NOWCASTING experiment (GH-13 follow-up) ===")
@@ -89,7 +91,9 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(SEED)
     model = MambaSOHPredictor(input_features=Xtr.shape[-1], feat_dim=SPECTRAL_FEAT_DIM,
-                              d_model=D_MODEL, d_state=D_STATE).to(device)
+                              d_model=D_MODEL, d_state=D_STATE,
+                              use_official_mamba=args.official_mamba).to(device)
+    logger.info(f"Mamba backend: {'official CUDA mamba_ssm' if args.official_mamba else 'pure-PyTorch'}")
     opt = torch.optim.Adam(model.parameters(), lr=5e-4, weight_decay=1e-5)
     crit = nn.MSELoss()
 

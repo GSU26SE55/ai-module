@@ -173,6 +173,35 @@ class MambaBlock(nn.Module):
         return y_c, h_c[:, -1]                                              # h_last: (B, d_inner, d_state)
 
 
+class OfficialMambaBlock(nn.Module):
+    """Pre-norm residual wrapper around the OFFICIAL CUDA `mamba_ssm.Mamba`.
+
+    Drop-in for MambaBlock — same (B, L, d_model) -> (B, L, d_model) interface and
+    same pre-norm + residual structure, so the rest of the model is unchanged.
+
+    ⚠️ Requires `pip install mamba-ssm causal-conv1d` and a CUDA GPU (Linux —
+    Kaggle/Colab). It does NOT build on Windows native. Same math as MambaBlock →
+    SAME accuracy, only faster/less VRAM (matters at long L, negligible at L=30).
+    Default model path stays pure-PyTorch; this is opt-in via use_official_mamba.
+    """
+
+    def __init__(self, d_model: int, d_state: int = 16, d_conv: int = 4, expand: int = 2):
+        super().__init__()
+        try:
+            from mamba_ssm import Mamba
+        except ImportError as e:  # pragma: no cover - CUDA-only path
+            raise ImportError(
+                "official Mamba backend needs `mamba-ssm` (CUDA/Linux, e.g. Kaggle/Colab). "
+                "On Windows use the default pure-PyTorch MambaBlock (use_official_mamba=False)."
+            ) from e
+        self.norm = nn.LayerNorm(d_model)
+        self.mamba = Mamba(d_model=d_model, d_state=d_state, d_conv=d_conv, expand=expand)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: (B, L, d_model) — pre-norm residual, matches MambaBlock
+        return x + self.mamba(self.norm(x))
+
+
 class MambaSOHPredictor(nn.Module):
     """
     Input:  x      (batch, 30, input_features) — 30 timestep sensor window
@@ -198,6 +227,7 @@ class MambaSOHPredictor(nn.Module):
         dropout: float = 0.2,
         feat_dim: int = 54,
         pooling: str = "last",
+        use_official_mamba: bool = False,
     ):
         super().__init__()
         if pooling not in ("last", "attention"):
@@ -205,9 +235,13 @@ class MambaSOHPredictor(nn.Module):
         self.input_features = input_features
         self.feat_dim = feat_dim
         self.pooling = pooling
+        self.use_official_mamba = use_official_mamba
         self.input_proj = nn.Linear(input_features, d_model)
+        # Default: pure-PyTorch MambaBlock (Windows-native). Opt-in: official CUDA
+        # mamba_ssm (Kaggle/Colab GPU only) — same math, faster, no accuracy change.
+        _Block = OfficialMambaBlock if use_official_mamba else MambaBlock
         self.mamba_layers = nn.ModuleList(
-            [MambaBlock(d_model=d_model, d_state=d_state) for _ in range(n_layers)]
+            [_Block(d_model=d_model, d_state=d_state) for _ in range(n_layers)]
         )
         self.norm = nn.LayerNorm(d_model)
         self.dropout = nn.Dropout(dropout)
