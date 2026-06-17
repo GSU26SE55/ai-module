@@ -235,10 +235,20 @@ class MambaSOHPredictor(nn.Module):
         self.input_features = input_features
         self.feat_dim = feat_dim
         self.pooling = pooling
-        self.use_official_mamba = use_official_mamba
-        self.input_proj = nn.Linear(input_features, d_model)
         # Default: pure-PyTorch MambaBlock (Windows-native). Opt-in: official CUDA
         # mamba_ssm (Kaggle/Colab GPU only) — same math, faster, no accuracy change.
+        # Graceful fallback: if official requested but mamba_ssm/CUDA unavailable,
+        # warn and use pure-PyTorch so "Run All" never crashes on the flag.
+        if use_official_mamba:
+            try:
+                import mamba_ssm  # noqa: F401  (probe availability)
+            except ImportError:
+                import warnings
+                warnings.warn("use_official_mamba=True but mamba_ssm unavailable "
+                              "-> falling back to pure-PyTorch MambaBlock.")
+                use_official_mamba = False
+        self.use_official_mamba = use_official_mamba
+        self.input_proj = nn.Linear(input_features, d_model)
         _Block = OfficialMambaBlock if use_official_mamba else MambaBlock
         self.mamba_layers = nn.ModuleList(
             [_Block(d_model=d_model, d_state=d_state) for _ in range(n_layers)]
