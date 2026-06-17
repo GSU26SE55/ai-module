@@ -107,6 +107,8 @@ def main():
     ap.add_argument("--min-cycles", type=int, default=60, help="skip batteries with fewer cycles")
     ap.add_argument("--temp", type=float, default=None,
                     help="restrict to batteries at this ambient temperature (e.g. 24) — same-condition, no domain shift")
+    ap.add_argument("--pool", default=None,
+                    help="comma list = EXACT battery pool (train+test). Use for clean same-campaign LOBO, e.g. B0005,B0006,B0007,B0018")
     ap.add_argument("--folds", default=None, help="comma list of held-out batteries (default: all eligible)")
     ap.add_argument("--official-mamba", action="store_true",
                     help="Use official CUDA mamba_ssm (Kaggle/Colab GPU only; same accuracy)")
@@ -117,7 +119,10 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Device: {device}")
 
-    if args.temp is not None:
+    if args.pool is not None:
+        all_ids = args.pool.split(",")
+        logger.info(f"Exact pool: {all_ids}")
+    elif args.temp is not None:
         all_ids = batteries_at_temp(args.data_dir, args.temp)
         logger.info(f"Same-condition filter: ambient_temperature = {args.temp}°C -> {len(all_ids)} batteries")
     else:
