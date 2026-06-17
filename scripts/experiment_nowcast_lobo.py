@@ -28,7 +28,7 @@ from torch.utils.data import DataLoader, TensorDataset
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from scripts.preprocess import load_cycles, cycles_to_windows  # noqa: E402
-from scripts.preprocess_forecast import available_batteries  # noqa: E402
+from scripts.preprocess_forecast import available_batteries, batteries_at_temp  # noqa: E402
 from scripts.train import setup_logger  # noqa: E402
 from src.core.config import D_MODEL, D_STATE, SPECTRAL_FEAT_DIM  # noqa: E402
 from src.models.soh_predictor import MambaSOHPredictor  # noqa: E402
@@ -105,6 +105,8 @@ def main():
     ap.add_argument("--data-dir", default="data/raw/nasa/cleaned_dataset")
     ap.add_argument("--epochs", type=int, default=60)
     ap.add_argument("--min-cycles", type=int, default=60, help="skip batteries with fewer cycles")
+    ap.add_argument("--temp", type=float, default=None,
+                    help="restrict to batteries at this ambient temperature (e.g. 24) — same-condition, no domain shift")
     ap.add_argument("--folds", default=None, help="comma list of held-out batteries (default: all eligible)")
     ap.add_argument("--official-mamba", action="store_true",
                     help="Use official CUDA mamba_ssm (Kaggle/Colab GPU only; same accuracy)")
@@ -115,7 +117,11 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Device: {device}")
 
-    all_ids = available_batteries(args.data_dir)
+    if args.temp is not None:
+        all_ids = batteries_at_temp(args.data_dir, args.temp)
+        logger.info(f"Same-condition filter: ambient_temperature = {args.temp}°C -> {len(all_ids)} batteries")
+    else:
+        all_ids = available_batteries(args.data_dir)
     cycles_by = {}
     for bid in all_ids:
         cyc = load_cycles_safe(args.data_dir, bid, args.min_cycles)

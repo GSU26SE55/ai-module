@@ -36,6 +36,23 @@ def available_batteries(data_dir: str) -> list[str]:
     spec-locked ones). Used to expand the forecast experiment's training pool."""
     meta = pd.read_csv(os.path.join(data_dir, "metadata.csv"))
     return sorted(meta["battery_id"].unique())
+
+
+def batteries_at_temp(data_dir: str, temp: float) -> list[str]:
+    """Battery IDs whose discharge cycles run ONLY at the given ambient temperature.
+
+    Lets us add SAME-condition data (no temperature domain shift) — the clean way
+    to expand beyond the 4 spec batteries. NASA has ~11 batteries purely at 24°C
+    (B0005/06/07/18, B0025-28, B0033/34/36), so adding them avoids the cross-temp
+    shift that wrecked naive multi-battery training (5.46% MAE)."""
+    meta = pd.read_csv(os.path.join(data_dir, "metadata.csv"))
+    dis = meta[meta["type"] == "discharge"]
+    ids = []
+    for bid, sub in dis.groupby("battery_id"):
+        temps = sub["ambient_temperature"].unique()
+        if len(temps) == 1 and float(temps[0]) == float(temp):
+            ids.append(bid)
+    return sorted(ids)
 from src.core.config import (  # noqa: E402
     FORECAST_HORIZON,
     FORECAST_LOOKBACK,

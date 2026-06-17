@@ -29,7 +29,7 @@ from torch.utils.data import DataLoader, TensorDataset
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from scripts.preprocess import load_cycles, cycles_to_windows  # noqa: E402
-from scripts.preprocess_forecast import available_batteries  # noqa: E402
+from scripts.preprocess_forecast import available_batteries, batteries_at_temp  # noqa: E402
 from scripts.train import setup_logger  # noqa: E402  (logs to logs/training/)
 from src.core.config import D_MODEL, D_STATE, SPECTRAL_FEAT_DIM  # noqa: E402
 from src.models.soh_predictor import MambaSOHPredictor  # noqa: E402
@@ -55,11 +55,17 @@ def main():
     ap.add_argument("--test-id", default="B0018")
     ap.add_argument("--official-mamba", action="store_true",
                     help="Use official CUDA mamba_ssm (Kaggle/Colab GPU only; same accuracy)")
+    ap.add_argument("--temp", type=float, default=None,
+                    help="restrict pool to batteries at this ambient temperature (e.g. 24) — same-condition, no domain shift")
     args = ap.parse_args()
     logger = setup_logger("logs/training")
     logger.info("=== Multi-battery NOWCASTING experiment (GH-13 follow-up) ===")
 
-    all_ids = available_batteries(args.data_dir)
+    if args.temp is not None:
+        all_ids = batteries_at_temp(args.data_dir, args.temp)
+        logger.info(f"Same-condition filter: ambient_temperature = {args.temp}°C -> {len(all_ids)} batteries")
+    else:
+        all_ids = available_batteries(args.data_dir)
     train_ids = [b for b in all_ids if b != args.test_id]
     logger.info(f"Train pool: {len(train_ids)} batteries (all except {args.test_id})")
 
