@@ -99,7 +99,8 @@ def main():
     model = MambaSOHPredictor(input_features=Xtr.shape[-1], feat_dim=SPECTRAL_FEAT_DIM,
                               d_model=D_MODEL, d_state=D_STATE,
                               use_official_mamba=args.official_mamba).to(device)
-    logger.info(f"Mamba backend: {'official CUDA mamba_ssm' if args.official_mamba else 'pure-PyTorch'}")
+    # Log the ACTUAL backend (may have fallen back to pure-PyTorch if mamba_ssm absent)
+    logger.info(f"Mamba backend: {'official CUDA mamba_ssm' if model.use_official_mamba else 'pure-PyTorch'}")
     opt = torch.optim.Adam(model.parameters(), lr=5e-4, weight_decay=1e-5)
     crit = nn.MSELoss()
 
