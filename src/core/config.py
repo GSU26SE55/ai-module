@@ -42,6 +42,16 @@ RUL_MODEL_VERSION       = "1.0"
 RUL_MAMBA_PATH          = os.path.join(WEIGHTS_DIR, f"soh_mamba_rul_v{RUL_MODEL_VERSION}.pth")
 RUL_FEATURE_SCALER_PATH = os.path.join(WEIGHTS_DIR, "feature_scaler_rul.pkl")
 
+# --- SOH-forecasting (GH-13) — cycle-level: predict SOH h cycles ahead ---
+# More data-efficient than RUL on NASA: every cycle is a valid forecast target
+# (not just pre-EOL), and SOH is bounded so there is no extrapolation-beyond-range
+# problem. Same cycle-axis tokens (54-dim per-cycle features) + same model.
+FORECAST_LOOKBACK = 30      # historical cycles per sample
+FORECAST_HORIZON  = 10      # forecast SOH this many cycles ahead of the last
+FORECAST_STRIDE   = 1
+FORECAST_MODEL_VERSION = "1.0"
+FORECAST_MAMBA_PATH    = os.path.join(WEIGHTS_DIR, f"soh_mamba_forecast_v{FORECAST_MODEL_VERSION}.pth")
+
 FEATURES = [
     "voltage",
     "current",

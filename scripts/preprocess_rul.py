@@ -196,6 +196,28 @@ def main() -> None:
         )
         print(f"Saved {name}.pt  ({len(X)} samples)")
 
+    # --- Per-battery UNSCALED windows for leave-one-battery-out (LOBO) eval ---
+    # Features kept UNSCALED here; LOBO fits a StandardScaler per fold on the
+    # train batteries only (held-out battery never leaks into scaling).
+    print("\nBuilding per-battery windows (leave-one-battery-out)...")
+    by_bat = {}
+    for bid in TRAIN_IDS + VAL_IDS:
+        feats, sohs = cycle_feature_series(args.data_dir, bid, scaler)
+        Xb, yb, _, eolb = make_rul_windows(feats, sohs, args.lookback, args.stride, args.eol_soh)
+        by_bat[bid] = {
+            "X":        torch.tensor(Xb, dtype=torch.float32),
+            "y":        torch.tensor(yb, dtype=torch.float32),
+            "eol":      int(eolb),
+            "n_cycles": int(len(feats)),
+        }
+        rng_str = f"{yb.min():.0f}..{yb.max():.0f}" if len(yb) else "—"
+        print(f"  {bid}: {len(Xb)} windows | RUL {rng_str}")
+    torch.save(
+        {"batteries": by_bat, "lookback": args.lookback, "eol_soh": args.eol_soh},
+        os.path.join(args.output_dir, "by_battery.pt"),
+    )
+    print(f"Saved by_battery.pt  ({len(by_bat)} batteries)")
+
     print("\nRUL preprocessing complete.")
 
 
