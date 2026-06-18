@@ -308,7 +308,8 @@ def _train_epoch_accum(model, loader, optimizer, criterion, amp_scaler, amp_ctx,
 def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: int = 8,
                stage_epochs: int = 3, final_epochs: int = 50, stages: list[int] | None = None,
                num_workers: int = 2, eval_batch: int = 16,
-               compile_model: bool = False, benchmark: bool = False) -> None:
+               compile_model: bool = False, benchmark: bool = False,
+               official_mamba: bool = False) -> None:
     """Train the long-sequence model (L up to 4096) with progressive length warmup.
 
     Each stage truncates sequences to a shorter length (cheap epochs), carrying
@@ -335,11 +336,12 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
     model = MambaSOHPredictor(
         input_features=INPUT_FEATURES, feat_dim=SPECTRAL_FEAT_DIM,
         d_model=D_MODEL, d_state=D_STATE, pooling="attention",
+        use_official_mamba=official_mamba,
     ).to(device)
     if compile_model:
         try:
-            model = torch.compile(model, mode="reduce-overhead")
-            logger.info("torch.compile: ON (reduce-overhead) — first batch warmup ~30s, then ~40% faster")
+            model = torch.compile(model, mode="default")
+            logger.info("torch.compile: ON (default) — operator fusion without CUDA Graphs (safe with gradient accumulation)")
         except Exception as e:
             logger.warning(f"torch.compile unavailable ({e}) — falling back to eager")
     optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=1e-5)
@@ -808,6 +810,9 @@ def main() -> None:
                         help="cuDNN benchmark mode — faster conv autotuning, non-deterministic")
     parser.add_argument("--num-workers", type=int, default=2,
                         help="DataLoader workers (default 2; use 4 on Kaggle P100/T4)")
+    parser.add_argument("--official-mamba", action="store_true",
+                        help="Use official mamba_ssm CUDA backend (3-5x faster, Kaggle/Colab GPU only). "
+                             "Falls back to pure-PyTorch if mamba_ssm not installed.")
     args = parser.parse_args()
     if args.forecast:
         holdouts = args.holdout.split(",") if args.holdout else None
@@ -828,6 +833,7 @@ def main() -> None:
             stage_epochs=args.stage_epochs, final_epochs=args.final_epochs,
             eval_batch=args.eval_batch, num_workers=args.num_workers,
             compile_model=args.compile, benchmark=args.benchmark,
+            official_mamba=args.official_mamba,
         )
     else:
         train(args.data_dir or "data/processed", args.epochs, args.log_dir)
