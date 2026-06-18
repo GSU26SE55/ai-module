@@ -304,7 +304,8 @@ def _train_epoch_accum(model, loader, optimizer, criterion, amp_scaler, amp_ctx,
 
 def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: int = 8,
                stage_epochs: int = 3, final_epochs: int = 50, stages: list[int] | None = None,
-               num_workers: int = 2, eval_batch: int = 16) -> None:
+               num_workers: int = 2, eval_batch: int = 16,
+               compile_model: bool = False, benchmark: bool = False) -> None:
     """Train the long-sequence model (L up to 4096) with progressive length warmup.
 
     Each stage truncates sequences to a shorter length (cheap epochs), carrying
@@ -320,6 +321,10 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
     logger.info(f"  Train {len(X_train)} | Val {len(X_val)} | Test {len(X_test)} | seq_len={seq_len}")
 
     device, use_amp, amp_scaler, _amp_ctx = _setup_device_amp(logger)
+    if benchmark and device.type == "cuda":
+        torch.backends.cudnn.benchmark     = True
+        torch.backends.cudnn.deterministic = False
+        logger.info("cuDNN benchmark: ON (non-deterministic — reproducibility disabled)")
 
     loader_gen = torch.Generator()
     loader_gen.manual_seed(SEED)
@@ -328,6 +333,12 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
         input_features=INPUT_FEATURES, feat_dim=SPECTRAL_FEAT_DIM,
         d_model=D_MODEL, d_state=D_STATE, pooling="attention",
     ).to(device)
+    if compile_model:
+        try:
+            model = torch.compile(model, mode="reduce-overhead")
+            logger.info("torch.compile: ON (reduce-overhead) — first batch warmup ~30s, then ~40% faster")
+        except Exception as e:
+            logger.warning(f"torch.compile unavailable ({e}) — falling back to eager")
     optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=1e-5)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.5, patience=5, min_lr=1e-6
@@ -788,6 +799,12 @@ def main() -> None:
     parser.add_argument("--final-epochs", type=int, default=50)
     parser.add_argument("--eval-batch",   type=int, default=16,
                         help="Eval batch for long-seq — small to avoid OOM at L=4096")
+    parser.add_argument("--compile", action="store_true",
+                        help="torch.compile the model (~30-50%% speedup on GPU, PyTorch 2.x)")
+    parser.add_argument("--benchmark", action="store_true",
+                        help="cuDNN benchmark mode — faster conv autotuning, non-deterministic")
+    parser.add_argument("--num-workers", type=int, default=2,
+                        help="DataLoader workers (default 2; use 4 on Kaggle P100/T4)")
     args = parser.parse_args()
     if args.forecast:
         holdouts = args.holdout.split(",") if args.holdout else None
@@ -806,7 +823,8 @@ def main() -> None:
             data_dir, args.log_dir,
             accum_steps=args.accum_steps, micro_batch=args.micro_batch,
             stage_epochs=args.stage_epochs, final_epochs=args.final_epochs,
-            eval_batch=args.eval_batch,
+            eval_batch=args.eval_batch, num_workers=args.num_workers,
+            compile_model=args.compile, benchmark=args.benchmark,
         )
     else:
         train(args.data_dir or "data/processed", args.epochs, args.log_dir)

@@ -33,6 +33,7 @@ import sys
 import joblib
 import numpy as np
 import torch
+from joblib import Parallel, delayed
 from sklearn.preprocessing import StandardScaler
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -93,13 +94,22 @@ def make_long_windows(
         )
 
     X_scaled = scaler.transform(X_raw).astype(np.float32)
-    Xs, feats, ys = [], [], []
-    for start in range(0, T - seq_len + 1, stride):
-        win = X_scaled[start : start + seq_len]
-        Xs.append(win)
-        feats.append(extract_window_features(win[:, :3]))  # voltage, current, temp
-        ys.append(soh_ts[start + seq_len - 1])
+    starts = list(range(0, T - seq_len + 1, stride))
 
+    def _one(s: int):
+        win = X_scaled[s : s + seq_len]
+        return win, extract_window_features(win[:, :3]), float(soh_ts[s + seq_len - 1])
+
+    # prefer="threads": NumPy/SciPy FFT releases the GIL → thread parallelism avoids
+    # process-spawn overhead while still getting ~3-5x speedup on feature extraction
+    results = Parallel(n_jobs=-1, prefer="threads")(delayed(_one)(s) for s in starts)
+    if not results:
+        return (
+            np.empty((0, seq_len, X_raw.shape[1]), dtype=np.float32),
+            np.empty((0, 54), dtype=np.float32),
+            np.empty((0,), dtype=np.float32),
+        )
+    Xs, feats, ys = zip(*results)
     return (
         np.array(Xs,    dtype=np.float32),
         np.array(feats, dtype=np.float32),

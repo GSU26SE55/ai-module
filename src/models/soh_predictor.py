@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -20,9 +22,12 @@ class MambaBlock(nn.Module):
         super().__init__()
         self.d_state = d_state
         self.d_inner = expand * d_model
+        # dt_rank: low-rank Δ projection — paper uses ceil(d_model/16), not 1
+        self.dt_rank = max(1, math.ceil(d_model / 16))
 
         self.norm = nn.LayerNorm(d_model)
-        self.in_proj = nn.Linear(d_model, self.d_inner * 2, bias=False)
+        # Gap 4 fix: paper uses bias=True for in_proj
+        self.in_proj = nn.Linear(d_model, self.d_inner * 2, bias=True)
 
         # Causal depthwise conv
         self.conv1d = nn.Conv1d(
@@ -31,9 +36,20 @@ class MambaBlock(nn.Module):
             padding=d_conv - 1, bias=True,
         )
 
-        # SSM projections: dt (rank=1), B, C
-        self.x_proj = nn.Linear(self.d_inner, d_state * 2 + 1, bias=False)
-        self.dt_proj = nn.Linear(1, self.d_inner, bias=True)
+        # SSM projections: dt (rank=dt_rank), B, C
+        # Gap 1 fix: dt_rank=4 (ceil(64/16)) instead of 1 — preserves selectivity
+        self.x_proj = nn.Linear(self.d_inner, d_state * 2 + self.dt_rank, bias=False)
+        self.dt_proj = nn.Linear(self.dt_rank, self.d_inner, bias=True)
+
+        # Gap 2 fix: init dt_proj bias so softplus(bias) ∈ [dt_min, dt_max] per paper
+        dt_init_std = self.dt_rank ** -0.5
+        nn.init.uniform_(self.dt_proj.weight, -dt_init_std, dt_init_std)
+        dt = torch.exp(
+            torch.rand(self.d_inner) * (math.log(0.1) - math.log(0.001)) + math.log(0.001)
+        ).clamp(min=1e-4)
+        with torch.no_grad():
+            # inv_softplus(dt) = dt + log(1 − exp(−dt)), numerically stable form
+            self.dt_proj.bias.copy_(dt + torch.log(-torch.expm1(-dt)))
 
         # A — log-initialized, learnable; shape (d_inner, d_state)
         A = torch.arange(1, d_state + 1, dtype=torch.float32)
@@ -82,7 +98,7 @@ class MambaBlock(nn.Module):
 
             x_dbl = self.x_proj(x)
             dt_raw, B_proj, C_proj = x_dbl.split(
-                [1, self.d_state, self.d_state], dim=-1
+                [self.dt_rank, self.d_state, self.d_state], dim=-1
             )
 
             dt = F.softplus(self.dt_proj(dt_raw))         # (B, L, d_inner) fp32

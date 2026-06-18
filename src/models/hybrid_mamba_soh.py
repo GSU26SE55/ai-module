@@ -74,7 +74,8 @@ class HybridMambaSOH(nn.Module):
         self.trend_proj = nn.Linear(input_features, d_model)
 
         # Physics stats fusion (paper's stats head idea, 54-dim here)
-        self.stats_norm = nn.BatchNorm1d(feat_dim)
+        # Gap 3 fix: LayerNorm instead of BatchNorm1d — BN crashes at batch_size=1 inference
+        self.stats_norm = nn.LayerNorm(feat_dim)
         self.stats_proj = nn.Linear(feat_dim, d_model)
 
         # Learnable mix + regression head
