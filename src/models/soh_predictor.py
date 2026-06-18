@@ -104,11 +104,11 @@ class MambaBlock(nn.Module):
             dt = F.softplus(self.dt_proj(dt_raw))         # (B, L, d_inner) fp32
             A  = -torch.exp(self.A_log.float())           # (d_inner, d_state)
 
-            if L <= 256:
-                # Sequential scan for short sequences (L=30 production use stays here,
-                # byte-identical). Threshold 256 (= CHUNK) so warmup L=512 takes the
-                # faster chunked path instead of a 512-step Python loop — same result
-                # (chunked == sequential, allclose), just faster.
+            if L <= 32:
+                # Sequential scan only for L=30 production inference window.
+                # Anything larger (including stage-1 L=256) uses the vectorized
+                # chunked path below — avoids a Python for-loop graph break that
+                # prevents torch.compile from fusing the scan into a single kernel.
                 dA  = torch.exp(dt.unsqueeze(-1) * A)
                 dBx = dt.unsqueeze(-1) * B_proj.unsqueeze(2) * x.unsqueeze(-1)
                 h = torch.zeros(B, d_inner, self.d_state, device=x.device, dtype=torch.float32)
