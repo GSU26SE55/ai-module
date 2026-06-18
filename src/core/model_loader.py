@@ -71,6 +71,11 @@ def load_models() -> None:
     soh_model = MambaSOHPredictor(input_features=input_features, feat_dim=feat_dim, d_model=d_model, d_state=d_state)
     soh_model.load_state_dict(checkpoint["model_state_dict"])
     soh_model.eval()
+    try:
+        # Fuses chunked scan + FiLM into single CUDA kernel — eliminates CPU-GPU ping-pong
+        soh_model = torch.compile(soh_model, mode="reduce-overhead")
+    except Exception:
+        pass  # CPU / older PyTorch — fall back to eager silently
 
     iso_model = joblib.load(ISO_FOREST_PATH)
 
@@ -114,5 +119,11 @@ def load_long_model(device: str | None = None) -> MambaSOHPredictor:
     ).to(long_device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
+    try:
+        # Fuses the 16-chunk scan loop into a single CUDA kernel: eliminates
+        # 16 CPU→GPU roundtrips per forward pass when L=4096.
+        model = torch.compile(model, mode="reduce-overhead")
+    except Exception:
+        pass
     long_soh_model = model
     return model

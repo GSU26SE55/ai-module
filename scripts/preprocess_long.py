@@ -38,7 +38,7 @@ from sklearn.preprocessing import StandardScaler
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from scripts.preprocess import TRAIN_IDS, VAL_IDS, load_cycles  # noqa: E402
+from scripts.preprocess import TEST_IDS, TRAIN_IDS, VAL_IDS, load_cycles  # noqa: E402
 from src.core.config import (  # noqa: E402
     LONG_FEATURE_SCALER_PATH,
     LONG_SEQ_LEN,
@@ -156,12 +156,29 @@ def main() -> None:
             f"Lower --seq-len or --stride."
         )
 
-    # --- Val/Test: B0018 timeline split 70/30 by timestep (no shuffle) ---
-    print("\nBuilding val/test long-windows (B0018, 70/30 split)...")
-    X_raw, soh_ts = battery_timeline(args.data_dir, VAL_IDS[0])
-    split = int(len(X_raw) * 0.7)
-    X_val,  X_feat_val,  y_val  = make_long_windows(X_raw[:split], soh_ts[:split], scaler, args.seq_len, args.stride)
-    X_test, X_feat_test, y_test = make_long_windows(X_raw[split:], soh_ts[split:], scaler, args.seq_len, args.stride)
+    # --- Val: each VAL_IDS battery as its own timeline ---
+    print(f"\nBuilding val long-windows ({VAL_IDS})...")
+    Xvl, Fvl, yvl = [], [], []
+    for bid in VAL_IDS:
+        X_raw, soh_ts = battery_timeline(args.data_dir, bid)
+        X, F, y = make_long_windows(X_raw, soh_ts, scaler, args.seq_len, args.stride)
+        print(f"  {bid}: timeline {len(X_raw)} steps -> {len(X)} windows")
+        Xvl.append(X); Fvl.append(F); yvl.append(y)
+    X_val      = np.concatenate(Xvl, axis=0) if any(len(a) for a in Xvl) else np.empty((0, args.seq_len, X_train.shape[-1]), dtype=np.float32)
+    X_feat_val = np.concatenate(Fvl, axis=0) if any(len(a) for a in Fvl) else np.empty((0, 54), dtype=np.float32)
+    y_val      = np.concatenate(yvl, axis=0) if any(len(a) for a in yvl) else np.empty((0,), dtype=np.float32)
+
+    # --- Test: TEST_IDS batteries (held out entirely) ---
+    print(f"\nBuilding test long-windows ({TEST_IDS})...")
+    Xts, Fts, yts = [], [], []
+    for bid in TEST_IDS:
+        X_raw, soh_ts = battery_timeline(args.data_dir, bid)
+        X, F, y = make_long_windows(X_raw, soh_ts, scaler, args.seq_len, args.stride)
+        print(f"  {bid}: timeline {len(X_raw)} steps -> {len(X)} windows")
+        Xts.append(X); Fts.append(F); yts.append(y)
+    X_test      = np.concatenate(Xts, axis=0) if any(len(a) for a in Xts) else np.empty((0, args.seq_len, X_train.shape[-1]), dtype=np.float32)
+    X_feat_test = np.concatenate(Fts, axis=0) if any(len(a) for a in Fts) else np.empty((0, 54), dtype=np.float32)
+    y_test      = np.concatenate(yts, axis=0) if any(len(a) for a in yts) else np.empty((0,), dtype=np.float32)
 
     # --- Refit feature_scaler on TRAIN long-window features only ---
     print("\nRefitting feature_scaler on long-window features (train only)...")

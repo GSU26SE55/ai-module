@@ -39,8 +39,20 @@ from src.features.extractor import extract_window_features
 
 SEED             = 42
 NOMINAL_CAPACITY = 2.0
-TRAIN_IDS        = ["B0005", "B0006", "B0007"]
-VAL_IDS          = ["B0018"]
+MIN_SOH          = 10.0   # filter failed/incomplete cycles (capacity ≈ 0 at extreme temps)
+
+# 15 train / 2 val / 1 test — all 18 usable batteries from NASA cleaned_dataset
+# B0025-B0032: 24°C / 43°C, 28-40 cycles, limited degradation but adds temperature diversity
+# B0042-B0044: 4/22/24°C, 65 good cycles after filter (SOH 62-86%), full degradation curve
+# B0046-B0048: 4/24°C, 69 good cycles after filter (SOH 56-86%), matches B0005-B0018 quality
+TRAIN_IDS = [
+    "B0005", "B0006", "B0007", "B0018",          # original group — 24°C, 132-168 cycles
+    "B0025", "B0026", "B0027", "B0028",           # 24°C, 28 cycles
+    "B0029", "B0030", "B0031", "B0032",           # 43°C (high-temp), 40 cycles
+    "B0042", "B0043", "B0044",                    # 4/22/24°C, full degradation curve
+]
+VAL_IDS  = ["B0046", "B0047"]                     # 4/24°C, 69 cycles each
+TEST_IDS = ["B0048"]                              # 4/24°C, 69 cycles — held out entirely
 
 random.seed(SEED)
 np.random.seed(SEED)
@@ -77,7 +89,7 @@ def load_cycles(data_dir: str, battery_id: str) -> list[tuple[np.ndarray, float]
         n     = min(len(df[col]) for col in RAW_FEATURES)
         cycle = np.stack([df[col].values[:n].astype(np.float32) for col in RAW_FEATURES], axis=1)
         soh   = float(row["Capacity"]) / NOMINAL_CAPACITY * 100
-        if n >= WINDOW_SIZE:
+        if n >= WINDOW_SIZE and soh >= MIN_SOH:
             cycles.append((cycle, soh))
 
     return cycles
@@ -138,12 +150,11 @@ def main() -> None:
     print("\nLoading train cycles...")
     train_cycles = collect_cycles(args.data_dir, TRAIN_IDS)
 
-    print("Loading val/test cycles (B0018)...")
-    b0018_cycles = collect_cycles(args.data_dir, VAL_IDS)
+    print("Loading val cycles...")
+    val_cycles  = collect_cycles(args.data_dir, VAL_IDS)
 
-    split       = int(len(b0018_cycles) * 0.7)
-    val_cycles  = b0018_cycles[:split]
-    test_cycles = b0018_cycles[split:]
+    print("Loading test cycles...")
+    test_cycles = collect_cycles(args.data_dir, TEST_IDS)
 
     # Fit MinMaxScaler on all train timesteps
     print("\nFitting MinMaxScaler...")
@@ -153,7 +164,7 @@ def main() -> None:
 
     os.makedirs(os.path.dirname("models/weights/scaler.pkl"), exist_ok=True)
     joblib.dump(
-        {"scaler": scaler, "version": "1.0", "trained_on": TRAIN_IDS, "features": FEATURES},
+        {"scaler": scaler, "version": "1.1", "trained_on": TRAIN_IDS, "features": FEATURES},
         "models/weights/scaler.pkl",
     )
     print("Saved scaler -> models/weights/scaler.pkl")
@@ -168,7 +179,7 @@ def main() -> None:
 
     os.makedirs(os.path.dirname(FEATURE_SCALER_PATH), exist_ok=True)
     joblib.dump(
-        {"scaler": feat_scaler, "version": "1.1", "n_features": X_feat_train.shape[1]},
+        {"scaler": feat_scaler, "version": "1.2", "n_features": X_feat_train.shape[1]},
         FEATURE_SCALER_PATH,
     )
     print(f"Saved feature_scaler -> {FEATURE_SCALER_PATH}")
@@ -177,9 +188,9 @@ def main() -> None:
     X_test, X_feat_test, y_test = cycles_to_windows(test_cycles, scaler, feat_scaler)
 
     print(f"\nSplit summary:")
-    print(f"  Train: {len(X_train_raw):>5} windows from {len(train_cycles)} cycles")
-    print(f"  Val  : {len(X_val):>5} windows from {len(val_cycles)} cycles")
-    print(f"  Test : {len(X_test):>5} windows from {len(test_cycles)} cycles")
+    print(f"  Train: {len(X_train_raw):>5} windows from {len(train_cycles)} cycles  ({len(TRAIN_IDS)} batteries)")
+    print(f"  Val  : {len(X_val):>5} windows from {len(val_cycles)} cycles  ({len(VAL_IDS)} batteries: {VAL_IDS})")
+    print(f"  Test : {len(X_test):>5} windows from {len(test_cycles)} cycles  ({len(TEST_IDS)} batteries: {TEST_IDS})")
 
     for name, X, X_feat, y in [
         ("train", X_train_raw,  X_feat_train, y_train),
@@ -192,7 +203,7 @@ def main() -> None:
                 "X":                     torch.tensor(X,      dtype=torch.float32),
                 "X_feat":                torch.tensor(X_feat, dtype=torch.float32),
                 "y":                     torch.tensor(y,      dtype=torch.float32),
-                "feature_scaler_version": "1.1",
+                "feature_scaler_version": "1.2",
             },
             path,
         )

@@ -1,8 +1,8 @@
 import os
 
-MODEL_VERSION = "1.1"
-SCALER_VERSION = "1.0"
-FEATURE_SCALER_VERSION = "1.1"
+MODEL_VERSION = "1.2"
+SCALER_VERSION = "1.1"
+FEATURE_SCALER_VERSION = "1.2"
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 WEIGHTS_DIR = os.path.join(BASE_DIR, "models", "weights")

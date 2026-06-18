@@ -288,6 +288,9 @@ def _train_epoch_accum(model, loader, optimizer, criterion, amp_scaler, amp_ctx,
     n_batches = len(loader)
     optimizer.zero_grad(set_to_none=True)
     for i, (X_b, X_feat_b, y_b) in enumerate(loader):
+        # Signal CUDA Graphs that a new step begins — prevents tensor overwrite errors
+        # when reduce-overhead mode replays the same graph across accum_steps iterations.
+        torch.compiler.cudagraph_mark_step_begin()
         with amp_ctx():
             pred = model(X_b.to(device), X_feat_b.to(device))
             loss = criterion(pred, (y_b / 100.0).to(device))
