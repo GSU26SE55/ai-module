@@ -1,3 +1,4 @@
+import numpy as np
 import pytest
 import torch
 
@@ -95,3 +96,51 @@ class TestProcessedFeatureVersion:
         )
         with pytest.raises(ValueError, match="feature version mismatch"):
             load_split(str(path))
+
+
+class _IdentityScaler:
+    """Stub MinMaxScaler — transform is identity (raw scaling tested elsewhere)."""
+
+    def transform(self, x):
+        return np.asarray(x, dtype=np.float32)
+
+
+class TestLongWindows:
+    """GH-10: concatenated long-sequence windowing (scripts/preprocess_long.py)."""
+
+    def test_window_count_and_shape(self):
+        from scripts.preprocess_long import make_long_windows
+
+        T, seq_len, stride = 40, 8, 4
+        X_raw  = np.random.RandomState(42).rand(T, 6).astype(np.float32)
+        soh_ts = np.arange(T, dtype=np.float32)  # distinct per timestep
+
+        X, F, y = make_long_windows(X_raw, soh_ts, _IdentityScaler(), seq_len, stride)
+
+        expected_n = (T - seq_len) // stride + 1
+        assert X.shape == (expected_n, seq_len, 6)
+        assert F.shape == (expected_n, 54)
+        assert y.shape == (expected_n,)
+
+    def test_label_is_last_timestep_soh(self):
+        from scripts.preprocess_long import make_long_windows
+
+        T, seq_len, stride = 40, 8, 4
+        X_raw  = np.random.RandomState(0).rand(T, 6).astype(np.float32)
+        soh_ts = np.arange(T, dtype=np.float32)
+
+        _, _, y = make_long_windows(X_raw, soh_ts, _IdentityScaler(), seq_len, stride)
+
+        # First window ends at index seq_len-1; each subsequent shifts by stride.
+        expected = [float(seq_len - 1 + i * stride) for i in range(len(y))]
+        assert y.tolist() == expected
+
+    def test_short_timeline_returns_empty(self):
+        from scripts.preprocess_long import make_long_windows
+
+        X_raw  = np.random.RandomState(1).rand(5, 6).astype(np.float32)
+        soh_ts = np.zeros(5, dtype=np.float32)
+
+        X, F, y = make_long_windows(X_raw, soh_ts, _IdentityScaler(), seq_len=8, stride=4)
+        assert len(X) == 0 and len(F) == 0 and len(y) == 0
+        assert X.shape == (0, 8, 6)

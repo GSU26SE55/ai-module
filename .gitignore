@@ -10,6 +10,7 @@ logs/**/*.log
 # Dataset — raw và processed không commit (kích thước lớn)
 data/raw/
 data/processed/
+data/processed_long/
 *.mat
 
 # Python cache
