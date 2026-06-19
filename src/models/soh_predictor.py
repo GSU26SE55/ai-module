@@ -222,6 +222,66 @@ class OfficialMambaBlock(nn.Module):
         return x + self.mamba(self.norm(x))
 
 
+class PatchDegradationEncoder(nn.Module):
+    """Per-patch degradation-sensitive feature injection for long sequences (L=4096).
+
+    The global 54-dim feature vector (computed over the full 4096-step window) averages
+    degradation dynamics across 100+ discharge cycles. This module computes four
+    degradation-sensitive statistics — RMS, peak-to-peak, std, and excess kurtosis —
+    per patch per channel, then projects to d_model and adds to each patch token
+    embedding before the Mamba backbone.
+
+    Replaces global-only conditioning with per-token local temporal context so the
+    model sees HOW battery signals change within the long window, not just their
+    global averages. Supported by: DualMamba (Frontiers CS 2026), JEC localized
+    features (2025), BatteryML kurtosis evidence (arXiv 2310.14714).
+
+    Input:  x  (B, L, C) — raw MinMaxScaled input (all C channels)
+    Output: (B, num_patches, d_model) — added to patch token embeddings before Mamba
+    """
+
+    def __init__(
+        self,
+        patch_size: int,
+        patch_stride: int,
+        input_features: int,
+        d_model: int,
+    ):
+        super().__init__()
+        self.patch_size = patch_size
+        self.patch_stride = patch_stride
+        stat_dim = 4 * input_features   # RMS, P2P, std, kurtosis × C channels
+        self.proj = nn.Sequential(
+            nn.Linear(stat_dim, d_model),
+            nn.LayerNorm(d_model),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # x: (B, L, C)
+        P = self.patch_size
+        S = self.patch_stride
+        # Unfold L into patches: (B, nW, C, P) → permute → (B, nW, P, C)
+        xp = x.unfold(1, P, S).permute(0, 1, 3, 2)  # (B, nW, P, C)
+
+        # RMS = sqrt(E[x²]) per patch per channel
+        rms = xp.pow(2).mean(dim=2).sqrt()                       # (B, nW, C)
+
+        # Peak-to-peak per patch per channel
+        ptp = xp.amax(dim=2) - xp.amin(dim=2)                   # (B, nW, C)
+
+        # Population std per patch per channel
+        std = xp.std(dim=2, correction=0).clamp(min=1e-8)        # (B, nW, C)
+
+        # Excess kurtosis (impulse indicator) — high near faults / end-of-life
+        mu   = xp.mean(dim=2, keepdim=True)                      # (B, nW, 1, C)
+        z    = (xp - mu) / std.unsqueeze(2)                      # (B, nW, P, C)
+        kurt = z.pow(4).mean(dim=2) - 3.0                        # (B, nW, C)
+        kurt = kurt.clamp(-10.0, 50.0)                           # stability: clamp outlier patches
+
+        stats = torch.cat([rms, ptp, std, kurt], dim=-1)         # (B, nW, 4*C)
+        return self.proj(stats)                                   # (B, nW, d_model)
+
+
 class MambaSOHPredictor(nn.Module):
     """
     Input:  x      (batch, L, input_features) — L=30 (window=30 production) or L=4096 (long-seq)
@@ -232,16 +292,17 @@ class MambaSOHPredictor(nn.Module):
       patch_size=1  (L=30 default, no patching):
         x → Linear(C→d_model) → MambaBlock×2 → LayerNorm → last token h
       patch_size=16 (L=4096 long-seq, P16S16):
-        x → Conv1d(C, d_model, k=16, s=16) → MambaBlock×2 → LayerNorm → attn-pool h
-        L=4096 compresses to 256 tokens (16×) — ~5-6× less VRAM + training time.
-        Each 16-step patch captures a local sub-cycle pattern; Mamba models
-        long-range degradation across 256 patch tokens.
+        x → Conv1d(C, d_model, k=16, s=16) → PatchDegradationEncoder → MambaBlock×2
+            → LayerNorm → attn-pool h
+        L=4096 compresses to 256 tokens (16×). PatchDegradationEncoder injects local
+        RMS/P2P/std/kurtosis per 16-step patch, overcoming the global-feature averaging
+        bottleneck that limited the v1.x MAE ceiling.
 
-      h → FiLM(x_feat) → Linear(d_model→32) → GELU+Dropout → Linear(32→1)
+      h → FiLM(x_feat, 2-layer MLP) → Linear(d_model→32) → GELU+Dropout → Linear(32→1)
 
-    Patch size 16 follows "MambaDecomp_P16_S8" (Nie et al. PatchTST, NeurIPS 2023)
-    adapted for SSM: non-overlapping stride=patch_size is fastest and matches accuracy.
-    Pure PyTorch, no CUDA kernel — Windows-compatible.
+    Patch size 16 follows PatchTST/MambaDecomp (Nie et al. NeurIPS 2023).
+    PatchDegradationEncoder inspired by DualMamba (2026) and localized feature
+    selection (JEC 2025). Pure PyTorch, no CUDA kernel — Windows-compatible.
     """
 
     def __init__(
@@ -286,6 +347,14 @@ class MambaSOHPredictor(nn.Module):
                 kernel_size=self.patch_size, stride=self.patch_stride, bias=True,
             )
             self.patch_norm = nn.LayerNorm(d_model)
+            # Per-patch degradation encoder: injects local RMS/P2P/std/kurtosis into
+            # each patch token, overcoming the global-feature averaging bottleneck.
+            self.patch_deg_enc = PatchDegradationEncoder(
+                patch_size=self.patch_size,
+                patch_stride=self.patch_stride,
+                input_features=input_features,
+                d_model=d_model,
+            )
         else:
             self.input_proj = nn.Linear(input_features, d_model)
         _Block = OfficialMambaBlock if use_official_mamba else MambaBlock
@@ -298,8 +367,22 @@ class MambaSOHPredictor(nn.Module):
         # "last" stays default so window=30 inference is byte-for-byte unchanged.
         if pooling == "attention":
             self.attn_score = nn.Linear(d_model, 1)
-        # FiLM: project cycle features → gamma + beta for hidden state modulation
-        self.film_proj = nn.Linear(feat_dim, d_model * 2)
+            # Discharge-weighted bias: patches that span the discharge phase
+            # (phase channel ≈ 2) contain the strongest SOH signal. A learnable
+            # scalar bias (init=2.0) is added to the raw attention logits for
+            # these patches before softmax, steering the model toward
+            # end-of-discharge context without hard masking.
+            # Active only when patch_size>1 AND input has a phase channel (idx=-1).
+            if patch_size > 1:
+                self.discharge_bias = nn.Parameter(torch.tensor(2.0))
+        # FiLM: 2-layer MLP projects cycle features → gamma + beta for hidden state
+        # modulation. Deeper MLP improves nonlinear feature conditioning vs single
+        # Linear, especially when feat_dim (54) and d_model (64) are close in size.
+        self.film_proj = nn.Sequential(
+            nn.Linear(feat_dim, feat_dim),
+            nn.SiLU(),
+            nn.Linear(feat_dim, d_model * 2),
+        )
         # Head: same size as v1.0
         self.fc1 = nn.Linear(d_model, 32)
         self.fc2 = nn.Linear(32, 1)
@@ -311,13 +394,27 @@ class MambaSOHPredictor(nn.Module):
             # Conv1d patch embedding: (B, L, C) → (B, num_patches, d_model)
             h = self.patch_embed(x.transpose(1, 2)).transpose(1, 2)
             h = self.patch_norm(h)
+            # Inject per-patch local degradation stats (RMS/P2P/std/kurtosis per channel)
+            # into each token before the Mamba backbone. This gives the SSM local-context
+            # signals that global FiLM conditioning (over L=4096) cannot provide.
+            h = h + self.patch_deg_enc(x)             # (batch, num_patches, d_model)
         else:
             h = self.input_proj(x)                    # (batch, L, d_model)
         for layer in self.mamba_layers:
             h = layer(h)
         h = self.norm(h)
         if self.pooling == "attention":
-            w = torch.softmax(self.attn_score(h), dim=1)  # (batch, T, 1) over tokens
+            scores = self.attn_score(h)                    # (batch, T, 1)
+            if self.patch_size > 1 and hasattr(self, "discharge_bias"):
+                # Phase channel is the last input channel (index -1).
+                # Values: 0=rest, 1=charge, 2=discharge.
+                # Mean phase per patch → discharge indicator in [0, 1].
+                phase = x[..., -1]                         # (batch, L)
+                phase_per_patch = phase.unfold(1, self.patch_size, self.patch_stride).mean(dim=-1)
+                # Normalise to [0,1]: discharge (2) → 1, rest (0) → 0
+                discharge_ind = (phase_per_patch / 2.0).clamp(0.0, 1.0).unsqueeze(-1)
+                scores = scores + self.discharge_bias * discharge_ind
+            w = torch.softmax(scores, dim=1)               # (batch, T, 1)
             h = (w * h).sum(dim=1)                         # (batch, d_model)
         else:  # "last"
             h = h[:, -1, :]                               # (batch, d_model)

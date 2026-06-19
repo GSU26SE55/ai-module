@@ -31,11 +31,18 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.core.config import (
     FEATURE_SCALER_PATH,
     FEATURES,
+    LONG_FEATURE_SCALER_PATH,
+    LONG_INPUT_FEATURES,
+    LONG_SCALER_PATH,
     RAW_FEATURES,
     WINDOW_SIZE,
     WINDOW_STRIDE,
 )
-from src.features.extractor import extract_window_features
+from src.features.extractor import (
+    compute_ic_feature,
+    compute_phase_mask,
+    extract_window_features,
+)
 
 SEED             = 42
 NOMINAL_CAPACITY = 2.0
@@ -108,16 +115,29 @@ def cycles_to_windows(
     cycles: list[tuple[np.ndarray, float]],
     scaler: MinMaxScaler,
     feat_scaler: StandardScaler | None = None,
+    long_seq: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Scale cycles, compute cycle-level features on full cycle, then slice windows.
     All WINDOW_SIZE-step windows of a cycle share the same feature vector.
+
+    long_seq=True: extends each cycle to LONG_INPUT_FEATURES (8) by appending
+    IC curve (dQ/dV) and phase mask columns before scaling. The supplied scaler
+    must have been fit on 8-feature data (scaler_long.pkl).
     """
     all_X, all_feat, all_y = [], [], []
 
     for cycle_raw, soh in cycles:
         T = len(cycle_raw)
-        cycle_scaled = scaler.transform(cycle_raw).astype(np.float32)
+
+        if long_seq:
+            # Extend raw cycle: append IC curve + phase mask before scaling
+            ic    = compute_ic_feature(cycle_raw[:, 0], cycle_raw[:, 1])  # (T,)
+            phase = compute_phase_mask(cycle_raw[:, 1])                    # (T,)
+            cycle_ext    = np.column_stack([cycle_raw, ic, phase])         # (T, 8)
+            cycle_scaled = scaler.transform(cycle_ext).astype(np.float32)
+        else:
+            cycle_scaled = scaler.transform(cycle_raw).astype(np.float32)
 
         # Cycle-level features: FFT on full cycle (voltage, current, temperature only)
         cycle_feat = extract_window_features(cycle_scaled[:, :3])  # (54,)
@@ -156,36 +176,64 @@ def main() -> None:
     print("Loading test cycles...")
     test_cycles = collect_cycles(args.data_dir, TEST_IDS)
 
-    # Fit MinMaxScaler on all train timesteps
-    print("\nFitting MinMaxScaler...")
-    train_raw = np.concatenate([c for c, _ in train_cycles], axis=0)
-    scaler    = MinMaxScaler()
-    scaler.fit(train_raw)
-
+    long_seq = WINDOW_SIZE > 30
     os.makedirs(os.path.dirname("models/weights/scaler.pkl"), exist_ok=True)
-    joblib.dump(
-        {"scaler": scaler, "version": "1.1", "trained_on": TRAIN_IDS, "features": FEATURES},
-        "models/weights/scaler.pkl",
-    )
-    print("Saved scaler -> models/weights/scaler.pkl")
+
+    if long_seq:
+        # Long-seq mode (WINDOW_SIZE=4096): add IC curve + phase mask → 8 features.
+        # Fit a separate MinMaxScaler on 8-feature train data → scaler_long.pkl.
+        # The 6-feature scaler.pkl (for the production window=30 model) is unchanged.
+        print(f"\nLong-seq mode (WINDOW_SIZE={WINDOW_SIZE}): adding IC curve + phase mask (features 7-8)...")
+        train_raw_ext = []
+        for cycle_raw, _ in train_cycles:
+            ic    = compute_ic_feature(cycle_raw[:, 0], cycle_raw[:, 1])
+            phase = compute_phase_mask(cycle_raw[:, 1])
+            train_raw_ext.append(np.column_stack([cycle_raw, ic, phase]))
+        train_raw_ext = np.concatenate(train_raw_ext, axis=0)
+
+        scaler = MinMaxScaler()
+        scaler.fit(train_raw_ext)
+        joblib.dump(
+            {
+                "scaler":      scaler,
+                "version":     "1.0",
+                "trained_on":  TRAIN_IDS,
+                "features":    FEATURES + ["ic_dqdv", "phase_mask"],
+                "n_features":  LONG_INPUT_FEATURES,
+            },
+            LONG_SCALER_PATH,
+        )
+        print(f"Saved scaler_long ({LONG_INPUT_FEATURES} features) -> {LONG_SCALER_PATH}")
+    else:
+        # Standard window=30 mode: 6-feature MinMaxScaler
+        print("\nFitting MinMaxScaler...")
+        train_raw = np.concatenate([c for c, _ in train_cycles], axis=0)
+        scaler    = MinMaxScaler()
+        scaler.fit(train_raw)
+        joblib.dump(
+            {"scaler": scaler, "version": "1.1", "trained_on": TRAIN_IDS, "features": FEATURES},
+            "models/weights/scaler.pkl",
+        )
+        print("Saved scaler -> models/weights/scaler.pkl")
 
     # Extract cycle-level features for train
     print("\nExtracting cycle-level Spectral+Kurtosis features...")
-    X_train_raw, X_feat_train_raw, y_train = cycles_to_windows(train_cycles, scaler)
+    X_train_raw, X_feat_train_raw, y_train = cycles_to_windows(train_cycles, scaler, long_seq=long_seq)
     print(f"  Train: {len(X_train_raw)} windows, feat shape: {X_feat_train_raw.shape}")
 
     feat_scaler  = StandardScaler()
     X_feat_train = feat_scaler.fit_transform(X_feat_train_raw).astype(np.float32)
 
-    os.makedirs(os.path.dirname(FEATURE_SCALER_PATH), exist_ok=True)
+    feat_scaler_out = LONG_FEATURE_SCALER_PATH if long_seq else FEATURE_SCALER_PATH
+    os.makedirs(os.path.dirname(feat_scaler_out), exist_ok=True)
     joblib.dump(
         {"scaler": feat_scaler, "version": "1.2", "n_features": X_feat_train.shape[1]},
-        FEATURE_SCALER_PATH,
+        feat_scaler_out,
     )
-    print(f"Saved feature_scaler -> {FEATURE_SCALER_PATH}")
+    print(f"Saved feature_scaler -> {feat_scaler_out}")
 
-    X_val,  X_feat_val,  y_val  = cycles_to_windows(val_cycles,  scaler, feat_scaler)
-    X_test, X_feat_test, y_test = cycles_to_windows(test_cycles, scaler, feat_scaler)
+    X_val,  X_feat_val,  y_val  = cycles_to_windows(val_cycles,  scaler, feat_scaler, long_seq=long_seq)
+    X_test, X_feat_test, y_test = cycles_to_windows(test_cycles, scaler, feat_scaler, long_seq=long_seq)
 
     print(f"\nSplit summary:")
     print(f"  Train: {len(X_train_raw):>5} windows from {len(train_cycles)} cycles  ({len(TRAIN_IDS)} batteries)")

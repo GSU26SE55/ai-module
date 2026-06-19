@@ -10,6 +10,9 @@ from src.core.config import (
     LONG_FEATURE_SCALER_PATH,
     LONG_MAMBA_PATH,
     LONG_MODEL_VERSION,
+    LONG_PATCH_SIZE,
+    LONG_PATCH_STRIDE,
+    LONG_SCALER_PATH,
     MAMBA_PATH,
     MODEL_VERSION,
     SCALER_PATH,
@@ -24,9 +27,10 @@ soh_model = None
 iso_model = None
 
 # Long-sequence (GH-10) — loaded lazily on first long inference, not at startup
+long_scaler         = None   # 8-feature MinMaxScaler (scaler_long.pkl)
 long_feature_scaler = None
-long_soh_model = None
-long_device = None
+long_soh_model      = None
+long_device         = None
 
 
 def load_models() -> None:
@@ -83,25 +87,24 @@ def load_models() -> None:
 def load_long_model(device: str | None = None) -> MambaSOHPredictor:
     """Load the long-sequence model (GH-10) and its artifacts onto the best device.
 
-    Reuses the shared MinMaxScaler but the dedicated long feature_scaler (features
-    are computed on full L=4096 windows, a different distribution than window=30).
+    Uses a dedicated 8-feature MinMaxScaler (scaler_long.pkl) — the long model
+    expects IC curve + phase mask as extra channels (features 7-8).
     Picks CUDA when available so the L=4096 scan can meet the <100ms SLA.
     """
-    global scaler, long_feature_scaler, long_soh_model, long_device
+    global long_scaler, long_feature_scaler, long_soh_model, long_device
 
     for path, label in [
-        (SCALER_PATH,              "MinMaxScaler"),
+        (LONG_SCALER_PATH,         "Long MinMaxScaler (8-feature)"),
         (LONG_FEATURE_SCALER_PATH, "Long feature scaler"),
         (LONG_MAMBA_PATH,          "Long Mamba model"),
     ]:
         if not os.path.exists(path):
             raise RuntimeError(
                 f"[STARTUP] {label} artifact not found at '{path}'. "
-                "Run scripts/preprocess_long.py + scripts/train.py --long and commit models/weights/ first."
+                "Run preprocess.py with WINDOW_SIZE=4096 + train.py --long and commit models/weights/ first."
             )
 
-    if scaler is None:
-        scaler = joblib.load(SCALER_PATH)["scaler"]
+    long_scaler         = joblib.load(LONG_SCALER_PATH)["scaler"]
     long_feature_scaler = joblib.load(LONG_FEATURE_SCALER_PATH)["scaler"]
 
     long_device = torch.device(device) if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -111,11 +114,13 @@ def load_long_model(device: str | None = None) -> MambaSOHPredictor:
             f"Long model version mismatch: expected {LONG_MODEL_VERSION}, got {checkpoint['version']}"
         )
     model = MambaSOHPredictor(
-        input_features=checkpoint.get("input_features", 6),
+        input_features=checkpoint.get("input_features", 8),
         feat_dim=checkpoint.get("feat_dim", SPECTRAL_FEAT_DIM),
         d_model=checkpoint.get("d_model", 64),
         d_state=checkpoint.get("d_state", 16),
         pooling=checkpoint.get("pooling", "attention"),
+        patch_size=checkpoint.get("patch_size", LONG_PATCH_SIZE),
+        patch_stride=checkpoint.get("patch_stride", LONG_PATCH_STRIDE),
     ).to(long_device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
