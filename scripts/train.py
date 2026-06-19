@@ -353,17 +353,19 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
     loader_gen.manual_seed(SEED)
     torch.manual_seed(SEED)
     num_tokens = (seq_len - patch_size) // patch_stride + 1 if patch_size > 1 else seq_len
-    logger.info(
-        f"Patch: size={patch_size} stride={patch_stride} → {num_tokens} tokens "
-        f"(from {seq_len} raw timesteps, {seq_len // patch_size if patch_size > 1 else 1}× compression)"
-        if patch_size > 1 else f"Patch: disabled (patch_size=1, {seq_len} tokens)"
-    )
-    # Long-seq model uses 8 input features (6 base + IC curve + phase mask).
+    if patch_size > 1:
+        logger.info(
+            f"Patch: size={patch_size} stride={patch_stride} → {num_tokens} tokens "
+            f"(from {seq_len} raw timesteps, {patch_size}× compression)"
+        )
+    else:
+        logger.info(f"Patch: disabled (patch_size=1, {seq_len} tokens)")
+    # Long-seq model uses 8 input features (6 base + IC curve + discharge_progress).
     # Verify preprocessed data matches before wasting training time.
     if X_train.shape[-1] != LONG_INPUT_FEATURES:
         raise ValueError(
             f"Long-seq data has {X_train.shape[-1]} features but LONG_INPUT_FEATURES="
-            f"{LONG_INPUT_FEATURES}. Re-run preprocess.py with WINDOW_SIZE>30 first."
+            f"{LONG_INPUT_FEATURES}. Re-run scripts/preprocess_long.py to rebuild 8-feature data."
         )
     model = MambaSOHPredictor(
         input_features=LONG_INPUT_FEATURES, feat_dim=SPECTRAL_FEAT_DIM,
