@@ -23,7 +23,9 @@ D_STATE = 16
 # Window=30 (above) stays the production/inference default; the long-seq pipeline is
 # a separate artifact for the L=4096 experiment, not a replacement.
 LONG_SEQ_LEN    = 4096
-LONG_SEQ_STRIDE = 128                       # slide stride over the concatenated timeline (smaller = more windows)
+LONG_SEQ_STRIDE = 64                        # slide stride over the concatenated timeline (halved 128→64 doubles windows ~2206→4400)
+LONG_PATCH_SIZE   = 16                      # compresses L=4096 → 256 tokens (16× reduction, ~5-6× VRAM/speed)
+LONG_PATCH_STRIDE = 16                      # non-overlapping (fastest); use 8 for P16S8 as in PatchTST/MambaDecomp
 WARMUP_STAGES   = [256, 512, 1024, 2048, 4096]  # progressive length warmup (GH-10 P1)
 LONG_MODEL_VERSION       = "1.0"
 LONG_MAMBA_PATH          = os.path.join(WEIGHTS_DIR, f"soh_mamba_long_v{LONG_MODEL_VERSION}.pth")

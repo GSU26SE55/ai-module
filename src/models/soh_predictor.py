@@ -78,6 +78,10 @@ class MambaBlock(nn.Module):
         y = y * F.silu(z)
         return self.out_proj(y) + residual
 
+    @torch.compiler.disable  # autocast(enabled=False) inside creates a global-state guard that triggers
+                             # recompilation every time the outer autocast state changes (train vs eval).
+                             # The chunked scan loop also has dynamic bounds → can't be unrolled/fused.
+                             # Surrounding layers (in_proj, out_proj, FiLM) still get compiled normally.
     def _selective_scan(self, x: torch.Tensor) -> torch.Tensor:
         # x: (B, L, d_inner)
         #
@@ -220,17 +224,23 @@ class OfficialMambaBlock(nn.Module):
 
 class MambaSOHPredictor(nn.Module):
     """
-    Input:  x      (batch, 30, input_features) — 30 timestep sensor window
-            x_feat (batch, feat_dim)            — cycle-level spectral+kurtosis features
+    Input:  x      (batch, L, input_features) — L=30 (window=30 production) or L=4096 (long-seq)
+            x_feat (batch, feat_dim)           — cycle-level spectral+kurtosis features
     Output: (batch,) — SOH% in range [0, 100]
 
-    Architecture (FiLM conditioning):
-      x      → Linear → MambaBlock×2 → LayerNorm → last token h (d_model,)
-      x_feat → film_proj → gamma (d_model,) + beta (d_model,)
-      h_modulated = sigmoid(gamma+1) * h + beta        ← FiLM
-      h_modulated → Linear(d_model→32) → GELU → Dropout → Linear(32→1)
+    Architecture:
+      patch_size=1  (L=30 default, no patching):
+        x → Linear(C→d_model) → MambaBlock×2 → LayerNorm → last token h
+      patch_size=16 (L=4096 long-seq, P16S16):
+        x → Conv1d(C, d_model, k=16, s=16) → MambaBlock×2 → LayerNorm → attn-pool h
+        L=4096 compresses to 256 tokens (16×) — ~5-6× less VRAM + training time.
+        Each 16-step patch captures a local sub-cycle pattern; Mamba models
+        long-range degradation across 256 patch tokens.
 
-    Head size identical to v1.0 (no concatenation overhead).
+      h → FiLM(x_feat) → Linear(d_model→32) → GELU+Dropout → Linear(32→1)
+
+    Patch size 16 follows "MambaDecomp_P16_S8" (Nie et al. PatchTST, NeurIPS 2023)
+    adapted for SSM: non-overlapping stride=patch_size is fastest and matches accuracy.
     Pure PyTorch, no CUDA kernel — Windows-compatible.
     """
 
@@ -244,6 +254,8 @@ class MambaSOHPredictor(nn.Module):
         feat_dim: int = 54,
         pooling: str = "last",
         use_official_mamba: bool = False,
+        patch_size: int = 1,    # 1 = no patching (L=30 default); 16 for L=4096
+        patch_stride: int = 1,  # = patch_size for non-overlapping (fastest)
     ):
         super().__init__()
         if pooling not in ("last", "attention"):
@@ -251,6 +263,8 @@ class MambaSOHPredictor(nn.Module):
         self.input_features = input_features
         self.feat_dim = feat_dim
         self.pooling = pooling
+        self.patch_size   = patch_size
+        self.patch_stride = patch_stride if patch_stride > 0 else patch_size
         # Default: pure-PyTorch MambaBlock (Windows-native). Opt-in: official CUDA
         # mamba_ssm (Kaggle/Colab GPU only) — same math, faster, no accuracy change.
         # Graceful fallback: if official requested but mamba_ssm/CUDA unavailable,
@@ -264,15 +278,23 @@ class MambaSOHPredictor(nn.Module):
                               "-> falling back to pure-PyTorch MambaBlock.")
                 use_official_mamba = False
         self.use_official_mamba = use_official_mamba
-        self.input_proj = nn.Linear(input_features, d_model)
+        if patch_size > 1:
+            # Conv1d patch extractor + projector: (B,C,L) → (B,d_model,num_patches)
+            # Replaces input_proj; no padding so num_patches = (L - patch_size) // patch_stride + 1
+            self.patch_embed = nn.Conv1d(
+                input_features, d_model,
+                kernel_size=self.patch_size, stride=self.patch_stride, bias=True,
+            )
+            self.patch_norm = nn.LayerNorm(d_model)
+        else:
+            self.input_proj = nn.Linear(input_features, d_model)
         _Block = OfficialMambaBlock if use_official_mamba else MambaBlock
         self.mamba_layers = nn.ModuleList(
             [_Block(d_model=d_model, d_state=d_state) for _ in range(n_layers)]
         )
         self.norm = nn.LayerNorm(d_model)
         self.dropout = nn.Dropout(dropout)
-        # Attention pooling (long-seq, GH-10): score each timestep → softmax → weighted sum.
-        # Lets the model aggregate the full L=4096 history instead of only the last token.
+        # Attention pooling (long-seq): score each token → softmax → weighted sum.
         # "last" stays default so window=30 inference is byte-for-byte unchanged.
         if pooling == "attention":
             self.attn_score = nn.Linear(d_model, 1)
@@ -283,16 +305,21 @@ class MambaSOHPredictor(nn.Module):
         self.fc2 = nn.Linear(32, 1)
 
     def forward(self, x: torch.Tensor, x_feat: torch.Tensor) -> torch.Tensor:
-        # x:      (batch, L, input_features)  — L=30 (window) or up to 4096 (long-seq)
+        # x:      (batch, L, input_features)  — L=30 (no-patch) or L=4096 (patch)
         # x_feat: (batch, feat_dim)
-        h = self.input_proj(x)                        # (batch, L, d_model)
+        if self.patch_size > 1:
+            # Conv1d patch embedding: (B, L, C) → (B, num_patches, d_model)
+            h = self.patch_embed(x.transpose(1, 2)).transpose(1, 2)
+            h = self.patch_norm(h)
+        else:
+            h = self.input_proj(x)                    # (batch, L, d_model)
         for layer in self.mamba_layers:
-            h = layer(h)  # chunked scan inside _selective_scan handles peak memory
+            h = layer(h)
         h = self.norm(h)
         if self.pooling == "attention":
-            w = torch.softmax(self.attn_score(h), dim=1)  # (batch, L, 1) over time
+            w = torch.softmax(self.attn_score(h), dim=1)  # (batch, T, 1) over tokens
             h = (w * h).sum(dim=1)                         # (batch, d_model)
-        else:  # "last" — most-recent token = current state
+        else:  # "last"
             h = h[:, -1, :]                               # (batch, d_model)
 
         # FiLM conditioning — modulate Mamba output with cycle-level features

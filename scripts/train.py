@@ -30,7 +30,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.core.config import D_MODEL, D_STATE, EOL_SOH, INPUT_FEATURES, ISO_FOREST_PATH, LONG_MAMBA_PATH, LONG_MODEL_VERSION, MAMBA_PATH, MODEL_VERSION, RUL_FEAT_DIM, RUL_LOOKBACK, RUL_MAMBA_PATH, RUL_MODEL_VERSION, RUL_SCALE, SPECTRAL_FEAT_DIM, WARMUP_STAGES, WINDOW_SIZE  # noqa: E402
+from src.core.config import D_MODEL, D_STATE, EOL_SOH, INPUT_FEATURES, ISO_FOREST_PATH, LONG_MAMBA_PATH, LONG_MODEL_VERSION, LONG_PATCH_SIZE, LONG_PATCH_STRIDE, MAMBA_PATH, MODEL_VERSION, RUL_FEAT_DIM, RUL_LOOKBACK, RUL_MAMBA_PATH, RUL_MODEL_VERSION, RUL_SCALE, SPECTRAL_FEAT_DIM, WARMUP_STAGES, WINDOW_SIZE  # noqa: E402
 from src.models.rul_predictor import RULPredictor  # noqa: E402
 from src.models.soh_predictor import MambaSOHPredictor  # noqa: E402
 
@@ -306,10 +306,11 @@ def _train_epoch_accum(model, loader, optimizer, criterion, amp_scaler, amp_ctx,
 
 
 def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: int = 8,
-               stage_epochs: int = 3, final_epochs: int = 50, stages: list[int] | None = None,
+               stage_epochs: int = 5, final_epochs: int = 50, stages: list[int] | None = None,
                num_workers: int = 2, eval_batch: int = 16,
                compile_model: bool = False, benchmark: bool = False,
-               official_mamba: bool = False) -> None:
+               official_mamba: bool = False,
+               patch_size: int = LONG_PATCH_SIZE, patch_stride: int = LONG_PATCH_STRIDE) -> None:
     """Train the long-sequence model (L up to 4096) with progressive length warmup.
 
     Each stage truncates sequences to a shorter length (cheap epochs), carrying
@@ -333,10 +334,17 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
     loader_gen = torch.Generator()
     loader_gen.manual_seed(SEED)
     torch.manual_seed(SEED)
+    num_tokens = (seq_len - patch_size) // patch_stride + 1 if patch_size > 1 else seq_len
+    logger.info(
+        f"Patch: size={patch_size} stride={patch_stride} → {num_tokens} tokens "
+        f"(from {seq_len} raw timesteps, {seq_len // patch_size if patch_size > 1 else 1}× compression)"
+        if patch_size > 1 else f"Patch: disabled (patch_size=1, {seq_len} tokens)"
+    )
     model = MambaSOHPredictor(
         input_features=INPUT_FEATURES, feat_dim=SPECTRAL_FEAT_DIM,
         d_model=D_MODEL, d_state=D_STATE, pooling="attention",
         use_official_mamba=official_mamba,
+        patch_size=patch_size, patch_stride=patch_stride,
     ).to(device)
     if compile_model:
         try:
@@ -366,6 +374,20 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
     patience_counter = 0
     for si, stage_len in enumerate(stages):
         is_final = (si == len(stages) - 1)
+        if is_final:
+            # Warmup-stage transitions cause val_loss spikes (model adjusting to
+            # longer L) that increment ReduceLROnPlateau's bad-epoch counter and
+            # reduce LR before the final stage starts. Reset to the initial LR +
+            # fresh scheduler so the full-length stage gets its own LR schedule.
+            # Adam momentum is preserved (warm from warmup) — only LR resets.
+            for pg in optimizer.param_groups:
+                pg["lr"] = LR
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer, mode="min", factor=0.5, patience=5, min_lr=1e-6
+            )
+            patience_counter = 0
+            best_val_loss = float("inf")
+            logger.info(f"Final stage: reset LR={LR}, fresh ReduceLROnPlateau (Adam momentum preserved)")
         Xtr_s  = truncate_seq(X_train, stage_len)
         Xval_s = truncate_seq(X_val,   stage_len)
         loader = DataLoader(
@@ -419,6 +441,8 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
             "feat_dim":         SPECTRAL_FEAT_DIM,
             "d_model":          D_MODEL,
             "d_state":          D_STATE,
+            "patch_size":       patch_size,
+            "patch_stride":     patch_stride,
             "test_mae":         test_metrics["mae"],
             "test_rmse":        test_metrics["rmse"],
         },
@@ -813,6 +837,12 @@ def main() -> None:
     parser.add_argument("--official-mamba", action="store_true",
                         help="Use official mamba_ssm CUDA backend (3-5x faster, Kaggle/Colab GPU only). "
                              "Falls back to pure-PyTorch if mamba_ssm not installed.")
+    parser.add_argument("--patch-size",   type=int, default=LONG_PATCH_SIZE,
+                        help=f"Patch size for long-seq input compression (default {LONG_PATCH_SIZE}; "
+                             "L=4096 → 256 tokens at P=16; use 1 to disable patching)")
+    parser.add_argument("--patch-stride", type=int, default=LONG_PATCH_STRIDE,
+                        help=f"Patch stride (default {LONG_PATCH_STRIDE} = non-overlapping; "
+                             "use 8 for P16S8 overlapping as in PatchTST/MambaDecomp)")
     args = parser.parse_args()
     if args.forecast:
         holdouts = args.holdout.split(",") if args.holdout else None
@@ -834,6 +864,7 @@ def main() -> None:
             eval_batch=args.eval_batch, num_workers=args.num_workers,
             compile_model=args.compile, benchmark=args.benchmark,
             official_mamba=args.official_mamba,
+            patch_size=args.patch_size, patch_stride=args.patch_stride,
         )
     else:
         train(args.data_dir or "data/processed", args.epochs, args.log_dir)
