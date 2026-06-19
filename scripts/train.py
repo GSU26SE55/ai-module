@@ -340,8 +340,8 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
     ).to(device)
     if compile_model:
         try:
-            model = torch.compile(model, mode="default")
-            logger.info("torch.compile: ON (default) — operator fusion without CUDA Graphs (safe with gradient accumulation)")
+            model = torch.compile(model, mode="default", dynamic=True)
+            logger.info("torch.compile: ON (default, dynamic=True) — handles variable L across warmup stages without recompilation")
         except Exception as e:
             logger.warning(f"torch.compile unavailable ({e}) — falling back to eager")
     optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=1e-5)
