@@ -3,6 +3,12 @@ import numpy as np
 # ── Thresholds ────────────────────────────────────────────────────────────────
 EOL_SOH = 80.0           # end-of-life threshold (NASA 18650 convention)
 DEGRADATION_RATE = 0.15  # % SOH lost per cycle (NASA B0005-B0007 average)
+MAINTENANCE_SOH  = 85.0  # SOH threshold for scheduling maintenance
+
+# NASA 18650 empirical: voltage fade 0.004 V/cycle ≈ 0.15% SOH/cycle
+# → conversion factor 0.15/0.004 = 37.5 %SOH per V/cycle
+_VOLT_TO_SOH_RATE = 37.5
+_STEPS_PER_CYCLE  = 285  # NASA average discharge cycle length (timesteps)
 
 # NASA 18650 Li-ion safe operating limits
 VOLTAGE_CRITICAL_LOW  = 3.0    # V — below cutoff voltage
@@ -36,17 +42,172 @@ def classify_anomaly(score: float, soh: float) -> str:
         return "Degrading" if score < -0.1 else "Normal"
 
 
-def estimate_rul(soh: float) -> int:
+def classify_health_stage(soh: float) -> str:
+    """Classify battery health using SOH only."""
+    if soh < EOL_SOH:
+        return "End Of Life"
+    if soh < MAINTENANCE_SOH:
+        return "Maintenance Required"
+    if soh < 90.0:
+        return "Degrading"
+    return "Healthy"
+
+
+def classify_anomaly_status(score: float) -> str:
+    """Classify IsolationForest score separately from SOH health state."""
+    if score <= -0.3:
+        return "Anomaly"
+    if score <= -0.1:
+        return "Warning"
+    return "Normal"
+
+
+def compute_risk_profile(
+    health_stage: str,
+    anomaly_status: str,
+    warnings: list[dict],
+    soh: float,
+    cycles_to_maintenance: int,
+) -> dict:
+    """Build RAG/ticket-friendly risk level, priority, action code, and reasons."""
+    has_critical_warning = any(w.get("severity") == "critical" for w in warnings)
+    has_warning = any(w.get("severity") == "warning" for w in warnings)
+
+    if health_stage == "End Of Life" or has_critical_warning:
+        risk_level = "Critical"
+        priority = "P1"
+    elif health_stage == "Maintenance Required" or anomaly_status == "Anomaly":
+        risk_level = "High"
+        priority = "P2"
+    elif health_stage == "Degrading" or anomaly_status == "Warning" or has_warning:
+        risk_level = "Medium"
+        priority = "P3"
+    else:
+        risk_level = "Low"
+        priority = "None"
+
+    if health_stage == "End Of Life":
+        action_code = "REPLACE_IMMEDIATELY"
+    elif health_stage == "Maintenance Required":
+        action_code = "SCHEDULE_REPLACEMENT"
+    elif health_stage == "Degrading" or anomaly_status in {"Warning", "Anomaly"}:
+        action_code = "SCHEDULE_MAINTENANCE"
+    else:
+        action_code = "MONITOR"
+
+    reasons = []
+    if soh < EOL_SOH:
+        reasons.append(f"SOH {soh:.1f}% is below {EOL_SOH:.0f}% end-of-life threshold")
+    elif soh < MAINTENANCE_SOH:
+        reasons.append(f"SOH {soh:.1f}% is below {MAINTENANCE_SOH:.0f}% maintenance threshold")
+    elif soh < 90.0:
+        reasons.append(f"SOH {soh:.1f}% indicates degradation below 90%")
+
+    if anomaly_status != "Normal":
+        reasons.append(f"Sensor anomaly status is {anomaly_status}")
+    if cycles_to_maintenance == 0 and soh < MAINTENANCE_SOH:
+        reasons.append("Battery is already at or below maintenance planning threshold")
+    reasons.extend(w["message"] for w in warnings[:3])
+    if not reasons:
+        reasons.append("Battery readings are within normal operating range")
+
+    return {
+        "risk_level": risk_level,
+        "priority": priority,
+        "action_code": action_code,
+        "reasons": reasons,
+    }
+
+
+def estimate_rul(soh: float, rate: float | None = None) -> int:
     """
     Estimate remaining useful life in charge-discharge cycles.
-    EOL = SOH 80% (NASA convention). Returns 0 when already at/below EOL.
 
-    Based on NASA B0005-B0007 average degradation rate (~0.15% SOH/cycle).
-    This is a heuristic estimate — accuracy ±30%.
+    If `rate` is provided (observed degradation rate from multi-cycle window),
+    uses it for a battery-specific estimate. Otherwise falls back to the NASA
+    population average (0.15%/cycle), accurate to ±30%.
     """
     if soh <= EOL_SOH:
         return 0
-    return max(0, int((soh - EOL_SOH) / DEGRADATION_RATE))
+    effective_rate = rate if (rate and rate > 1e-4) else DEGRADATION_RATE
+    return max(0, int((soh - EOL_SOH) / effective_rate))
+
+
+def compute_degradation_metrics(
+    raw: np.ndarray,
+    soh_current: float,
+) -> dict:
+    """
+    Estimate degradation rate and SOH trajectory from a multi-cycle window.
+
+    Works by splitting the window into N segments (≈ 1 per cycle), computing
+    mean end-of-discharge voltage per segment, then fitting a linear trend.
+    Converts voltage fade slope → %SOH/cycle using NASA 18650 empirical factor.
+
+    Args:
+        raw:         (L, F) raw unscaled readings. Column 0 = voltage.
+        soh_current: SOH% predicted by Mamba for the current window.
+
+    Returns dict with:
+        degradation_rate_per_cycle  — observed %SOH lost per cycle
+        rul_cycles_estimate         — battery-specific RUL (replaces formula)
+        soh_trend                   — "accelerating" | "stable" | "slowing"
+        cycles_to_maintenance       — cycles until SOH < MAINTENANCE_SOH (85%)
+        soh_trajectory              — predicted SOH for next 5 cycles
+    """
+    L = len(raw)
+
+    # Number of segments ≈ cycles covered by the window (min 2, max 10)
+    n_seg = max(2, min(10, L // _STEPS_PER_CYCLE))
+    seg   = L // n_seg
+    tail  = max(1, seg // 10)  # use last 10% of each segment (end-of-discharge)
+
+    # Mean end-of-discharge voltage per segment
+    voltages = [float(raw[i * seg : (i + 1) * seg, 0][-tail:].mean())
+                for i in range(n_seg)]
+
+    # Linear regression: voltage ~ segment_index
+    x      = np.arange(n_seg, dtype=np.float64)
+    slope  = float(np.polyfit(x, voltages, 1)[0])       # V / segment
+
+    # Convert slope → %SOH / cycle
+    cycles_per_seg   = seg / _STEPS_PER_CYCLE
+    v_per_cycle      = slope / max(cycles_per_seg, 1e-6) # V / cycle
+    degradation_rate = float(np.clip(abs(v_per_cycle) * _VOLT_TO_SOH_RATE, 0.0, 2.0))
+
+    # Trend: compare first-half vs second-half fade rate
+    mid         = n_seg // 2
+    rate_early  = abs(voltages[mid - 1] - voltages[0])         / max(mid, 1)
+    rate_late   = abs(voltages[-1]      - voltages[mid])        / max(n_seg - mid, 1)
+    if rate_late > rate_early * 1.2:
+        trend = "accelerating"
+    elif rate_late < rate_early * 0.8:
+        trend = "slowing"
+    else:
+        trend = "stable"
+
+    # Battery-specific RUL
+    rul = estimate_rul(soh_current, rate=degradation_rate)
+
+    # Cycles until SOH crosses maintenance threshold
+    if soh_current > MAINTENANCE_SOH and degradation_rate > 1e-4:
+        to_maintenance = max(0, int((soh_current - MAINTENANCE_SOH) / degradation_rate))
+    else:
+        to_maintenance = 0
+
+    # SOH trajectory: next 5 cycles
+    trajectory = [
+        round(max(0.0, soh_current - degradation_rate * i), 1)
+        for i in range(1, 6)
+    ]
+
+    return {
+        "degradation_rate_per_cycle": round(degradation_rate, 4),
+        "rul_cycles_estimate":        rul,
+        "soh_trend":                  trend,
+        "cycles_to_maintenance":      to_maintenance,
+        "soh_trajectory":             trajectory,
+    }
 
 
 def get_recommended_action(classification: str, soh: float) -> str:

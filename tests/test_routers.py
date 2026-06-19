@@ -4,35 +4,47 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
+from src.core.config import WINDOW_SIZE
 from src.models.soh_predictor import MambaSOHPredictor
 
 
 def make_dummy_loader():
     from sklearn.ensemble import IsolationForest
-    from sklearn.preprocessing import MinMaxScaler
+    from sklearn.preprocessing import MinMaxScaler, StandardScaler
+
+    from src.core.config import INPUT_FEATURES, SPECTRAL_FEAT_DIM
 
     scaler = MinMaxScaler()
-    scaler.fit(np.random.rand(50, 3))
+    scaler.fit(np.random.rand(50, INPUT_FEATURES))
 
-    model = MambaSOHPredictor()
+    feat_scaler = StandardScaler()
+    feat_scaler.fit(np.random.rand(50, SPECTRAL_FEAT_DIM))
+
+    model = MambaSOHPredictor(
+        input_features=INPUT_FEATURES,
+        feat_dim=SPECTRAL_FEAT_DIM,
+        d_model=8,
+        d_state=4,
+    )
     model.eval()
 
     iso = IsolationForest(n_estimators=10, random_state=42)
-    iso.fit(np.random.rand(50, 90))
+    iso.fit(np.random.rand(50, SPECTRAL_FEAT_DIM))
 
-    return scaler, model, iso
+    return scaler, feat_scaler, model, iso
 
 
 @pytest.fixture()
 def client():
-    scaler, model, iso = make_dummy_loader()
+    scaler, feat_scaler, model, iso = make_dummy_loader()
     with patch("src.core.model_loader.load_models"):
         from main import app
 
         with patch("src.services.inference.model_loader") as mock_loader:
-            mock_loader.scaler = scaler
-            mock_loader.soh_model = model
-            mock_loader.iso_model = iso
+            mock_loader.scaler         = scaler
+            mock_loader.feature_scaler = feat_scaler
+            mock_loader.soh_model      = model
+            mock_loader.iso_model      = iso
             with TestClient(app) as c:
                 yield c
 
@@ -57,7 +69,7 @@ class TestPredictRouter:
     def _valid_payload(self):
         return {
             "battery_id": "B0005",
-            "readings": [[3.7 + i * 0.001, 1.5, 25.0] for i in range(30)],
+            "readings": [[3.7 + i * 0.001, 1.5, 25.0, 1.5, 3.7, float(i)] for i in range(WINDOW_SIZE)],
         }
 
     def test_predict_returns_200(self, client):
@@ -68,23 +80,28 @@ class TestPredictRouter:
         resp = client.post("/predict/", json=self._valid_payload())
         data = resp.json()
         required = {
-            "battery_id", "soh_percent", "classification", "confidence",
+            "battery_id", "prediction", "anomaly", "risk", "evidence",
+            "metadata", "soh_percent", "classification", "confidence",
             "inference_ms", "rul_cycles_estimate", "anomaly_score",
             "recommended_action", "warnings", "feature_summary",
         }
         for key in required:
             assert key in data, f"Missing key: {key}"
+        assert "health_stage" in data["prediction"]
+        assert "anomaly_status" in data["anomaly"]
+        assert "risk_level" in data["risk"]
+        assert "model_version" in data["metadata"]
 
     def test_predict_battery_id_echoed(self, client):
         resp = client.post("/predict/", json=self._valid_payload())
         assert resp.json()["battery_id"] == "B0005"
 
     def test_predict_invalid_shape_returns_422(self, client):
-        payload = {"battery_id": "B0005", "readings": [[3.7, 1.5, 25.0]] * 29}
+        payload = {"battery_id": "B0005", "readings": [[3.7, 1.5, 25.0]] * (WINDOW_SIZE - 1)}
         resp = client.post("/predict/", json=payload)
         assert resp.status_code == 422
 
     def test_predict_invalid_features_returns_422(self, client):
-        payload = {"battery_id": "B0005", "readings": [[3.7, 1.5]] * 30}
+        payload = {"battery_id": "B0005", "readings": [[3.7, 1.5]] * WINDOW_SIZE}
         resp = client.post("/predict/", json=payload)
         assert resp.status_code == 422

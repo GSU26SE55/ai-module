@@ -1,4 +1,4 @@
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from src.core.config import FEATURES, INPUT_FEATURES, WINDOW_SIZE
 
@@ -42,17 +42,77 @@ class FeatureStat(BaseModel):
     max: float
 
 
+class PredictionInfo(BaseModel):
+    soh_percent: float
+    rul_cycles_estimate: int
+    degradation_rate_per_cycle: float
+    soh_trend: str
+    cycles_to_maintenance: int
+    soh_trajectory: list[float]
+    health_stage: str
+
+
+class AnomalyInfo(BaseModel):
+    anomaly_score: float
+    anomaly_status: str
+    anomaly_confidence: float
+
+
+class RiskInfo(BaseModel):
+    risk_level: str
+    priority: str
+    action_code: str
+    reasons: list[str]
+
+
+class EvidenceInfo(BaseModel):
+    warnings: list[WarningItem]
+    feature_summary: dict[str, FeatureStat]
+
+
+class ResponseMetadata(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
+    model_version: str
+    window_size: int
+    input_features: int
+    inference_ms: float
+
+
 class PredictResponse(BaseModel):
     battery_id: str
+    prediction: PredictionInfo
+    anomaly: AnomalyInfo
+    risk: RiskInfo
+    evidence: EvidenceInfo
+    metadata: ResponseMetadata
+
+    # Backward-compatible flat fields. Keep until BE migrates to nested response.
     soh_percent: float
     classification: str     # "Normal" | "Degrading" | "Failed"
     confidence: float       # |IsolationForest score|, range [0, 1]
     inference_ms: float
 
-    # ── Extended diagnostics ──────────────────────────────────────────────
+    # ── RUL & Degradation Trend ───────────────────────────────────────────
     rul_cycles_estimate: int
-    """Estimated remaining charge-discharge cycles until EOL (SOH=80%)."""
+    """Remaining useful life in cycles until SOH=80% (EOL).
+    Battery-specific when window spans ≥2 cycles; falls back to NASA average."""
 
+    degradation_rate_per_cycle: float
+    """Observed %SOH lost per charge-discharge cycle.
+    Computed from voltage fade trend across multi-cycle window.
+    Falls back to NASA population average (0.15%) for short windows."""
+
+    soh_trend: str
+    """Degradation velocity: 'accelerating' | 'stable' | 'slowing'."""
+
+    cycles_to_maintenance: int
+    """Estimated cycles until SOH crosses 85% maintenance threshold. 0 if already below."""
+
+    soh_trajectory: list[float]
+    """Predicted SOH for next 5 cycles based on observed degradation rate."""
+
+    # ── Anomaly Detection ─────────────────────────────────────────────────
     anomaly_score: float
     """Raw IsolationForest decision_function score. Negative = more anomalous."""
 
@@ -68,4 +128,4 @@ class PredictResponse(BaseModel):
     """Threshold-based warnings ordered by severity (critical first)."""
 
     feature_summary: dict[str, FeatureStat]
-    """Mean/min/max for each sensor feature across the 30-step window."""
+    """Mean/min/max for each sensor feature across the window."""
