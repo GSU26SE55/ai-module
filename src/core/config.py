@@ -27,9 +27,12 @@ LONG_SEQ_STRIDE = 64                        # slide stride over the concatenated
 LONG_PATCH_SIZE   = 16                      # compresses L=4096 → 256 tokens (16× reduction, ~5-6× VRAM/speed)
 LONG_PATCH_STRIDE = 16                      # non-overlapping (fastest); use 8 for P16S8 as in PatchTST/MambaDecomp
 WARMUP_STAGES   = [256, 512, 1024, 2048, 4096]  # progressive length warmup (GH-10 P1)
-LONG_MODEL_VERSION       = "1.0"
+LONG_MODEL_VERSION       = "2.0"   # v2.0: PatchDegradationEncoder + 2-layer FiLM + SmoothL1 + CAWR
 LONG_MAMBA_PATH          = os.path.join(WEIGHTS_DIR, f"soh_mamba_long_v{LONG_MODEL_VERSION}.pth")
+COSINE_T0                = 25     # CosineAnnealingWarmRestarts T_0 for final training stage
 LONG_FEATURE_SCALER_PATH = os.path.join(WEIGHTS_DIR, "feature_scaler_long.pkl")
+LONG_INPUT_FEATURES      = 8     # 6 base + IC curve (dQ/dV) + phase mask
+LONG_SCALER_PATH         = os.path.join(WEIGHTS_DIR, "scaler_long.pkl")  # 8-feature MinMaxScaler
 
 # --- RUL (GH-13) — cycle-level Mamba: 1 token = 1 discharge cycle ---
 # Re-frames the long-context problem onto the CYCLE axis (NASA ~168 cycles/battery)

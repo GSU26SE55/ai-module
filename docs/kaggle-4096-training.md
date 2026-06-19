@@ -1,19 +1,31 @@
-# Kaggle Training Guide — Mamba L=4096
+# Kaggle Training Guide — Mamba L=4096 (v2.0)
 
 Huong dan nay tu dau den cuoi de train Mamba voi 4096 token tren Kaggle GPU (P100 / T4).
+
+**v2.0 improvements (branch `feat/improve-L4096-mae`):**
+- `PatchDegradationEncoder`: per-patch RMS/P2P/std/kurtosis injected into each token
+  before the Mamba backbone — fixes the global-feature averaging bottleneck at L=4096.
+- FiLM: 2-layer MLP (feat_dim → feat_dim → d_model×2) for richer conditioning.
+- Loss: `SmoothL1(beta=0.02)` — clips gradient for residuals > 2% SOH vs raw MSELoss.
+- Scheduler: `CosineAnnealingWarmRestarts(T_0=25, T_mult=2)` in final stage —
+  periodic LR restarts to escape the plateau that capped v1.x at ~2.24% MAE.
+- Optional `--weighted-loss` flag: upweights near-EOL samples (SOH < 80%) by 2×.
 
 Config target:
 
 ```
-WINDOW_SIZE        = 4096
-WINDOW_STRIDE      = 100
+LONG_SEQ_LEN       = 4096
+LONG_SEQ_STRIDE    = 64
 INPUT_FEATURES     = 6
 SPECTRAL_FEAT_DIM  = 54
 D_MODEL            = 64
 D_STATE            = 16
-BATCH_SIZE         = 4     (GPU, parallel scan)
-MODEL_VERSION      = 1.3
+LONG_PATCH_SIZE    = 16     (4096 → 256 tokens)
+LONG_PATCH_STRIDE  = 16
+LONG_MODEL_VERSION = 2.0
 ```
+
+Artifact saved to: `models/weights/soh_mamba_long_v2.0.pth`
 
 Chay theo thu tu cell trong notebook `notebooks/kaggle_train_4096.ipynb`.
 
@@ -75,7 +87,7 @@ Ket qua can co `CUDA: True`. Neu `False`, kiem tra Settings -> Accelerator.
 ```python
 import subprocess
 subprocess.run([
-    "git", "clone", "--branch", "feat/spectral_kurtosis",
+    "git", "clone", "--branch", "feat/improve-L4096-mae",
     "--single-branch",
     "https://github.com/GSU26SE55/ai-module.git",
     "/kaggle/working/ai-module"
@@ -90,7 +102,7 @@ token = UserSecretsClient().get_secret("GITHUB_TOKEN")
 
 import subprocess
 subprocess.run([
-    "git", "clone", "--branch", "feat/spectral_kurtosis",
+    "git", "clone", "--branch", "feat/improve-L4096-mae",
     "--single-branch",
     f"https://{token}@github.com/GSU26SE55/ai-module.git",
     "/kaggle/working/ai-module"
@@ -221,7 +233,7 @@ for name in ["train.pt", "val.pt", "test.pt"]:
           f"X_feat={tuple(d['X_feat'].shape)}, y={tuple(d['y'].shape)}")
 ```
 
-Tat ca X phai co shape `(N, 4096, 6)`.
+Tat ca X phai co shape `(N, 4096, 8)` — 6 base features + IC curve + phase mask.
 
 ---
 
@@ -246,14 +258,20 @@ Neu `Test MAE` xuyen hien va khong co loi CUDA OOM, chay full train.
 ```python
 os.chdir(REPO)
 !python scripts/train.py \
+    --long \
     --data-dir "{PROCESSED}" \
     --epochs 150 \
-    --log-dir "{LOGS}"
+    --log-dir "{LOGS}" \
+    --compile \
+    --benchmark \
+    --official-mamba \
+    --weighted-loss \
+    --cosine-t0 25
 ```
 
 Uoc tinh thoi gian tren P100:
 - Moi epoch: 3-5 phut
-- Early stopping: thong thuong o epoch 40-70
+- Early stopping: thong thuong o epoch 40-70 (CAWR patience=30)
 - Tong: ~3-5 gio
 
 ---
@@ -262,10 +280,9 @@ Uoc tinh thoi gian tren P100:
 
 ```python
 required = [
-    "scaler.pkl",
-    "feature_scaler.pkl",
-    "soh_mamba_v1.3.pth",
-    "isolation_forest_v1.3.pkl",
+    "scaler_long.pkl",              # 8-feature MinMaxScaler (v2.0)
+    "feature_scaler_long.pkl",      # 54-dim spectral feature StandardScaler
+    "soh_mamba_long_v2.0.pth",      # long-seq Mamba model weights
 ]
 for f in required:
     path = f"{WEIGHTS}/{f}"
@@ -282,8 +299,8 @@ Tao file zip de download tu Kaggle Output:
 
 ```python
 import shutil
-shutil.make_archive("/kaggle/working/artifacts_v1.3", "zip", WEIGHTS)
-print("Created: /kaggle/working/artifacts_v1.3.zip")
+shutil.make_archive("/kaggle/working/artifacts_long_v2.0", "zip", WEIGHTS)
+print("Created: /kaggle/working/artifacts_long_v2.0.zip")
 ```
 
 File se hien trong tab `Output` cua notebook tren Kaggle.
@@ -292,20 +309,19 @@ File se hien trong tab `Output` cua notebook tren Kaggle.
 
 ## 12. Copy artifacts vao repo local
 
-Sau khi download `artifacts_v1.3.zip`, giai nen vao `ai-module/models/weights/`:
+Sau khi download `artifacts_long_v2.0.zip`, giai nen vao `ai-module/models/weights/`:
 
 ```
 models/weights/
-  scaler.pkl
-  feature_scaler.pkl
-  soh_mamba_v1.3.pth
-  isolation_forest_v1.3.pkl
+  scaler_long.pkl
+  feature_scaler_long.pkl
+  soh_mamba_long_v2.0.pth
 ```
 
 Commit toan bo:
 ```bash
 git add models/weights/
-git commit -m "feat: Mamba v1.3 trained at L=4096 on Kaggle GPU"
+git commit -m "feat: Mamba long v2.0 trained at L=4096 — IC+phase+CAWR+SmoothL1"
 ```
 
 ---
