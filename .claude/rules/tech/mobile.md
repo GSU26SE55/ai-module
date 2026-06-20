@@ -10,16 +10,20 @@
 | Client state | Zustand v5 | Nhất quán với Web |
 | HTTP | Axios | Shared config pattern với Web |
 | Auth token | expo-secure-store | Lưu token an toàn (không dùng AsyncStorage cho token) |
-| Notifications | expo-notifications | Push notification khi có cảnh báo |
+| Notifications | expo-notifications | Push token lifecycle: xin permission + lấy Expo push token (GH-36). Cần EAS `projectId` trong `app.json` để `getExpoPushTokenAsync` hoạt động. Receive pipeline (banner/tap/badge) là scope riêng sau |
+| App config | expo-constants | Đọc EAS `projectId` cho push token (`Constants.expoConfig.extra.eas.projectId`). Đã có sẵn cùng Expo — không cần cài thêm |
 | Charts | Victory Native | Battery health chart, SOH trend |
 | Image picker | expo-image-picker | Pick ảnh từ gallery/camera để upload avatar (GH-4) |
 | QR Code | react-native-qrcode-svg + react-native-svg | Hiển thị QR code 2FA setup (GH-4) |
+| Device ID | expo-crypto | `Crypto.randomUUID()` sinh `X-Device-Id` ổn định per-install cho fingerprint trusted device (GH-37). Lưu vào `expo-secure-store` |
+| File system | expo-file-system | Ghi file JSON cho GDPR data export (GH-37). API SDK 54: `File`/`Paths` (`new File(Paths.cache, name)` → `.create()` → `.write()`) |
+| Share | expo-sharing | Mở share sheet để lưu/chia sẻ file export GDPR (GH-37). Check `Sharing.isAvailableAsync()` trước khi `shareAsync` |
 | Validation | Zod | Schema-first validation cho form — nhất quán với Web. Không dùng React Hook Form (thiết kế cho web DOM) — parse thủ công bằng `schema.safeParse()` |
 
 ## Packages cần cài
 
 ```bash
-npx expo install expo-router expo-secure-store expo-notifications expo-image-picker react-native-svg
+npx expo install expo-router expo-secure-store expo-notifications expo-image-picker react-native-svg expo-crypto expo-file-system expo-sharing
 npm install @tanstack/react-query zustand axios react-native-qrcode-svg zod
 ```
 
