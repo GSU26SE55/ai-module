@@ -4,6 +4,9 @@
 # Ghi chú cá nhân của từng thành viên — không commit
 CLAUDE.local.md
 
+# Lesson/memory cá nhân của session — không commit (chỉ promote lên memory.md khi đã verify)
+memory.local.md
+
 # Settings private (MCP tokens, API keys cá nhân) — không commit
 settings.local.json
 
