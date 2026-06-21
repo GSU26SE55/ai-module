@@ -4,9 +4,8 @@ The project spec requires a confidence score alongside SOH. MambaSOHPredictor
 already has Dropout(0.2) in its head, so MC Dropout needs no retraining: run N
 stochastic forward passes (dropout active), then mean = SOH, std = uncertainty.
 
-Model-agnostic over the (x, x_feat) -> SOH interface (MambaSOHPredictor /
-HybridMambaSOH). Does NOT touch the production inference flow — import and call
-where a confidence score is needed.
+Model-agnostic over the (x, x_feat) -> SOH interface. Does NOT touch the
+production inference flow — import and call where a confidence score is needed.
 """
 
 import torch

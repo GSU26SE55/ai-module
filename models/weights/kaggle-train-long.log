@@ -1,0 +1,58 @@
+[{"stream_name":"stderr","time":9.404027904,"data":"/usr/local/lib/python3.12/dist-packages/nbformat/__init__.py:96: MissingIDFieldWarning: Cell is missing an id field, this will become a hard error in future nbformat versions. You may want to use `normalize()` on your notebooks before validations (available since nbformat 5.1.4). Previous versions of nbformat are fixing this issue transparently, and will stop doing so in the future.\n"}
+,{"stream_name":"stderr","time":9.404135852,"data":"  validate(nb)\n"}
+,{"stream_name":"stderr","time":10.803405032,"data":"0.00s - Debugger warning: It seems that frozen modules are being used, which may\n"}
+,{"stream_name":"stderr","time":10.803472242,"data":"0.00s - make the debugger miss breakpoints. Please pass -Xfrozen_modules=off\n"}
+,{"stream_name":"stderr","time":10.803488392,"data":"0.00s - to python to disable frozen modules.\n"}
+,{"stream_name":"stderr","time":10.803491708,"data":"0.00s - Note: Debugging will proceed. Set PYDEVD_DISABLE_FILE_VALIDATION=1 to disable this validation.\n"}
+,{"stream_name":"stderr","time":11.658395189,"data":"0.00s - Debugger warning: It seems that frozen modules are being used, which may\n"}
+,{"stream_name":"stderr","time":11.658464605,"data":"0.00s - make the debugger miss breakpoints. Please pass -Xfrozen_modules=off\n"}
+,{"stream_name":"stderr","time":11.658475712,"data":"0.00s - to python to disable frozen modules.\n"}
+,{"stream_name":"stderr","time":11.65848055,"data":"0.00s - Note: Debugging will proceed. Set PYDEVD_DISABLE_FILE_VALIDATION=1 to disable this validation.\n"}
+,{"stream_name":"stdout","time":13.245017218,"data":"/bin/bash: line 1: nvidia-smi: command not found\r\n"}
+,{"stream_name":"stdout","time":17.455392637,"data":"PyTorch: 2.10.0+cpu | CUDA: False\n"}
+,{"stream_name":"stdout","time":17.455477088,"data":"WARNING: bật GPU ở Settings -\u003e Accelerator -\u003e GPU P100/T4\n"}
+,{"stream_name":"stdout","time":17.656956305,"data":"No GITHUB_TOKEN secret -\u003e thử public clone: Connection error trying to communicate with service.\n"}
+,{"stream_name":"stderr","time":17.68902726,"data":"Cloning into '/kaggle/working/ai-module'...\n"}
+,{"stream_name":"stderr","time":17.893217067,"data":"Cloning into '/kaggle/working/ai-module'...\n"}
+,{"stream_name":"stderr","time":17.893293791,"data":"\n"}
+,{"stream_name":"stderr","time":17.893302646,"data":"Cloning into '/kaggle/working/ai-module'...\n"}
+,{"stream_name":"stderr","time":18.505497566,"data":"fatal: could not read Username for 'https://github.com': No such device or address\n"}
+,{"stream_name":"stderr","time":18.524080641,"data":"fatal: could not read Username for 'https://github.com': No such device or address\n"}
+,{"stream_name":"stderr","time":18.524260534,"data":"\n"}
+,{"stream_name":"stderr","time":18.524269958,"data":"fatal: could not read Username for 'https://github.com': No such device or address\n"}
+,{"stream_name":"stderr","time":19.562740328,"data":"Traceback (most recent call last):\n"}
+,{"stream_name":"stderr","time":19.562775138,"data":"  File \"\u003cstring\u003e\", line 1, in \u003cmodule\u003e\n"}
+,{"stream_name":"stderr","time":19.562782424,"data":"  File \"/usr/local/lib/python3.12/dist-packages/papermill/execute.py\", line 131, in execute_notebook\n"}
+,{"stream_name":"stderr","time":19.562994072,"data":"    raise_for_execution_errors(nb, output_path)\n"}
+,{"stream_name":"stderr","time":19.563024179,"data":"  File \"/usr/local/lib/python3.12/dist-packages/papermill/execute.py\", line 251, in raise_for_execution_errors\n"}
+,{"stream_name":"stderr","time":19.563127949,"data":"    raise error\n"}
+,{"stream_name":"stderr","time":19.563447598,"data":"papermill.exceptions.PapermillExecutionError: \n"}
+,{"stream_name":"stderr","time":19.563491716,"data":"---------------------------------------------------------------------------\n"}
+,{"stream_name":"stderr","time":19.563498517,"data":"Exception encountered at \"In [2]\":\n"}
+,{"stream_name":"stderr","time":19.563503492,"data":"---------------------------------------------------------------------------\n"}
+,{"stream_name":"stderr","time":19.563507957,"data":"CalledProcessError                        Traceback (most recent call last)\n"}
+,{"stream_name":"stderr","time":19.563512476,"data":"/tmp/ipykernel_16/4091259161.py in \u003ccell line: 0\u003e()\n"}
+,{"stream_name":"stderr","time":19.563517436,"data":"     11     url = URL_PUB\n"}
+,{"stream_name":"stderr","time":19.5635215,"data":"     12 subprocess.run(['rm', '-rf', REPO])\n"}
+,{"stream_name":"stderr","time":19.563526266,"data":"---\u003e 13 subprocess.run(['git', 'clone', '--branch', BRANCH, '--single-branch', url, REPO], check=True)\n"}
+,{"stream_name":"stderr","time":19.563531414,"data":"     14 subprocess.run(['git', '-C', REPO, 'remote', 'set-url', 'origin', URL_PUB])  # xoá token khỏi remote\n"}
+,{"stream_name":"stderr","time":19.563536604,"data":"     15 print('Branch:', subprocess.check_output(['git','-C',REPO,'branch','--show-current']).decode().strip())\n"}
+,{"stream_name":"stderr","time":19.563540999,"data":"\n"}
+,{"stream_name":"stderr","time":19.563545071,"data":"/usr/lib/python3.12/subprocess.py in run(input, capture_output, timeout, check, *popenargs, **kwargs)\n"}
+,{"stream_name":"stderr","time":19.563549355,"data":"    569         retcode = process.poll()\n"}
+,{"stream_name":"stderr","time":19.563553447,"data":"    570         if check and retcode:\n"}
+,{"stream_name":"stderr","time":19.563557501,"data":"--\u003e 571             raise CalledProcessError(retcode, process.args,\n"}
+,{"stream_name":"stderr","time":19.563561583,"data":"    572                                      output=stdout, stderr=stderr)\n"}
+,{"stream_name":"stderr","time":19.563565839,"data":"    573     return CompletedProcess(process.args, retcode, stdout, stderr)\n"}
+,{"stream_name":"stderr","time":19.563570288,"data":"\n"}
+,{"stream_name":"stderr","time":19.563574107,"data":"CalledProcessError: Command '['git', 'clone', '--branch', 'feat/spectral_kurtosis', '--single-branch', 'https://github.com/GSU26SE55/ai-module.git', '/kaggle/working/ai-module']' returned non-zero exit status 128.\n"}
+,{"stream_name":"stderr","time":19.56358494,"data":"\n"}
+,{"stream_name":"stderr","time":22.752963677,"data":"/usr/local/lib/python3.12/dist-packages/mistune.py:435: SyntaxWarning: invalid escape sequence '\\|'\n"}
+,{"stream_name":"stderr","time":22.753015565,"data":"  cells[i][c] = re.sub('\\\\\\\\\\|', '|', cell)\n"}
+,{"stream_name":"stderr","time":22.985253151,"data":"/usr/local/lib/python3.12/dist-packages/nbconvert/filters/filter_links.py:36: SyntaxWarning: invalid escape sequence '\\_'\n"}
+,{"stream_name":"stderr","time":22.985296198,"data":"  text = re.sub(r'_', '\\_', text) # Escape underscores in display text\n"}
+,{"stream_name":"stderr","time":23.809345033,"data":"[NbConvertApp] Converting notebook __notebook__.ipynb to notebook\n"}
+,{"stream_name":"stderr","time":24.238099951,"data":"[NbConvertApp] Writing 22236 bytes to __notebook__.ipynb\n"}
+,{"stream_name":"stderr","time":27.433570369,"data":"[NbConvertApp] Converting notebook __notebook__.ipynb to html\n"}
+,{"stream_name":"stderr","time":28.561523758,"data":"[NbConvertApp] Writing 314414 bytes to __results__.html\n"}
+]
