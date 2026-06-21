@@ -5,7 +5,11 @@ import torch
 
 from src.core import model_loader
 from src.core.config import INPUT_FEATURES, MODEL_VERSION, WINDOW_SIZE
-from src.features.extractor import extract_window_features
+from src.features.extractor import (
+    compute_ic_feature,
+    compute_phase_mask,
+    extract_window_features,
+)
 from src.models.anomaly_detector import (
     classify_anomaly,
     classify_anomaly_status,
@@ -184,8 +188,15 @@ def predict_soh_long(readings: list[list[float]], device: str | None = None) -> 
 
     start = time.perf_counter()
     raw = np.array(readings, dtype=np.float32)
-    x = _align_features(raw)
-    x_scaled = model_loader.scaler.transform(x)
+    x   = _align_features(raw)          # (L, 6) — align to base 6 features
+
+    # Extend to 8 features: append IC curve (dQ/dV) + phase mask.
+    # These are computed from raw voltage/current so the API stays at 6 features.
+    ic    = compute_ic_feature(x[:, 0], x[:, 1])   # (L,)
+    phase = compute_phase_mask(x[:, 1])             # (L,)
+    x8    = np.column_stack([x, ic, phase])         # (L, 8)
+
+    x_scaled = model_loader.long_scaler.transform(x8)
     x_tensor = torch.tensor(x_scaled, dtype=torch.float32).unsqueeze(0).to(dev)
 
     raw_feat    = extract_window_features(x_scaled[:, :3])

@@ -30,7 +30,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.core.config import D_MODEL, D_STATE, EOL_SOH, INPUT_FEATURES, ISO_FOREST_PATH, LONG_MAMBA_PATH, LONG_MODEL_VERSION, LONG_PATCH_SIZE, LONG_PATCH_STRIDE, MAMBA_PATH, MODEL_VERSION, RUL_FEAT_DIM, RUL_LOOKBACK, RUL_MAMBA_PATH, RUL_MODEL_VERSION, RUL_SCALE, SPECTRAL_FEAT_DIM, WARMUP_STAGES, WINDOW_SIZE  # noqa: E402
+from src.core.config import COSINE_T0, D_MODEL, D_STATE, EOL_SOH, INPUT_FEATURES, ISO_FOREST_PATH, LONG_INPUT_FEATURES, LONG_MAMBA_PATH, LONG_MODEL_VERSION, LONG_PATCH_SIZE, LONG_PATCH_STRIDE, MAMBA_PATH, MODEL_VERSION, RUL_FEAT_DIM, RUL_LOOKBACK, RUL_MAMBA_PATH, RUL_MODEL_VERSION, RUL_SCALE, SPECTRAL_FEAT_DIM, WARMUP_STAGES, WINDOW_SIZE  # noqa: E402
 from src.models.rul_predictor import RULPredictor  # noqa: E402
 from src.models.soh_predictor import MambaSOHPredictor  # noqa: E402
 
@@ -305,12 +305,30 @@ def _train_epoch_accum(model, loader, optimizer, criterion, amp_scaler, amp_ctx,
     return total / n_samples
 
 
+def _soh_weighted_smooth_l1(
+    pred: torch.Tensor, target: torch.Tensor,
+    beta: float = 0.02, eol_threshold: float = 0.80, weight_scale: float = 2.0,
+) -> torch.Tensor:
+    """SmoothL1 loss with upweighting for near-EOL samples (SOH approaching 80%).
+
+    target is SOH/100 in [0,1]. Samples with target close to eol_threshold (0.80)
+    receive weight up to `weight_scale`× the base loss — encouraging the model to
+    learn the critical degradation region more accurately.
+    """
+    base    = torch.nn.functional.smooth_l1_loss(pred, target, reduction="none", beta=beta)
+    dist    = (target - eol_threshold).clamp(min=0)             # 0 at EOL, positive above
+    weights = 1.0 + (weight_scale - 1.0) * torch.exp(-5.0 * dist)
+    return (weights * base).mean()
+
+
 def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: int = 8,
                stage_epochs: int = 5, final_epochs: int = 50, stages: list[int] | None = None,
                num_workers: int = 2, eval_batch: int = 16,
                compile_model: bool = False, benchmark: bool = False,
                official_mamba: bool = False,
-               patch_size: int = LONG_PATCH_SIZE, patch_stride: int = LONG_PATCH_STRIDE) -> None:
+               patch_size: int = LONG_PATCH_SIZE, patch_stride: int = LONG_PATCH_STRIDE,
+               weighted_loss: bool = False, eol_weight_scale: float = 2.0,
+               cosine_t0: int = 25) -> None:
     """Train the long-sequence model (L up to 4096) with progressive length warmup.
 
     Each stage truncates sequences to a shorter length (cheap epochs), carrying
@@ -335,13 +353,22 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
     loader_gen.manual_seed(SEED)
     torch.manual_seed(SEED)
     num_tokens = (seq_len - patch_size) // patch_stride + 1 if patch_size > 1 else seq_len
-    logger.info(
-        f"Patch: size={patch_size} stride={patch_stride} → {num_tokens} tokens "
-        f"(from {seq_len} raw timesteps, {seq_len // patch_size if patch_size > 1 else 1}× compression)"
-        if patch_size > 1 else f"Patch: disabled (patch_size=1, {seq_len} tokens)"
-    )
+    if patch_size > 1:
+        logger.info(
+            f"Patch: size={patch_size} stride={patch_stride} → {num_tokens} tokens "
+            f"(from {seq_len} raw timesteps, {patch_size}× compression)"
+        )
+    else:
+        logger.info(f"Patch: disabled (patch_size=1, {seq_len} tokens)")
+    # Long-seq model uses 8 input features (6 base + IC curve + discharge_progress).
+    # Verify preprocessed data matches before wasting training time.
+    if X_train.shape[-1] != LONG_INPUT_FEATURES:
+        raise ValueError(
+            f"Long-seq data has {X_train.shape[-1]} features but LONG_INPUT_FEATURES="
+            f"{LONG_INPUT_FEATURES}. Re-run scripts/preprocess_long.py to rebuild 8-feature data."
+        )
     model = MambaSOHPredictor(
-        input_features=INPUT_FEATURES, feat_dim=SPECTRAL_FEAT_DIM,
+        input_features=LONG_INPUT_FEATURES, feat_dim=SPECTRAL_FEAT_DIM,
         d_model=D_MODEL, d_state=D_STATE, pooling="attention",
         use_official_mamba=official_mamba,
         patch_size=patch_size, patch_stride=patch_stride,
@@ -353,10 +380,24 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
         except Exception as e:
             logger.warning(f"torch.compile unavailable ({e}) — falling back to eager")
     optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=1e-5)
+    # Warmup stages use ReduceLROnPlateau (cheap, short epochs).
+    # Final stage switches to CosineAnnealingWarmRestarts — prevents the monotonic
+    # LR decay that caused the v1.x MAE ceiling (ReduceLROnPlateau killed LR before
+    # the model could escape local minima in the SSM parameter space).
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.5, patience=5, min_lr=1e-6
     )
-    criterion = nn.MSELoss()
+    # SmoothL1Loss(beta=0.02): clips gradient for residuals > 2% SOH, stabilising
+    # training against noisy SOH labels (vs MSELoss which amplifies outliers).
+    # Weighted variant upweights near-EOL samples (SOH approaching 80%).
+    if weighted_loss:
+        def criterion(pred, target):  # type: ignore[assignment]
+            return _soh_weighted_smooth_l1(pred, target, beta=0.02,
+                                           eol_weight_scale=eol_weight_scale)
+        logger.info(f"Loss: SmoothL1(beta=0.02) + EOL upweight (scale={eol_weight_scale})")
+    else:
+        criterion = nn.SmoothL1Loss(beta=0.02)
+        logger.info("Loss: SmoothL1(beta=0.02)")
     GRAD_CLIP = 1.0
 
     # Warmup stages ≤ seq_len, always ending exactly at seq_len
@@ -375,19 +416,28 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
     for si, stage_len in enumerate(stages):
         is_final = (si == len(stages) - 1)
         if is_final:
-            # Warmup-stage transitions cause val_loss spikes (model adjusting to
-            # longer L) that increment ReduceLROnPlateau's bad-epoch counter and
-            # reduce LR before the final stage starts. Reset to the initial LR +
-            # fresh scheduler so the full-length stage gets its own LR schedule.
+            # Reset LR to initial value — warmup-stage transitions accumulate
+            # ReduceLROnPlateau reductions that would starve the final stage.
             # Adam momentum is preserved (warm from warmup) — only LR resets.
             for pg in optimizer.param_groups:
                 pg["lr"] = LR
-            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-                optimizer, mode="min", factor=0.5, patience=5, min_lr=1e-6
+            # CosineAnnealingWarmRestarts: T_0-epoch cycles with period doubling.
+            # Periodic LR restarts let the optimiser escape sharp minima that
+            # ReduceLROnPlateau cannot recover from once LR is reduced. This
+            # directly addresses the MAE ceiling observed in v1.x runs.
+            # T_mult=2 → cycles: T_0, 2*T_0, 4*T_0 … (first restart at epoch T_0+1)
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                optimizer, T_0=cosine_t0, T_mult=2, eta_min=1e-5,
             )
             patience_counter = 0
             best_val_loss = float("inf")
-            logger.info(f"Final stage: reset LR={LR}, fresh ReduceLROnPlateau (Adam momentum preserved)")
+            # Patience must cover at least one full CAWR cycle so early-stopping
+            # doesn't fire on the temporary val_loss increase after an LR restart.
+            final_patience = max(PATIENCE, cosine_t0 + 5)
+            logger.info(
+                f"Final stage: reset LR={LR}, CosineAnnealingWarmRestarts "
+                f"T_0={cosine_t0} T_mult=2 eta_min=1e-5 (patience={final_patience})"
+            )
         Xtr_s  = truncate_seq(X_train, stage_len)
         Xval_s = truncate_seq(X_val,   stage_len)
         loader = DataLoader(
@@ -405,8 +455,17 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
             )
             val_metrics = evaluate(model, Xval_s, X_feat_val, y_val, device, batch_size=eval_batch)
             val_loss    = val_metrics["loss"]
-            scheduler.step(val_loss)
-            logger.debug(f"  L={stage_len} ep{epoch}  train={train_loss:.6f} val={val_loss:.6f} mae={val_metrics['mae']:.4f}")
+            # Warmup stages: ReduceLROnPlateau needs val_loss. Final stage: CAWR
+            # steps purely by epoch count (no loss argument).
+            if is_final:
+                scheduler.step()
+            else:
+                scheduler.step(val_loss)
+            current_lr = optimizer.param_groups[0]["lr"]
+            logger.debug(
+                f"  L={stage_len} ep{epoch}  train={train_loss:.6f} "
+                f"val={val_loss:.6f} mae={val_metrics['mae']:.4f} lr={current_lr:.2e}"
+            )
             if is_final:
                 if val_loss < best_val_loss:
                     best_val_loss    = val_loss
@@ -414,8 +473,8 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
                     patience_counter = 0
                 else:
                     patience_counter += 1
-                if patience_counter >= PATIENCE:
-                    logger.info(f"Early stopping at epoch {epoch} (final stage)")
+                if patience_counter >= final_patience:
+                    logger.info(f"Early stopping at epoch {epoch} (patience={final_patience})")
                     break
 
     if best_state is not None:
@@ -433,18 +492,25 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
     os.makedirs(os.path.dirname(LONG_MAMBA_PATH), exist_ok=True)
     torch.save(
         {
-            "model_state_dict": model.state_dict(),
-            "version":          LONG_MODEL_VERSION,
-            "seq_len":          seq_len,
-            "pooling":          "attention",
-            "input_features":   INPUT_FEATURES,
-            "feat_dim":         SPECTRAL_FEAT_DIM,
-            "d_model":          D_MODEL,
-            "d_state":          D_STATE,
-            "patch_size":       patch_size,
-            "patch_stride":     patch_stride,
-            "test_mae":         test_metrics["mae"],
-            "test_rmse":        test_metrics["rmse"],
+            "model_state_dict":  model.state_dict(),
+            "version":           LONG_MODEL_VERSION,
+            "seq_len":           seq_len,
+            "pooling":           "attention",
+            "input_features":    LONG_INPUT_FEATURES,
+            "feat_dim":          SPECTRAL_FEAT_DIM,
+            "d_model":           D_MODEL,
+            "d_state":           D_STATE,
+            "patch_size":        patch_size,
+            "patch_stride":      patch_stride,
+            # v2.0 additions
+            "patch_deg_enc":     patch_size > 1,   # PatchDegradationEncoder active
+            "film_depth":        2,                 # 2-layer FiLM MLP
+            "loss":              "smooth_l1_beta0.02",
+            "weighted_loss":     weighted_loss,
+            "scheduler":         "cosine_warmrestarts",
+            "cosine_t0":         cosine_t0,
+            "test_mae":          test_metrics["mae"],
+            "test_rmse":         test_metrics["rmse"],
         },
         LONG_MAMBA_PATH,
     )
@@ -843,6 +909,16 @@ def main() -> None:
     parser.add_argument("--patch-stride", type=int, default=LONG_PATCH_STRIDE,
                         help=f"Patch stride (default {LONG_PATCH_STRIDE} = non-overlapping; "
                              "use 8 for P16S8 overlapping as in PatchTST/MambaDecomp)")
+    # v2.0 training improvements
+    parser.add_argument("--weighted-loss", action="store_true",
+                        help="Upweight near-EOL samples (SOH < 80%%) in SmoothL1 loss "
+                             "(scale controlled by --eol-weight-scale)")
+    parser.add_argument("--eol-weight-scale", type=float, default=2.0,
+                        help="Near-EOL loss multiplier for --weighted-loss (default 2.0; "
+                             "test stability before going above 3.0)")
+    parser.add_argument("--cosine-t0", type=int, default=COSINE_T0,
+                        help=f"T_0 for CosineAnnealingWarmRestarts in the final training stage "
+                             f"(default {COSINE_T0}; must be < final_epochs for at least one restart)")
     args = parser.parse_args()
     if args.forecast:
         holdouts = args.holdout.split(",") if args.holdout else None
@@ -865,6 +941,9 @@ def main() -> None:
             compile_model=args.compile, benchmark=args.benchmark,
             official_mamba=args.official_mamba,
             patch_size=args.patch_size, patch_stride=args.patch_stride,
+            weighted_loss=args.weighted_loss,
+            eol_weight_scale=args.eol_weight_scale,
+            cosine_t0=args.cosine_t0,
         )
     else:
         train(args.data_dir or "data/processed", args.epochs, args.log_dir)
