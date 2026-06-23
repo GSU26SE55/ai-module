@@ -11,3 +11,9 @@ fastapi==0.111.1
 uvicorn[standard]==0.30.1
 python-multipart==0.0.9
 joblib==1.4.2
+
+# RAG / Prescription Layer (GH-20) — chỉ dùng cho POST /prescribe?enrich=true
+# ⚠️ Exception có chủ đích so với rule ai.md ("chỉ PyTorch + scikit-learn") — xem logs/GH-20/plan.md
+chromadb==0.5.3
+sentence-transformers==3.0.1
+anthropic==0.34.2

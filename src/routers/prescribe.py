@@ -1,0 +1,29 @@
+"""POST /prescribe — RAG-augmented maintenance prescription endpoint."""
+from fastapi import APIRouter
+
+from src.schemas.prescribe import PrescribeRequest, PrescribeResponse
+from src.services.prescription import run_prescription
+
+router = APIRouter()
+
+
+@router.post("/prescribe/", response_model=PrescribeResponse)
+async def prescribe(request: PrescribeRequest) -> dict:
+    """
+    Hybrid maintenance prescription for a battery.
+
+    Default (enrich=false): deterministic rule-based prescription, <100ms, no network.
+    enrich=true: also run RAG retrieval + LLM generation (slower, off the P1 hot-path);
+    falls back to the rule-based result if the LLM is unavailable or errors.
+
+    Returns SOH/risk context, action steps, PPE, retrieved evidence (when enriched),
+    and the safety-gate result (human_verification_required forced True for P1).
+    """
+    return run_prescription(
+        readings              = request.readings,
+        battery_id            = request.battery_id,
+        enrich                = request.enrich,
+        age_cycles            = request.age_cycles,
+        last_maintenance_date = request.last_maintenance_date,
+        ticket_history        = request.ticket_history,
+    )
