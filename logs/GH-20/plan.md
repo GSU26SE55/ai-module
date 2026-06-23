@@ -3,6 +3,7 @@
 ## Metadata
 - **Status:** SHIPPED | **Role:** AI | **Ngày:** 2026-06-23
 - **Issue:** #20 — https://github.com/GSU26SE55/ai-module/issues/20
+- **PR:** #21 — https://github.com/GSU26SE55/ai-module/pull/21
 - **Sprint:** Sprint 3 (due 2026-06-27)
 - **Branch:** `feat/GH-20-prescription-hybrid` (tạo từ `dev`)
 
