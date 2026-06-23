@@ -30,3 +30,9 @@
 
 ## human_verification_required: true
 Thermal runaway response requires immediate escalation to P1 ticket.
+
+## References
+- NFPA 855 — Standard for the Installation of Stationary Energy Storage Systems (exclusion zone, fire response).
+- UL 9540A — Test Method for Evaluating Thermal Runaway Fire Propagation in Battery Energy Storage Systems.
+- NFPA 921 — Guide for Fire and Explosion Investigations (post-incident RCA).
+- FAA / industry guidance: do not use water as primary suppression on a propagating Li-ion fire; cool adjacent cells and ventilate.

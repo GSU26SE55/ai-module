@@ -1,35 +1,45 @@
 """
-Prescription generator — orchestrates predict → retrieve → generate → safety gate.
+Prescription generator — Hybrid (rule-based default + optional LLM/RAG enrichment).
 
 POST /prescribe flow:
-  1. Run inference (SOH, risk, warnings)
-  2. Build context queries from prediction
-  3. Retrieve maintenance + safety docs
-  4. Call LLM to generate prescription
-  5. Apply safety gate
-  6. Return structured PrescribeResponse
+  1. Run inference (SOH, risk, warnings).
+  2. Build rule-based prescription (deterministic, <100ms) — ALWAYS the baseline.
+  3. If enrich=True: RAG retrieve docs + LLM generate; on success override the
+     prescription text/steps/PPE. On any failure → keep the rule-based result.
+  4. Apply safety gate (human verification, escalation).
+  5. Return structured PrescribeResponse dict.
+
+The rule-based path never touches the network, so the default (enrich=False) stays
+on the P1 <100ms hot-path. Enrichment is opt-in and explicitly off that path.
 """
-import os
+import logging
 import time
 
 from src.services.inference import run_inference
-from src.services.rag_retriever import RagRetriever
+from src.services.rule_prescription import build_rule_prescription
 from src.services.safety_gate import apply_safety_gate
 
-_retriever = RagRetriever()
+logger = logging.getLogger(__name__)
 
-# LLM config — uses Claude claude-sonnet-4-6 via Anthropic SDK
-# Set ANTHROPIC_API_KEY in .env
-LLM_MODEL = "claude-sonnet-4-6"
-LLM_MAX_TOKENS = 512
+# Lazy singleton — only built when enrichment is first requested, so the rule-only
+# path never pays the SentenceTransformer/ChromaDB import + load cost.
+_retriever = None
+
+
+def _get_retriever():
+    global _retriever
+    if _retriever is None:
+        from src.services.rag_retriever import RagRetriever
+        _retriever = RagRetriever()
+    return _retriever
 
 
 def _build_maintenance_query(prediction: dict, risk: dict) -> str:
     """Build semantic search query from structured prediction."""
     soh   = prediction.get("soh_percent", 0)
-    trend = prediction.get("soh_trend", "stable")
     stage = prediction.get("health_stage", "")
     rate  = prediction.get("degradation_rate_per_cycle", 0)
+    trend = prediction.get("soh_trend", "stable")
     rul   = prediction.get("rul_cycles_estimate", 0)
     return (
         f"Battery SOH {soh:.1f}%, health stage {stage}, "
@@ -45,76 +55,121 @@ def _build_safety_query(warnings: list[dict]) -> str:
     return "battery safety " + " ".join(codes) if codes else "battery general safety"
 
 
-def _call_llm(context: str, maintenance_docs: list[dict], safety_docs: list[dict]) -> dict:
-    """
-    Call LLM to generate structured prescription.
-    Returns dict with prescription, action_steps, ppe_required.
-    Stub implementation — replace with real Anthropic API call.
-    """
-    # TODO: implement with anthropic SDK
-    # import anthropic
-    # client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-    # ...
+def _dedup(items: list[str]) -> list[str]:
+    """Order-preserving de-duplication."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in items:
+        if item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out
 
-    # Stub response for skeleton
-    return {
-        "prescription": (
-            f"Based on the battery assessment: {context[:200]}... "
-            "Please consult the maintenance SOP and safety checklist before proceeding."
-        ),
-        "action_steps": [
-            "Review battery health report with maintenance team",
-            "Follow BMS warning code response procedure",
-            "Complete PPE checklist before physical inspection",
-        ],
-        "ppe_required": ["Insulated gloves", "Safety glasses"],
+
+def _enrich(prediction: dict, risk: dict, warnings: list[dict], rule_out: dict) -> dict:
+    """
+    Run RAG retrieval + LLM generation. Returns a partial dict to merge into the
+    response. On any failure, returns the rule-based fields with enriched=False
+    (docs may still be attached if retrieval succeeded).
+    """
+    from src.services import _llm_client
+
+    result = {
+        "prescription":   rule_out["prescription"],
+        "action_steps":   rule_out["action_steps"],
+        "ppe_required":   rule_out["ppe_required"],
+        "enriched":       False,
+        "maintenance_docs": [],
+        "safety_docs":      [],
+        "rag_ms":         0.0,
+        "llm_ms":         0.0,
     }
 
+    # 1. Retrieve (timed). Retriever returns [] gracefully if ChromaDB unavailable.
+    t_rag = time.perf_counter()
+    try:
+        retriever = _get_retriever()
+        maint_docs  = retriever.retrieve_maintenance(_build_maintenance_query(prediction, risk), top_k=3)
+        safety_docs = retriever.retrieve_safety(_build_safety_query(warnings), top_k=2)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("RAG retrieval failed: %s", exc)
+        maint_docs, safety_docs = [], []
+    result["rag_ms"] = round((time.perf_counter() - t_rag) * 1000, 2)
+    result["maintenance_docs"] = maint_docs
+    result["safety_docs"] = safety_docs
 
-def run_prescription(readings: list[list[float]], battery_id: str, **context_kwargs) -> dict:
+    # 2. LLM (timed). Skip if no API key; fall back on any error.
+    if not _llm_client.is_available():
+        logger.info("ANTHROPIC_API_KEY not set — returning rule-based prescription.")
+        return result
+
+    t_llm = time.perf_counter()
+    try:
+        context = _build_maintenance_query(prediction, risk)
+        llm_out = _llm_client.generate_prescription_llm(context, maint_docs, safety_docs)
+        result["prescription"] = llm_out["prescription"]
+        result["action_steps"] = llm_out["action_steps"]
+        # Union with rule PPE so safety-critical PPE is never dropped by the LLM.
+        result["ppe_required"] = _dedup(rule_out["ppe_required"] + llm_out["ppe_required"])
+        result["enriched"] = True
+    except Exception as exc:
+        logger.warning("LLM enrichment failed, using rule-based prescription: %s", exc)
+    result["llm_ms"] = round((time.perf_counter() - t_llm) * 1000, 2)
+    return result
+
+
+def run_prescription(
+    readings: list[list[float]],
+    battery_id: str,
+    enrich: bool = False,
+    **context_kwargs,
+) -> dict:
     """
-    Full prescription pipeline.
+    Full hybrid prescription pipeline.
 
     Args:
-        readings: (WINDOW_SIZE, 6) sensor readings
-        battery_id: battery identifier
-        context_kwargs: age_cycles, last_maintenance_date, ticket_history
+        readings: sensor window passed through to run_inference.
+        battery_id: battery identifier.
+        enrich: if True, attempt RAG + LLM enrichment (off the P1 hot-path).
+        context_kwargs: age_cycles, last_maintenance_date, ticket_history (reserved).
 
     Returns:
-        PrescribeResponse-compatible dict
+        PrescribeResponse-compatible dict.
     """
-    t_start = time.perf_counter()
-
     # 1. Inference
     prediction_result = run_inference(readings)
-    inference_ms = prediction_result.get("metadata", {}).get("inference_ms", 0)
-
     prediction = prediction_result.get("prediction", {})
     risk       = prediction_result.get("risk", {})
     warnings   = prediction_result.get("evidence", {}).get("warnings", [])
+    inference_ms = prediction_result.get("metadata", {}).get("inference_ms", 0)
 
-    t_rag_start = time.perf_counter()
+    # 2. Rule-based baseline (always)
+    rule_out = build_rule_prescription(prediction, risk, warnings)
 
-    # 2. Build queries
-    maint_query  = _build_maintenance_query(prediction, risk)
-    safety_query = _build_safety_query(warnings)
+    # 3. Optional enrichment
+    if enrich:
+        enriched = _enrich(prediction, risk, warnings, rule_out)
+    else:
+        enriched = {
+            "prescription":   rule_out["prescription"],
+            "action_steps":   rule_out["action_steps"],
+            "ppe_required":   rule_out["ppe_required"],
+            "enriched":       False,
+            "maintenance_docs": [],
+            "safety_docs":      [],
+            "rag_ms":         0.0,
+            "llm_ms":         0.0,
+        }
 
-    # 3. Retrieve docs
-    maint_docs  = _retriever.retrieve_maintenance(maint_query, top_k=3)
-    safety_docs = _retriever.retrieve_safety(safety_query, top_k=2)
-
-    # 4. Generate prescription
-    llm_out = _call_llm(maint_query, maint_docs, safety_docs)
-
-    # 5. Safety gate
+    # 4. Safety gate (runs for both paths)
     gate = apply_safety_gate(
-        priority    = risk.get("priority", "None"),
-        action_code = risk.get("action_code", "MONITOR"),
-        warnings    = warnings,
-        prescription= llm_out["prescription"],
+        priority     = risk.get("priority", "None"),
+        action_code  = risk.get("action_code", "MONITOR"),
+        warnings     = warnings,
+        prescription = enriched["prescription"],
     )
 
-    rag_ms = (time.perf_counter() - t_rag_start) * 1000
+    escalation = _dedup(rule_out["escalation_conditions"] + gate["escalation_conditions"])
 
     return {
         "battery_id":   battery_id,
@@ -123,17 +178,20 @@ def run_prescription(readings: list[list[float]], battery_id: str, **context_kwa
         "priority":     risk.get("priority", "None"),
         "action_code":  risk.get("action_code", "MONITOR"),
 
-        "prescription":           llm_out["prescription"],
-        "action_steps":           llm_out["action_steps"],
-        "escalation_conditions":  gate["escalation_conditions"],
-        "ppe_required":           llm_out["ppe_required"],
+        "prescription":          enriched["prescription"],
+        "action_steps":          enriched["action_steps"],
+        "escalation_conditions": escalation,
+        "ppe_required":          enriched["ppe_required"],
+        "sop_references":        rule_out["sop_references"],
+        "enriched":              enriched["enriched"],
 
-        "maintenance_docs": maint_docs,
-        "safety_docs":      safety_docs,
+        "maintenance_docs": enriched["maintenance_docs"],
+        "safety_docs":      enriched["safety_docs"],
 
         "human_verification_required": gate["human_verification_required"],
         "safety_warnings":             gate["safety_warnings"],
 
         "inference_ms": inference_ms,
-        "rag_ms":       round(rag_ms, 2),
+        "rag_ms":       enriched["rag_ms"],
+        "llm_ms":       enriched["llm_ms"],
     }

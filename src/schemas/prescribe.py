@@ -10,6 +10,9 @@ class PrescribeRequest(PredictRequest):
     age_cycles: int | None = None
     last_maintenance_date: str | None = None
     ticket_history: list[str] = []
+    enrich: bool = False
+    """If True, also run RAG + LLM enrichment (slower, off the P1 hot-path).
+    Default False → deterministic rule-based prescription only (<100ms)."""
 
 
 class RetrievedDoc(BaseModel):
@@ -28,19 +31,24 @@ class PrescribeResponse(BaseModel):
     priority: str         # P1 / P2 / P3 / None
     action_code: str
 
-    # RAG-generated prescription
-    prescription: str     # LLM-generated maintenance recommendation
+    # Prescription (rule-based by default; LLM-generated when enriched=True)
+    prescription: str
     action_steps: list[str]
     escalation_conditions: list[str]
     ppe_required: list[str]
+    sop_references: list[str] = []
 
-    # Retrieved evidence
-    maintenance_docs: list[RetrievedDoc]
-    safety_docs: list[RetrievedDoc]
+    # True when LLM+RAG enrichment ran successfully; False = rule-based fallback.
+    enriched: bool = False
+
+    # Retrieved evidence (empty unless enriched)
+    maintenance_docs: list[RetrievedDoc] = []
+    safety_docs: list[RetrievedDoc] = []
 
     # Safety gate
     human_verification_required: bool = True
     safety_warnings: list[str] = []
 
     inference_ms: float
-    rag_ms: float
+    rag_ms: float = 0.0
+    llm_ms: float = 0.0
