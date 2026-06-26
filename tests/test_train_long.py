@@ -3,7 +3,7 @@
 import torch
 
 from scripts.train import train_long, truncate_seq
-from src.core.config import INPUT_FEATURES, SPECTRAL_FEAT_DIM
+from src.core.config import LONG_INPUT_FEATURES, SPECTRAL_FEAT_DIM
 
 
 def test_truncate_keeps_last_timesteps():
@@ -21,7 +21,7 @@ def test_truncate_noop_when_shorter():
 def _make_long_split(path, n, seq_len):
     torch.save(
         {
-            "X":                      torch.randn(n, seq_len, INPUT_FEATURES),
+            "X":                      torch.randn(n, seq_len, LONG_INPUT_FEATURES),
             "X_feat":                 torch.randn(n, SPECTRAL_FEAT_DIM),
             "y":                      torch.rand(n) * 20 + 80,  # SOH in [80, 100]
             "seq_len":                seq_len,
@@ -33,7 +33,7 @@ def _make_long_split(path, n, seq_len):
 
 def test_train_long_smoke(tmp_path, monkeypatch):
     """Warmup loop runs across stages, transfers weights, saves a checkpoint."""
-    seq_len = 8
+    seq_len = 32  # >= patch_size (LONG_PATCH_SIZE=16) so patching yields >=1 token
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     for name in ("train", "val", "test"):
@@ -45,7 +45,7 @@ def test_train_long_smoke(tmp_path, monkeypatch):
     train_long(
         str(data_dir), str(tmp_path / "logs"),
         accum_steps=2, micro_batch=2, stage_epochs=1, final_epochs=1,
-        stages=[4, 8], num_workers=0,
+        stages=[16, 32], num_workers=0,
     )
 
     assert model_path.exists()
