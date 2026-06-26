@@ -25,7 +25,7 @@ def _make_long_split(path, n, seq_len):
             "X_feat":                 torch.randn(n, SPECTRAL_FEAT_DIM),
             "y":                      torch.rand(n) * 20 + 80,  # SOH in [80, 100]
             "seq_len":                seq_len,
-            "feature_scaler_version": "long-1.0",
+            "feature_scaler_version": "long-2.0",
         },
         path,
     )
