@@ -11,3 +11,11 @@ fastapi==0.111.1
 uvicorn[standard]==0.30.1
 python-multipart==0.0.9
 joblib==1.4.2
+
+# RAG dependencies (optional — only needed when running /prescribe LLM enrichment)
+chromadb==0.5.3
+sentence-transformers==3.0.1
+# ⚠️ anthropic 0.34.2 predates structured outputs (output_config.format) and
+# claude-haiku-4-5. The LLM enrichment in src/services/_llm_client.py needs a
+# recent SDK. After `pip install -U anthropic`, pin the resolved exact version here.
+anthropic>=0.40.0

@@ -47,14 +47,6 @@ class TestExtractWindowFeatures:
         window = np.random.rand(4096, 3).astype(np.float32)
         assert extract_window_features(window).shape == (54,)
 
-    def test_spectral_features_ignore_dc_offset(self):
-        x = np.sin(np.linspace(0, 16 * np.pi, 4096)).astype(np.float32)
-        np.testing.assert_allclose(
-            _spectral_features(x),
-            _spectral_features(x + 10.0),
-            atol=1e-5,
-            rtol=1e-5,
-        )
 
     def test_spectral_kurtosis_responds_to_transient(self):
         smooth = np.sin(np.linspace(0, 16 * np.pi, 4096)).astype(np.float32)

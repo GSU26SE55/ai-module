@@ -86,11 +86,15 @@ def compute_risk_profile(
         risk_level = "Low"
         priority = "None"
 
+    # action_code must be consistent with risk_level (fix P1+MONITOR edge case)
     if health_stage == "End Of Life":
         action_code = "REPLACE_IMMEDIATELY"
     elif health_stage == "Maintenance Required":
         action_code = "SCHEDULE_REPLACEMENT"
     elif health_stage == "Degrading" or anomaly_status in {"Warning", "Anomaly"}:
+        action_code = "SCHEDULE_MAINTENANCE"
+    elif has_critical_warning:
+        # Critical sensor warning on healthy battery → escalate action to match P1 risk
         action_code = "SCHEDULE_MAINTENANCE"
     else:
         action_code = "MONITOR"
