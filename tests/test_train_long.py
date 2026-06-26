@@ -46,6 +46,7 @@ def test_train_long_smoke(tmp_path, monkeypatch):
         str(data_dir), str(tmp_path / "logs"),
         accum_steps=2, micro_batch=2, stage_epochs=1, final_epochs=1,
         stages=[16, 32], num_workers=0,
+        weighted_loss=True,  # exercise the EOL-upweight SmoothL1 path
     )
 
     assert model_path.exists()

@@ -399,7 +399,7 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
     if weighted_loss:
         def criterion(pred, target):  # type: ignore[assignment]
             return _soh_weighted_smooth_l1(pred, target, beta=0.02,
-                                           eol_weight_scale=eol_weight_scale)
+                                           weight_scale=eol_weight_scale)
         logger.info(f"Loss: SmoothL1(beta=0.02) + EOL upweight (scale={eol_weight_scale})")
     else:
         criterion = nn.SmoothL1Loss(beta=0.02)
