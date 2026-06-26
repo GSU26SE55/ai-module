@@ -1,7 +1,10 @@
+import threading
 import time
 
 import numpy as np
 import torch
+
+_MC_LOCK = threading.RLock()  # protects model.train()/eval() during MC Dropout
 
 from src.core import model_loader
 from src.core.config import INPUT_FEATURES, MODEL_VERSION, WINDOW_SIZE
@@ -84,15 +87,18 @@ def run_inference(readings: list[list[float]]) -> dict:
     x_feat_tensor = torch.tensor(feat_scaled, dtype=torch.float32)  # (1, 54)
 
     # MC Dropout: run 20 forward passes with Dropout ON → measure prediction uncertainty
-    # High std (>3%) = model unsure → low confidence | Low std (<1%) = model confident
+    # Lock prevents concurrent requests from corrupting model train/eval state
     MC_RUNS = 20
-    model_loader.soh_model.train()   # enable Dropout
-    with torch.no_grad():
-        mc_preds = [
-            model_loader.soh_model(x_tensor, x_feat_tensor).item() * 100
-            for _ in range(MC_RUNS)
-        ]
-    model_loader.soh_model.eval()    # restore eval mode
+    with _MC_LOCK:
+        model_loader.soh_model.train()   # enable Dropout
+        try:
+            with torch.no_grad():
+                mc_preds = [
+                    model_loader.soh_model(x_tensor, x_feat_tensor).item() * 100
+                    for _ in range(MC_RUNS)
+                ]
+        finally:
+            model_loader.soh_model.eval()  # always restore eval mode
 
     soh      = float(max(0.0, min(100.0, float(np.mean(mc_preds)))))
     soh_std  = float(np.std(mc_preds))

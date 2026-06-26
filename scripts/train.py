@@ -88,9 +88,17 @@ def setup_logger(log_dir: str) -> logging.Logger:
 # ---------------------------------------------------------------------------
 
 def load_split(path: str) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    from src.core.config import FEATURE_SCALER_VERSION
     data = torch.load(path, weights_only=False)
     if "X_feat" not in data:
         raise KeyError(f"'X_feat' not found in {path}. Run scripts/preprocess.py first.")
+    saved_ver = data.get("feature_scaler_version")
+    if saved_ver is not None and saved_ver != FEATURE_SCALER_VERSION:
+        raise ValueError(
+            f"feature version mismatch in {path}: "
+            f"file has {saved_ver}, config expects {FEATURE_SCALER_VERSION}. "
+            "Re-run scripts/preprocess.py."
+        )
     return data["X"], data["X_feat"], data["y"]
 
 

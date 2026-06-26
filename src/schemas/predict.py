@@ -44,6 +44,8 @@ class FeatureStat(BaseModel):
 
 class PredictionInfo(BaseModel):
     soh_percent: float
+    soh_confidence: float   # MC Dropout uncertainty [0,1]: 1=confident, 0=uncertain
+    soh_std: float          # MC Dropout std in % SOH — raw uncertainty
     rul_cycles_estimate: int
     degradation_rate_per_cycle: float
     soh_trend: str
@@ -55,7 +57,7 @@ class PredictionInfo(BaseModel):
 class AnomalyInfo(BaseModel):
     anomaly_score: float
     anomaly_status: str
-    anomaly_confidence: float
+    anomaly_confidence: float   # IsolationForest magnitude — NOT calibrated probability
 
 
 class RiskInfo(BaseModel):
