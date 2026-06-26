@@ -3,7 +3,7 @@ import os
 MODEL_VERSION = "1.2"
 SCALER_VERSION = "1.1"
 FEATURE_SCALER_VERSION = "1.2"
-FEATURE_SCALER_VERSION_LONG = "long-1.0"   # long-sequence (8-feature) pipeline — independent of standard
+FEATURE_SCALER_VERSION_LONG = "long-2.0"   # long-sequence (8-feature) pipeline — independent of standard
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 WEIGHTS_DIR = os.path.join(BASE_DIR, "models", "weights")
