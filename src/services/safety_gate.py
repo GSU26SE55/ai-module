@@ -12,7 +12,8 @@ ALWAYS_REQUIRE_HUMAN = {"P1", "REPLACE_IMMEDIATELY"}
 
 THERMAL_KEYWORDS = {"thermal", "fire", "temp_critical", "temp_elevated", "runaway", "smoke"}
 # TEMP_CRITICAL → human_required=True; TEMP_ELEVATED → warning only (see logic below)
-ELECTRICAL_KEYWORDS = {"voltage_critical", "overcurrent_critical", "electrocution"}
+# NOTE: matched against w["code"].lower(); BMS emits OVERVOLTAGE_CRITICAL → overvoltage_critical
+ELECTRICAL_KEYWORDS = {"voltage_critical", "overvoltage_critical", "overcurrent_critical", "electrocution"}
 
 
 def apply_safety_gate(

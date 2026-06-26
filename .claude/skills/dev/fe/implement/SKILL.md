@@ -191,19 +191,45 @@ src/
     ├── components/
     │   ├── layout/              ← AppLayout, AuthLayout, Sidebar, Header
     │   ├── common/              ← LoadingSpinner, ErrorBoundary, EmptyState
-    │   └── ui/                  ← shadcn generated components
+    │   └── ui/                  ← shadcn generated components (thực tế: src/components/ui/)
     ├── context/
     │   └── authContext.tsx      ← AuthProvider: hydrate sessionStore từ cookie khi boot
     ├── lib/
     │   ├── axios.ts             ← Axios instance + interceptors (không tạo instance mới)
+    │   ├── authz.ts             ← RBAC: P constants, checkPermission(), checkRole()
     │   └── errors.ts            ← HttpError, EntityError, handleErrorApi
     ├── utils/
-    │   └── queryKeys.ts         ← KEY (root) + QUERY_KEY (factories)
+    │   ├── queryKeys.ts         ← KEY (root) + QUERY_KEY (factories)
+    │   └── endpoints.ts         ← ENDPOINTS — single source of truth cho API paths
     ├── stores/
     │   └── sessionStore.ts      ← Zustand: token, user, setToken, logout
+    ├── enums/                   ← `as const` + type alias — dùng cross-feature
+    │   ├── session.enum.ts      ← UserRole
+    │   ├── account.enum.ts      ← AccountStatusEnum, AvatarSourceEnum, RefreshTokenStatus
+    │   ├── ticket.enum.ts       ← TicketStatusEnum, TicketPriorityEnum, ImpactScopeEnum, ...
+    │   ├── battery.enum.ts      ← BatteryStatusEnum
+    │   ├── site.enum.ts         ← SiteStatusEnum
+    │   └── common.enum.ts       ← TrendDir
     └── types/
         ├── api.types.ts         ← ResponseData<T>, PaginationResponse<T>, ErrorEntity
+        ├── ticket.types.ts      ← TicketDTO, TicketDetailDTO, payloads (re-export từ ticket.enum)
+        ├── session.types.ts     ← SessionUser, decodeToken, redirectByRole
         └── common.types.ts      ← BaseFilterPagination, shared query types
+```
+
+**Enum placement rule (bắt buộc):**
+- Dùng ≥ 2 feature → `src/shared/enums/{domain}.enum.ts`
+- Chỉ 1 feature dùng → `src/features/{feature}/enums/{domain}.enum.ts`
+- `types/*.ts` KHÔNG định nghĩa enum inline — import từ `enums/` rồi re-export
+- Dùng `z.nativeEnum(SomeEnum)` trong Zod schema — không dùng `z.enum([...])`
+
+**Enum pattern chuẩn:**
+```ts
+export const TicketStatusEnum = {
+  New: "New",
+  Open: "Open",
+} as const;
+export type TicketStatusEnum = (typeof TicketStatusEnum)[keyof typeof TicketStatusEnum];
 ```
 
 **Không đặt file mới vào `shared/` trừ khi dùng ở ≥ 2 feature khác nhau.**

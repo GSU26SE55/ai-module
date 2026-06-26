@@ -28,3 +28,8 @@
 | SOH_CRITICAL | P2 High | 24 hours |
 | TEMP_ELEVATED | P2 High | 24 hours |
 | SOH_LOW | P3 Standard | 72 hours |
+
+## References
+- Voltage/temperature/current thresholds: typical Li-ion (NMC) cell operating window (3.0–4.2V, ≤45°C) per IEC 62619:2022 — Secondary lithium cells for industrial applications (safety requirements).
+- UL 1973 — Batteries for Use in Stationary and Motive Auxiliary Power Applications (abnormal operating condition limits).
+- Response-time tiers (P1 4h / P2 24h / P3 72h) map to the project SLA policy in `.claude/rules/design.md`.

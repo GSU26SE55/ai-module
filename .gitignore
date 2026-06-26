@@ -32,3 +32,8 @@ models/checkpoints*/
 .venv/
 venv/
 env/
+
+# Node — KHÔNG commit (AI module là Python thuần; tránh lặp lại sự cố node_modules trên feat/RAG_struct)
+node_modules/
+package.json
+package-lock.json

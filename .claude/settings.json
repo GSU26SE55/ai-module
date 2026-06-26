@@ -43,6 +43,12 @@
             "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/be/block-dangerous-commands.sh",
             "timeout": 5,
             "statusMessage": "Checking command safety..."
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/lifecycle/scan-secrets-precommit.sh",
+            "timeout": 10,
+            "statusMessage": "Scanning staged diff for secrets..."
           }
         ]
       },
@@ -116,6 +122,38 @@
             "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/ai/check-random-seed.sh",
             "timeout": 5,
             "statusMessage": "Checking random seed in training script..."
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/lifecycle/track-edits-suggest-compact.sh",
+            "timeout": 5,
+            "statusMessage": "Tracking session size..."
+          }
+        ]
+      }
+    ],
+
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/lifecycle/session-start.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/lifecycle/stop-suggest-lesson.sh",
+            "timeout": 5
           }
         ]
       }

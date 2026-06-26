@@ -138,3 +138,48 @@ def extract_batch_features(windows: np.ndarray) -> np.ndarray:
         np.ndarray of shape (N, 54), float32.
     """
     return np.stack([extract_window_features(w) for w in windows], axis=0)
+
+
+# ---------------------------------------------------------------------------
+# Long-sequence feature engineering (IC curve + phase mask)
+# ---------------------------------------------------------------------------
+
+def compute_ic_feature(voltage: np.ndarray, current: np.ndarray) -> np.ndarray:
+    """Incremental Capacity dQ/dV per timestep — strongest Li-ion aging indicator.
+
+    IC peak at ~3.7 V shifts predictably left with cycle aging, directly encoding
+    SOH fade. Used as channel 7 in long-seq (L=4096) preprocessing.
+
+    References: Dubarry et al. (2020), Weng et al. (2013).
+
+    Args:
+        voltage: (L,) raw unscaled voltage signal.
+        current: (L,) raw unscaled current signal (negative = discharge).
+
+    Returns:
+        np.ndarray of shape (L,), float32, clipped to [-50, 50].
+    """
+    dV = np.diff(voltage, prepend=voltage[0])
+    # Avoid division by near-zero dV while preserving sign
+    dV = np.where(np.abs(dV) < 1e-4, np.sign(dV + 1e-9) * 1e-4, dV)
+    return np.clip(current / dV, -50.0, 50.0).astype(np.float32)
+
+
+def compute_phase_mask(current: np.ndarray, threshold: float = 0.1) -> np.ndarray:
+    """Discharge / charge / rest phase indicator per timestep.
+
+    Values: 0 = rest, 1 = charge (positive current), 2 = discharge (negative current).
+    Used as channel 8 in long-seq preprocessing and for discharge-weighted
+    attention pooling in MambaSOHPredictor.
+
+    Args:
+        current:   (L,) raw unscaled current signal.
+        threshold: absolute current threshold (A) separating active from rest.
+
+    Returns:
+        np.ndarray of shape (L,), float32 with values in {0, 1, 2}.
+    """
+    mask = np.zeros(len(current), dtype=np.float32)
+    mask[current >  threshold] = 1.0   # charging
+    mask[current < -threshold] = 2.0   # discharging
+    return mask

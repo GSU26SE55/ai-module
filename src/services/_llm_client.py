@@ -1,136 +1,128 @@
 """
-Anthropic LLM client for the prescription enrichment layer.
+Anthropic Claude client for the optional /prescribe enrichment.
 
-Isolated from the orchestrator (prescription.py) so the network/SDK concern
-stays in one place and is easy to mock in tests. The model is Claude Haiku 4.5
-— chosen for low latency/cost on the non-critical (P2/P3) enrichment path; P1
-never reaches here (see prescription.py routing).
+Only imported on the enrich path (enrich=true). Returns a structured prescription
+via forced tool-use. Raises on any failure so the caller can fall back to the
+deterministic rule-based prescription — the endpoint must never crash on LLM error.
 
-Design constraints (see docs/prescription-layer.md):
-  - Structured output: the model MUST return a JSON object matching PRESCRIPTION_SCHEMA.
-  - Grounding: the prompt forbids using anything outside the retrieved docs.
-  - Graceful degradation: any failure (no key, SDK missing, timeout, bad output)
-    returns None, and the caller falls back to the deterministic rule baseline.
+Config (env):
+  ANTHROPIC_API_KEY  — required to enrich; if missing, enrichment is skipped.
+  ANTHROPIC_MODEL    — optional override (default: claude-haiku-4-5-20251001).
 """
-import json
 import os
 
-# Claude Haiku 4.5 — low-latency/cost tier for the off-hot-path enrichment.
-LLM_MODEL = "claude-haiku-4-5"
-LLM_MAX_TOKENS = 512
-LLM_TIMEOUT_S = 8.0   # bounded — enrichment is off the P1 hot path but must not hang
-LLM_MAX_RETRIES = 1
-
-# Structured-output schema — the API guarantees the response matches this.
-PRESCRIPTION_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "prescription":  {"type": "string"},
-        "action_steps":  {"type": "array", "items": {"type": "string"}},
-        "ppe_required":  {"type": "array", "items": {"type": "string"}},
-    },
-    "required": ["prescription", "action_steps", "ppe_required"],
-    "additionalProperties": False,
-}
+# Default to Claude Haiku 4.5 — cheap/fast, sufficient for short structured output.
+DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+MAX_TOKENS = 512
+TIMEOUT_S = 10.0
+MAX_RETRIES = 1
 
 _SYSTEM_PROMPT = (
-    "You are a battery-maintenance assistant for a solar lithium-ion monitoring "
-    "system. You ENRICH a deterministic rule-based maintenance prescription with "
-    "clearer prose and any additional steps justified by the retrieved knowledge "
-    "documents.\n\n"
+    "You are a battery maintenance assistant for a solar lithium-ion storage system. "
+    "Generate a concise, actionable maintenance prescription. "
     "STRICT RULES:\n"
-    "1. Use ONLY the information in the retrieved documents below. Do NOT invent "
-    "procedures, thresholds, or part numbers not present in them.\n"
-    "2. If the documents do not support a richer prescription, return the rule "
-    "baseline text unchanged.\n"
-    "3. Never weaken or remove a safety step. You may only add.\n"
-    "4. Keep action_steps concrete and ordered."
+    "1. Use ONLY information supported by the retrieved documents provided below. "
+    "Do NOT invent procedures, thresholds, part numbers, or safety steps.\n"
+    "2. If the retrieved documents do not cover the situation, say so explicitly and "
+    "recommend escalating to a qualified technician.\n"
+    "3. Never recommend touching a battery under a critical electrical or thermal warning "
+    "without Lockout/Tagout and human verification.\n"
+    "4. Keep action_steps short and imperative."
 )
 
+_TOOL = {
+    "name": "emit_prescription",
+    "description": "Return the structured maintenance prescription.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "prescription": {
+                "type": "string",
+                "description": "1-3 sentence maintenance recommendation grounded in the retrieved docs.",
+            },
+            "action_steps": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Ordered, imperative maintenance steps.",
+            },
+            "ppe_required": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Required personal protective equipment.",
+            },
+        },
+        "required": ["prescription", "action_steps", "ppe_required"],
+    },
+}
 
-def _format_docs(docs: list[dict]) -> str:
+
+def is_available() -> bool:
+    """True if an API key is configured (enrichment possible)."""
+    return bool(os.getenv("ANTHROPIC_API_KEY"))
+
+
+def _format_docs(label: str, docs: list[dict]) -> str:
     if not docs:
-        return "(none)"
-    return "\n\n".join(
-        f"[{d.get('source', '?')}] {d.get('title', '')}\n{d.get('content', '')}"
-        for d in docs
-    )
+        return f"{label}: (none retrieved)"
+    lines = [f"{label}:"]
+    for d in docs:
+        src = d.get("source", "unknown")
+        content = d.get("content", "").strip()
+        lines.append(f"- [{src}] {content}")
+    return "\n".join(lines)
 
 
-def _build_user_prompt(
+def generate_prescription_llm(
     context: str,
-    rule_baseline: dict,
     maintenance_docs: list[dict],
     safety_docs: list[dict],
-) -> str:
-    return (
-        f"BATTERY CONTEXT:\n{context}\n\n"
-        f"RULE BASELINE (do not weaken):\n"
-        f"- prescription: {rule_baseline.get('prescription', '')}\n"
-        f"- action_steps: {json.dumps(rule_baseline.get('action_steps', []))}\n"
-        f"- ppe_required: {json.dumps(rule_baseline.get('ppe_required', []))}\n\n"
-        f"RETRIEVED MAINTENANCE DOCS:\n{_format_docs(maintenance_docs)}\n\n"
-        f"RETRIEVED SAFETY DOCS:\n{_format_docs(safety_docs)}\n\n"
-        "Return the enriched prescription as JSON matching the required schema."
-    )
-
-
-def call_structured_prescription(
-    context: str,
-    rule_baseline: dict,
-    maintenance_docs: list[dict],
-    safety_docs: list[dict],
-) -> dict | None:
+    model: str | None = None,
+) -> dict:
     """
-    Call Claude Haiku 4.5 for a structured, doc-grounded prescription.
+    Call Claude to generate a structured prescription.
 
-    Returns a dict with keys {prescription, action_steps, ppe_required} on success,
-    or None on any failure (missing key, SDK not installed, API error, timeout, or
-    malformed output) so the caller can fall back to the rule baseline.
+    Returns dict with keys: prescription, action_steps, ppe_required.
+    Raises RuntimeError on missing key / API error / malformed output — caller MUST
+    catch and fall back to the rule-based prescription.
     """
-    if not os.getenv("ANTHROPIC_API_KEY"):
-        return None
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY not set — cannot enrich.")
+
     try:
         import anthropic
-    except ImportError:
-        return None
+    except ImportError as exc:  # pragma: no cover - dependency guard
+        raise RuntimeError("anthropic SDK not installed.") from exc
 
-    client = anthropic.Anthropic().with_options(
-        timeout=LLM_TIMEOUT_S, max_retries=LLM_MAX_RETRIES
+    user_content = (
+        f"Battery assessment:\n{context}\n\n"
+        f"{_format_docs('Retrieved maintenance documents', maintenance_docs)}\n\n"
+        f"{_format_docs('Retrieved safety documents', safety_docs)}\n\n"
+        "Produce the prescription using the emit_prescription tool."
     )
 
+    client = anthropic.Anthropic(api_key=api_key, timeout=TIMEOUT_S, max_retries=MAX_RETRIES)
     try:
-        response = client.messages.create(
-            model=LLM_MODEL,
-            max_tokens=LLM_MAX_TOKENS,
+        resp = client.messages.create(
+            model=model or os.getenv("ANTHROPIC_MODEL", DEFAULT_MODEL),
+            max_tokens=MAX_TOKENS,
             system=_SYSTEM_PROMPT,
-            messages=[{
-                "role": "user",
-                "content": _build_user_prompt(
-                    context, rule_baseline, maintenance_docs, safety_docs
-                ),
-            }],
-            output_config={"format": {"type": "json_schema", "schema": PRESCRIPTION_SCHEMA}},
+            tools=[_TOOL],
+            tool_choice={"type": "tool", "name": "emit_prescription"},
+            messages=[{"role": "user", "content": user_content}],
         )
-    except anthropic.APIError:
-        return None
-    except Exception:
-        # Defensive: never let an LLM/transport error break the prescription path.
-        return None
+    except Exception as exc:  # anthropic.APIError, timeouts, etc.
+        raise RuntimeError(f"Anthropic API call failed: {exc}") from exc
 
-    # output_config.format guarantees the first text block is schema-valid JSON.
-    text = next((b.text for b in response.content if b.type == "text"), None)
-    if not text:
-        return None
-    try:
-        data = json.loads(text)
-    except (json.JSONDecodeError, TypeError):
-        return None
+    for block in resp.content:
+        if getattr(block, "type", None) == "tool_use":
+            out = block.input
+            if not isinstance(out, dict) or "prescription" not in out:
+                raise RuntimeError("LLM returned malformed tool output.")
+            return {
+                "prescription": str(out.get("prescription", "")),
+                "action_steps": list(out.get("action_steps", [])),
+                "ppe_required": list(out.get("ppe_required", [])),
+            }
 
-    if not isinstance(data.get("prescription"), str):
-        return None
-    return {
-        "prescription": data["prescription"],
-        "action_steps": [str(s) for s in data.get("action_steps", [])],
-        "ppe_required": [str(s) for s in data.get("ppe_required", [])],
-    }
+    raise RuntimeError("LLM response contained no tool_use block.")

@@ -8,8 +8,8 @@ Usage:
 """
 import os
 
-# TODO: install chromadb + sentence-transformers
-# pip install chromadb sentence-transformers
+# Requires chromadb + sentence-transformers (pinned in requirements.txt).
+# Build the vector store once via: python scripts/ingest_rag.py
 
 EMBEDDINGS_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
@@ -24,7 +24,7 @@ KNOWLEDGE_DIR = os.path.join(
 class RagRetriever:
     """
     Semantic retriever over maintenance and safety knowledge bases.
-    Call ingest() once (or via scripts/ingest_rag.py) to build the vector store.
+    Build the vector store once via scripts/ingest_rag.py before use.
     """
 
     def __init__(self) -> None:
@@ -35,8 +35,15 @@ class RagRetriever:
 
             self._client = chromadb.PersistentClient(path=EMBEDDINGS_DIR)
             self._encoder = SentenceTransformer("all-MiniLM-L6-v2")
-            self._maintenance_col = self._client.get_or_create_collection("maintenance")
-            self._safety_col     = self._client.get_or_create_collection("safety")
+            # cosine space → relevance_score = 1 - cosine_distance ∈ [0, 1] for similar docs.
+            # NOTE: ChromaDB reconstructs its default ONNX embedder when reopening a persisted
+            # collection; `import onnxruntime` can fail inside a worker thread on Windows. We
+            # always pass our own query embeddings, so this only affects the enrich path and is
+            # handled by the caller's fallback. See logs/GH-20/test.md (RISK).
+            self._maintenance_col = self._client.get_or_create_collection(
+                "maintenance", metadata={"hnsw:space": "cosine"})
+            self._safety_col = self._client.get_or_create_collection(
+                "safety", metadata={"hnsw:space": "cosine"})
             self._ready = True
         except ImportError:
             self._ready = False
@@ -69,6 +76,7 @@ class RagRetriever:
                 "title":           results["metadatas"][0][i].get("title", ""),
                 "content":         doc,
                 "source":          results["metadatas"][0][i].get("source", ""),
-                "relevance_score": 1.0 - results["distances"][0][i],
+                # cosine distance ∈ [0, 2]; clamp similarity to [0, 1]
+                "relevance_score": max(0.0, 1.0 - results["distances"][0][i]),
             })
         return docs

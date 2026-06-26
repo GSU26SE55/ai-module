@@ -36,3 +36,9 @@
 
 ## human_verification_required: true
 All safety procedures require verification by qualified technician before execution.
+
+## References
+- NFPA 70E — Standard for Electrical Safety in the Workplace (arc-flash PPE, energized-work boundaries).
+- OSHA 29 CFR 1910.147 — The Control of Hazardous Energy (Lockout/Tagout).
+- ANSI/ISEA Z87.1 — Eye and Face Protection.
+- ASTM D120 — Rubber Insulating Gloves (voltage rating).

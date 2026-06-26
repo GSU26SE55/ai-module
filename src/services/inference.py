@@ -8,16 +8,18 @@ _MC_LOCK = threading.RLock()  # protects model.train()/eval() during MC Dropout
 
 from src.core import model_loader
 from src.core.config import INPUT_FEATURES, MODEL_VERSION, WINDOW_SIZE
-from src.features.extractor import extract_window_features
+from src.features.extractor import (
+    compute_ic_feature,
+    compute_phase_mask,
+    extract_window_features,
+)
 from src.models.anomaly_detector import (
     classify_anomaly,
     classify_anomaly_status,
     classify_health_stage,
-    compute_risk_profile,
     compute_degradation_metrics,
-    estimate_rul,
+    compute_risk_profile,
     generate_warnings,
-    get_recommended_action,
 )
 
 _FEATURE_NAMES = ["voltage", "current", "temperature", "current_load", "voltage_load", "time"]
@@ -171,4 +173,50 @@ def run_inference(readings: list[list[float]]) -> dict:
         "recommended_action":         risk["action_code"],
         "warnings":                   warnings,
         "feature_summary":            feature_summary,
+    }
+
+
+def predict_soh_long(readings: list[list[float]], device: str | None = None) -> dict:
+    """Fast-path SOH inference for long sequences (L up to 4096), GH-10.
+
+    Single forward pass (no MC-dropout) with the attention-pooling long model on
+    GPU when available. Lazily loads the long artifacts on first call. Returns SOH
+    only — anomaly/IsolationForest is trained on the window=30 feature distribution
+    and is out of scope for the long pipeline.
+
+    Args:
+        readings: (L, 6) preferred or legacy (L, 3) raw sensor values, L up to 4096.
+        device:   override device ("cpu" / "cuda"); defaults to CUDA if available.
+    """
+    if model_loader.long_soh_model is None or (device is not None and str(model_loader.long_device) != device):
+        model_loader.load_long_model(device)
+    dev = model_loader.long_device
+
+    start = time.perf_counter()
+    raw = np.array(readings, dtype=np.float32)
+    x   = _align_features(raw)          # (L, 6) — align to base 6 features
+
+    # Extend to 8 features: append IC curve (dQ/dV) + phase mask.
+    # These are computed from raw voltage/current so the API stays at 6 features.
+    ic    = compute_ic_feature(x[:, 0], x[:, 1])   # (L,)
+    phase = compute_phase_mask(x[:, 1])             # (L,)
+    x8    = np.column_stack([x, ic, phase])         # (L, 8)
+
+    x_scaled = model_loader.long_scaler.transform(x8)
+    x_tensor = torch.tensor(x_scaled, dtype=torch.float32).unsqueeze(0).to(dev)
+
+    raw_feat    = extract_window_features(x_scaled[:, :3])
+    feat_scaled = model_loader.long_feature_scaler.transform(raw_feat.reshape(1, -1))
+    x_feat_tensor = torch.tensor(feat_scaled, dtype=torch.float32).to(dev)
+
+    with torch.no_grad():
+        soh = float(model_loader.long_soh_model(x_tensor, x_feat_tensor).item()) * 100
+    soh = float(max(0.0, min(100.0, soh)))
+    elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
+
+    return {
+        "soh_percent":  round(soh, 2),
+        "seq_len":      int(raw.shape[0]),
+        "device":       str(dev),
+        "inference_ms": elapsed_ms,
     }

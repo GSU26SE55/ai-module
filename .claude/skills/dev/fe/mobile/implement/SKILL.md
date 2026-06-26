@@ -153,17 +153,44 @@ app/                           ← Expo Router — file-based routing
     └── notifications.tsx
 
 src/
+├── shared/
+│   └── enums/                 ← enums dùng cross-feature (ticket, session)
+│       ├── session.enum.ts    ← UserRole
+│       └── ticket.enum.ts     ← TicketStatusEnum, TicketPriorityEnum, ...
 ├── features/
 │   └── {feature}/
+│       ├── enums/             ← enums chỉ dùng trong feature này
 │       ├── hooks/             ← useQuery / useMutation (TanStack Query)
 │       ├── services/          ← Axios API calls qua axiosInstance
-│       ├── types/             ← TypeScript types
+│       ├── types/             ← import + re-export từ enums/ — KHÔNG define inline
 │       └── components/        ← UI components của feature
 ├── lib/
 │   ├── axios.ts               ← Axios instance + interceptors (KHÔNG tạo instance mới)
-│   └── secureStore.ts         ← expo-secure-store wrapper
+│   ├── secureStore.ts         ← expo-secure-store wrapper
+│   └── endpoints.ts           ← ENDPOINTS — KHÔNG hardcode URL trong service
 └── stores/
-    └── sessionStore.ts        ← Zustand: token, user, setToken, logout
+    └── sessionStore.ts        ← Zustand: user, setSession, clearSession
+```
+
+**Enum placement rule:**
+- Enum dùng **cross-feature** (ticket states, user roles) → `src/shared/enums/`
+- Enum chỉ dùng **trong 1 feature** → `src/features/{feature}/enums/`
+- `types/*.ts` chỉ được **import + re-export** từ `enums/` — KHÔNG define `as const` object trong types file
+
+**Enum pattern chuẩn:**
+```ts
+// src/shared/enums/ticket.enum.ts (hoặc features/{feature}/enums/*.enum.ts)
+export const TicketStatusEnum = {
+  New: 'New',
+  Open: 'Open',
+  // ...
+} as const;
+export type TicketStatusEnum = (typeof TicketStatusEnum)[keyof typeof TicketStatusEnum];
+
+// src/features/tickets/types/ticket.types.ts
+export { TicketStatusEnum } from '../../../shared/enums/ticket.enum';
+import type { TicketStatusEnum } from '../../../shared/enums/ticket.enum';
+// DTO definitions dùng TicketStatusEnum bình thường...
 ```
 
 **Quy tắc bắt buộc:**

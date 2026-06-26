@@ -239,3 +239,26 @@ Thêm RabbitMQ consumer:
 Viết unit tests:
 4. /scaffold-unit-tests BatteryService Battery
 ```
+
+---
+
+## Quy tắc đặt tên Branch
+
+| Branch | Mục đích | Tạo bởi |
+|--------|----------|---------|
+| `main` | Production-ready; protected — merge chỉ qua approved PR | — |
+| `dev` | Integration — target cho mọi feature PR | — |
+| `staging` | Test gần production | — |
+| `feat/GH-[number]-slug` | Feature branch — 1 issue = 1 branch | `/kltn-implement` |
+| `fix/GH-[number]-slug` | Bug fix — issue label `type: fix` | `/kltn-debug` |
+| `chore/[purpose]` | Maintenance — deps, config, tooling | manual |
+| `docs/[purpose]` | Documentation | manual |
+| `refactor/[purpose]` | Refactor — không đổi behavior | manual |
+| `test/[purpose]` | Viết / cập nhật test cases | manual |
+
+**Quy tắc bắt buộc:**
+- 1 issue = 1 branch — không gộp nhiều issue vào 1 branch
+- `slug` là tên ngắn mô tả issue, dùng kebab-case (ví dụ: `feat/GH-42-add-battery-crud`)
+- Không merge thẳng vào `dev` — luôn qua PR có ít nhất 1 reviewer approve
+- Commit message: `type(#[number]): mô tả` (ví dụ: `feat(#42): add Battery CRUD`)
+- PR body **phải có** `Closes #[number]` để GitHub tự close issue khi merge

@@ -79,12 +79,13 @@ def main() -> None:
     client  = chromadb.PersistentClient(path=EMBEDDINGS_DIR)
     encoder = SentenceTransformer("all-MiniLM-L6-v2")
 
+    # cosine space → relevance_score = 1 - cosine_distance ∈ [0, 1] for similar docs
     print("Ingesting maintenance knowledge...")
-    maint_col = client.get_or_create_collection("maintenance")
+    maint_col = client.get_or_create_collection("maintenance", metadata={"hnsw:space": "cosine"})
     n_maint = ingest_collection(maint_col, encoder, "maintenance")
 
     print("Ingesting safety knowledge...")
-    safety_col = client.get_or_create_collection("safety")
+    safety_col = client.get_or_create_collection("safety", metadata={"hnsw:space": "cosine"})
     n_safety = ingest_collection(safety_col, encoder, "safety")
 
     print(f"\nDone: {n_maint} maintenance chunks, {n_safety} safety chunks")

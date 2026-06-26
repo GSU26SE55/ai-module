@@ -10,21 +10,19 @@ router = APIRouter()
 @router.post("/prescribe/", response_model=PrescribeResponse)
 async def prescribe(request: PrescribeRequest) -> dict:
     """
-    Run AI prediction + RAG retrieval + LLM prescription for a battery.
+    Hybrid maintenance prescription for a battery.
 
-    Hybrid: rule-based prescription always runs (default + fallback); LLM+RAG
-    enriches non-critical (P2/P3) tickets or when `detail=True` is requested.
+    Default (enrich=false): deterministic rule-based prescription, <100ms, no network.
+    enrich=true: also run RAG retrieval + LLM generation (slower, off the P1 hot-path);
+    falls back to the rule-based result if the LLM is unavailable or errors.
 
-    Returns structured maintenance recommendation with:
-    - SOH prediction and risk assessment
-    - Rule-based action steps + PPE (always)
-    - Retrieved maintenance/safety documentation (when enriched)
-    - Safety gate result (human_verification_required always True for P1)
+    Returns SOH/risk context, action steps, PPE, retrieved evidence (when enriched),
+    and the safety-gate result (human_verification_required forced True for P1).
     """
     return run_prescription(
         readings              = request.readings,
         battery_id            = request.battery_id,
-        detail                = request.detail,
+        enrich                = request.enrich,
         age_cycles            = request.age_cycles,
         last_maintenance_date = request.last_maintenance_date,
         ticket_history        = request.ticket_history,

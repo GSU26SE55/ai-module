@@ -68,14 +68,42 @@ gh issue create \
   --repo "GSU26SE55/backend" \
   --title "[BE] Tên task ngắn gọn" \
   --body "$(cat <<'EOF'
-## Mục tiêu
-[Mô tả task]
+## Mô tả
+[Mô tả task — issue này cần làm gì, output là gì]
+
+## Scope
+**Trong scope:**
+- ...
+
+**Ngoài scope:**
+- ...
+
+## Endpoints
+| Method | Path | Mục đích | Auth |
+|--------|------|----------|------|
+| GET | `/api/...` | ... | Admin/Manager/Staff |
+
+## Approach
+[Hướng xử lý: entity, CQRS command/query, service liên quan]
+
+## Steps
+- [ ] Bước 1: ...
+- [ ] Bước 2: ...
+- [ ] Bước 3: `dotnet test` + build → PASS
+
+## Edge Cases
+- ...
 
 ## Acceptance Criteria
 - [ ] ...
 
-## Ghi chú
-[Technical notes nếu có]
+## Technical Notes
+- Stack: ASP.NET Core · EF Core · PostgreSQL · MediatR
+- Luôn filter `.Where(x => !x.IsDeleted)` trong mọi query
+- Enum values bắt đầu từ 1, không phải 0
+
+---
+> Plan chi tiết: `logs/GH-ISSUE_NUMBER/plan.md`
 EOF
 )" \
   --label "status: init,role: BE,type: feat,priority: P3: Standard (72h)" \
@@ -86,7 +114,47 @@ EOF
 gh issue create \
   --repo "GSU26SE55/frontend" \
   --title "[FE] Tên task ngắn gọn" \
-  --body "..." \
+  --body "$(cat <<'EOF'
+## Mô tả
+[Mô tả task — issue này cần làm gì, output là gì]
+
+## Scope
+**Trong scope:**
+- ...
+
+**Ngoài scope:**
+- ...
+
+## Endpoints
+| Method | Path | Request Body | Response |
+|--------|------|-------------|----------|
+| GET | `/api/...` | — | `CommonResponse<...>` |
+
+## Approach
+[Hướng xử lý: component, state management, hooks, API calls]
+
+## Steps
+- [ ] Bước 1: Tạo types + schemas
+- [ ] Bước 2: Tạo service + hooks
+- [ ] Bước 3: Tạo components + pages
+- [ ] Bước 4: Wire vào router
+- [ ] Bước 5: `tsc --noEmit` + `eslint --max-warnings=0` + `npm run build` → PASS
+
+## Edge Cases
+- ...
+
+## Acceptance Criteria
+- [ ] ...
+
+## Technical Notes
+- Stack: React · TanStack Query · Zod · shadcn/ui
+- Không gọi API trong component — luôn qua services/ → hook
+- Không dùng localStorage cho token
+
+---
+> Plan chi tiết: `logs/GH-ISSUE_NUMBER/plan.md`
+EOF
+)" \
   --label "status: init,role: FE,type: feat,priority: P3: Standard (72h)" \
   --milestone "$SPRINT_NAME" \
   --assignee "github-username"
@@ -95,7 +163,45 @@ gh issue create \
 gh issue create \
   --repo "GSU26SE55/ai-module" \
   --title "[AI] Tên task ngắn gọn" \
-  --body "..." \
+  --body "$(cat <<'EOF'
+## Mô tả
+[Mô tả task — issue này cần làm gì, output là gì]
+
+## Scope
+**Trong scope:**
+- ...
+
+**Ngoài scope:**
+- ...
+
+## Endpoints
+| Method | Path | Mục đích |
+|--------|------|----------|
+| POST | `/api/...` | ... |
+
+## Approach
+[Hướng xử lý, data flow, model/architecture liên quan]
+
+## Steps
+- [ ] Bước 1: ...
+- [ ] Bước 2: ...
+- [ ] Bước 3: `pytest --cov=src` + build → PASS
+
+## Edge Cases
+- ...
+
+## Acceptance Criteria
+- [ ] ...
+
+## Technical Notes
+- Stack: Python 3.11 · PyTorch · FastAPI · scikit-learn
+- Seed: `random_seed = 42` bắt buộc
+- Inference latency target: < 100ms
+
+---
+> Plan chi tiết: `logs/GH-ISSUE_NUMBER/plan.md`
+EOF
+)" \
   --label "status: init,role: AI,type: feat,priority: P3: Standard (72h)" \
   --milestone "$SPRINT_NAME" \
   --assignee "github-username"
@@ -104,7 +210,47 @@ gh issue create \
 gh issue create \
   --repo "GSU26SE55/mobile" \
   --title "[Mobile] Tên task ngắn gọn" \
-  --body "..." \
+  --body "$(cat <<'EOF'
+## Mô tả
+[Mô tả task — issue này cần làm gì, output là gì]
+
+## Scope
+**Trong scope:**
+- ...
+
+**Ngoài scope:**
+- ...
+
+## Endpoints
+| Method | Path | Request Body | Response |
+|--------|------|-------------|----------|
+| GET | `/api/...` | — | `CommonResponse<...>` |
+
+## Approach
+[Hướng xử lý: screen, navigation, hooks, API calls]
+
+## Steps
+- [ ] Bước 1: Tạo types + schemas
+- [ ] Bước 2: Tạo service + hooks
+- [ ] Bước 3: Tạo components + screens
+- [ ] Bước 4: Wire vào Expo Router
+- [ ] Bước 5: `tsc --noEmit` + build → PASS
+
+## Edge Cases
+- ...
+
+## Acceptance Criteria
+- [ ] ...
+
+## Technical Notes
+- Stack: React Native · Expo · TanStack Query · Zustand
+- Không dùng AsyncStorage cho token — dùng expo-secure-store
+- Không gọi API trong component — luôn qua services/ → hook
+
+---
+> Plan chi tiết: `logs/GH-ISSUE_NUMBER/plan.md`
+EOF
+)" \
   --label "status: init,role: Mobile,type: feat,priority: P3: Standard (72h)" \
   --milestone "$SPRINT_NAME" \
   --assignee "github-username"
