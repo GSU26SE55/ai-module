@@ -21,15 +21,18 @@
 | Train / Val / Test | 70 / 15 / 15 | Chia theo battery ID, không theo timestep — xem bảng bên dưới |
 | Random seed | 42 | Bắt buộc mọi script (train, preprocess) |
 
-**Train/Val/Test split — NASA Ames (cố định, không thay đổi):**
+**Train/Val/Test split — NASA Ames (chia theo battery ID, KHÔNG theo timestep):**
 
-| Split | Battery IDs | Ghi chú |
-|-------|-------------|---------|
-| Train | B0005, B0006, B0007 | ~70% data |
-| Val   | B0018 (70% đầu timestep) | ~15% data |
-| Test  | B0018 (30% cuối timestep) | ~15% data |
+| Split | Battery IDs | Số pin |
+|-------|-------------|--------|
+| Train | B0005/06/07/18, B0025–B0032, B0033, B0034, B0042–B0044, B0041, B0045, B0053, B0054, B0055, B0056 | 23 |
+| Val   | B0046, B0047 (4°C) | 2 |
+| Test  | B0048 (4°C) — held out hoàn toàn | 1 |
 
-> Chia theo battery ID trước, sau đó chia timestep cho B0018 (val/test). KHÔNG được xáo trộn ngẫu nhiên.
+> Chia HẲN theo battery ID (1 pin chỉ thuộc 1 split) — đo đúng cross-battery generalization, không phải chia timestep trong 1 pin.
+> **Bắt buộc có pin 4°C trong train** (B0041/45/53/54/55/56): val/test đều 4°C, nếu train thiếu domain 4°C model phải extrapolate → generalization gap lớn.
+> Nguồn duy nhất của split: `scripts/preprocess.py` (`TRAIN_IDS`/`VAL_IDS`/`TEST_IDS`). Sửa ở đó, không hardcode nơi khác.
+> Bỏ qua: B0036 (SOH spike 122% — nhiễu), B0049–B0052 (quá ngắn/corrupt), B0038–B0040 (dự phòng).
 
 **Metric đánh giá:**
 - SOH regression: MAE < 2%, RMSE < 3%
