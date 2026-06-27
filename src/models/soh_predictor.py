@@ -300,7 +300,7 @@ class MambaSOHPredictor(nn.Module):
 
       h → FiLM(x_feat, 2-layer MLP) → Linear(d_model→32) → GELU+Dropout → Linear(32→1)
 
-    Patch size 16 follows PatchTST/MambaDecomp (Nie et al. NeurIPS 2023).
+    Patch size 16 follows PatchTST/MambaDecomp (Nie et al. ICLR 2023).
     PatchDegradationEncoder inspired by DualMamba (2026) and localized feature
     selection (JEC 2025). Pure PyTorch, no CUDA kernel — Windows-compatible.
     """

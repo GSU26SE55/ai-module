@@ -287,10 +287,15 @@ def truncate_seq(X: torch.Tensor, stage_len: int) -> torch.Tensor:
 
 
 def _train_epoch_accum(model, loader, optimizer, criterion, amp_scaler, amp_ctx,
-                       device, grad_clip, n_samples, accum_steps) -> float:
+                       device, grad_clip, n_samples, accum_steps, jitter: float = 0.0) -> float:
     """One epoch with gradient accumulation: step optimizer every `accum_steps`
     micro-batches (and once at the end to flush the remainder), so effective
-    batch = micro_batch * accum_steps while peak memory stays at micro_batch."""
+    batch = micro_batch * accum_steps while peak memory stays at micro_batch.
+
+    jitter>0 adds train-time Gaussian noise to the scaled input sequence (Tikhonov
+    regularization, Bishop 1995) — improves cell-to-cell robustness on the held-out
+    battery. Applied to X only (NOT x_feat); RNG is globally seeded so it stays
+    reproducible across deterministic runs."""
     model.train()
     total = 0.0
     n_batches = len(loader)
@@ -299,8 +304,11 @@ def _train_epoch_accum(model, loader, optimizer, criterion, amp_scaler, amp_ctx,
         # Signal CUDA Graphs that a new step begins — prevents tensor overwrite errors
         # when reduce-overhead mode replays the same graph across accum_steps iterations.
         torch.compiler.cudagraph_mark_step_begin()
+        X_b = X_b.to(device)
+        if jitter > 0.0:
+            X_b = X_b + jitter * torch.randn_like(X_b)
         with amp_ctx():
-            pred = model(X_b.to(device), X_feat_b.to(device))
+            pred = model(X_b, X_feat_b.to(device))
             loss = criterion(pred, (y_b / 100.0).to(device))
         amp_scaler.scale(loss / accum_steps).backward()
         if (i + 1) % accum_steps == 0 or (i + 1) == n_batches:
@@ -336,7 +344,8 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
                official_mamba: bool = False,
                patch_size: int = LONG_PATCH_SIZE, patch_stride: int = LONG_PATCH_STRIDE,
                weighted_loss: bool = False, eol_weight_scale: float = 2.0,
-               cosine_t0: int = 25) -> None:
+               cosine_t0: int = 25, weight_decay: float = 1e-5, dropout: float = 0.2,
+               jitter: float = 0.0) -> None:
     """Train the long-sequence model (L up to 4096) with progressive length warmup.
 
     Each stage truncates sequences to a shorter length (cheap epochs), carrying
@@ -378,6 +387,7 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
         d_model=D_MODEL, d_state=D_STATE, pooling="attention",
         use_official_mamba=official_mamba,
         patch_size=patch_size, patch_stride=patch_stride,
+        dropout=dropout,
     ).to(device)
     if compile_model:
         try:
@@ -385,7 +395,9 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
             logger.info("torch.compile: ON (default, dynamic=True) — handles variable L across warmup stages without recompilation")
         except Exception as e:
             logger.warning(f"torch.compile unavailable ({e}) — falling back to eager")
-    optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=1e-5)
+    # AdamW (decoupled weight decay, Loshchilov & Hutter ICLR 2019) — correct form
+    # for the L2 regularization that targets the cross-battery generalization gap.
+    optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=weight_decay)
     # Warmup stages use ReduceLROnPlateau (cheap, short epochs).
     # Final stage switches to CosineAnnealingWarmRestarts — prevents the monotonic
     # LR decay that caused the v1.x MAE ceiling (ReduceLROnPlateau killed LR before
@@ -405,6 +417,7 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
         criterion = nn.SmoothL1Loss(beta=0.02)
         logger.info("Loss: SmoothL1(beta=0.02)")
     GRAD_CLIP = 1.0
+    logger.info(f"Optim: AdamW(lr={LR}, weight_decay={weight_decay}) | dropout={dropout} | jitter={jitter}")
 
     # Warmup stages ≤ seq_len, always ending exactly at seq_len
     base    = stages if stages is not None else WARMUP_STAGES
@@ -457,7 +470,7 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
         for epoch in range(1, n_epochs + 1):
             train_loss  = _train_epoch_accum(
                 model, loader, optimizer, criterion, amp_scaler, _amp_ctx,
-                device, GRAD_CLIP, len(Xtr_s), accum_steps,
+                device, GRAD_CLIP, len(Xtr_s), accum_steps, jitter=jitter,
             )
             val_metrics = evaluate(model, Xval_s, X_feat_val, y_val, device, batch_size=eval_batch)
             val_loss    = val_metrics["loss"]
@@ -515,6 +528,10 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
             "weighted_loss":     weighted_loss,
             "scheduler":         "cosine_warmrestarts",
             "cosine_t0":         cosine_t0,
+            "optimizer":         "adamw",
+            "weight_decay":      weight_decay,
+            "dropout":           dropout,
+            "jitter":            jitter,
             "test_mae":          test_metrics["mae"],
             "test_rmse":         test_metrics["rmse"],
         },
@@ -924,7 +941,16 @@ def main() -> None:
                              "test stability before going above 3.0)")
     parser.add_argument("--cosine-t0", type=int, default=COSINE_T0,
                         help=f"T_0 for CosineAnnealingWarmRestarts in the final training stage "
-                             f"(default {COSINE_T0}; must be < final_epochs for at least one restart)")
+                             f"(default {COSINE_T0}; must be < final_epochs for at least one restart. "
+                             f"Set == final_epochs for a single long anneal with no restart race)")
+    parser.add_argument("--weight-decay", type=float, default=1e-5,
+                        help="AdamW weight decay for the --long path (default 1e-5; "
+                             "try 3e-4 for stronger regularization against cross-battery overfit)")
+    parser.add_argument("--dropout", type=float, default=0.2,
+                        help="Dropout for the long-seq model (default 0.2; try 0.3 to reduce overfit)")
+    parser.add_argument("--jitter", type=float, default=0.0,
+                        help="Train-time Gaussian input-noise std on scaled sequences "
+                             "(default 0.0=off; try 0.0075 ~0.75%% of [0,1] range for cell-to-cell robustness)")
     args = parser.parse_args()
     if args.forecast:
         holdouts = args.holdout.split(",") if args.holdout else None
@@ -950,6 +976,9 @@ def main() -> None:
             weighted_loss=args.weighted_loss,
             eol_weight_scale=args.eol_weight_scale,
             cosine_t0=args.cosine_t0,
+            weight_decay=args.weight_decay,
+            dropout=args.dropout,
+            jitter=args.jitter,
         )
     else:
         train(args.data_dir or "data/processed", args.epochs, args.log_dir)

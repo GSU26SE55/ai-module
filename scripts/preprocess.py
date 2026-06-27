@@ -48,18 +48,27 @@ SEED             = 42
 NOMINAL_CAPACITY = 2.0
 MIN_SOH          = 10.0   # filter failed/incomplete cycles (capacity ≈ 0 at extreme temps)
 
-# 15 train / 2 val / 1 test — all 18 usable batteries from NASA cleaned_dataset
+# 23 train / 2 val / 1 test — NASA cleaned_dataset
+# Val/Test are 4°C (B0046/47/48). The original 15-battery train set had NO 4°C
+# cells, so the model had to extrapolate across a temperature domain it never saw
+# — the main cross-battery generalization gap. The 4°C additions below (B0041/45/53
+# /54/55/56) close that gap; B0033/B0034 add the longest degradation curves in the
+# dataset (~197 cycles → highest L=4096 window yield). Different battery ID = different
+# physical cell, so 4°C siblings of the val/test cells are valid train data (no leakage).
 # B0025-B0032: 24°C / 43°C, 28-40 cycles, limited degradation but adds temperature diversity
-# B0042-B0044: 4/22/24°C, 65 good cycles after filter (SOH 62-86%), full degradation curve
-# B0046-B0048: 4/24°C, 69 good cycles after filter (SOH 56-86%), matches B0005-B0018 quality
+# B0042-B0044: 22°C, ~65 good cycles after filter, full degradation curve
+# Skipped: B0036 (SOH spikes to 122% — noisy capacity), B0049-B0052 (too short/corrupt)
 TRAIN_IDS = [
     "B0005", "B0006", "B0007", "B0018",          # original group — 24°C, 132-168 cycles
     "B0025", "B0026", "B0027", "B0028",           # 24°C, 28 cycles
     "B0029", "B0030", "B0031", "B0032",           # 43°C (high-temp), 40 cycles
-    "B0042", "B0043", "B0044",                    # 4/22/24°C, full degradation curve
+    "B0042", "B0043", "B0044",                    # 22°C, full degradation curve
+    "B0033", "B0034",                             # 24°C, 196-197 cycles — full curve to SOH~10%
+    "B0041", "B0045", "B0053",                    # 4°C, 25-70 cycles (SOH 30-61) — NEW temp domain
+    "B0054", "B0055", "B0056",                    # 4°C, 102 cycles each (SOH 37-67) — matches B0048 band
 ]
-VAL_IDS  = ["B0046", "B0047"]                     # 4/24°C, 69 cycles each
-TEST_IDS = ["B0048"]                              # 4/24°C, 69 cycles — held out entirely
+VAL_IDS  = ["B0046", "B0047"]                     # 4°C, 72 cycles each — held out
+TEST_IDS = ["B0048"]                              # 4°C, 72 cycles — held out entirely
 
 random.seed(SEED)
 np.random.seed(SEED)

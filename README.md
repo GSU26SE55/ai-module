@@ -407,7 +407,7 @@ No GPU. No `mamba-ssm`. Runs on any CPU.
 
 ## References
 
-- Gu, A., & Dao, T. (2023). *Mamba: Linear-Time Sequence Modeling with Selective State Spaces*. NeurIPS 2023.
+- Gu, A., & Dao, T. (2024). *Mamba: Linear-Time Sequence Modeling with Selective State Spaces*. COLM 2024 (arXiv:2312.00752, 2023).
 - Liu, F. T., Ting, K. M., & Zhou, Z. H. (2008). *Isolation Forest*. ICDM 2008.
 - Deng et al. (2024). *From Prediction to Prescription: LLM Agent for Context-Aware Maintenance Decision Support*. PHM Society.
 - Dubarry, M., & Liaw, B. Y. (2009). *Identify capacity fading mechanism in a commercial LiFePO4 cell*. Journal of Power Sources.
