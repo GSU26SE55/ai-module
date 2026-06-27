@@ -1,8 +1,8 @@
 import os
 
-MODEL_VERSION = "1.2"
+MODEL_VERSION = "1.3"
 SCALER_VERSION = "1.1"
-FEATURE_SCALER_VERSION = "1.2"
+FEATURE_SCALER_VERSION = "1.3"
 FEATURE_SCALER_VERSION_LONG = "long-2.0"   # long-sequence (8-feature) pipeline — independent of standard
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -16,7 +16,7 @@ ISO_FOREST_PATH     = os.path.join(WEIGHTS_DIR, f"isolation_forest_v{MODEL_VERSI
 WINDOW_SIZE   = 30
 WINDOW_STRIDE = 30
 INPUT_FEATURES    = 6
-SPECTRAL_FEAT_DIM = 54  # 9 spectral + 9 statistical × 3 channels (voltage, current, temperature)
+SPECTRAL_FEAT_DIM = 57  # 10 spectral (incl. Gini) + 9 statistical × 3 channels (voltage, current, temperature)
 D_MODEL = 64
 D_STATE = 16
 
@@ -37,13 +37,13 @@ LONG_SCALER_PATH         = os.path.join(WEIGHTS_DIR, "scaler_long.pkl")  # 8-fea
 
 # --- RUL (GH-13) — cycle-level Mamba: 1 token = 1 discharge cycle ---
 # Re-frames the long-context problem onto the CYCLE axis (NASA ~168 cycles/battery)
-# instead of raw timesteps. Each token = one cycle's 54-dim spectral+kurtosis vector.
+# instead of raw timesteps. Each token = one cycle's 57-dim spectral+kurtosis vector.
 # Target = remaining cycles until End-of-Life (SOH first crosses EOL_SOH).
 RUL_LOOKBACK = 30        # number of historical cycles per sample
 RUL_STRIDE   = 1         # slide stride along the cycle axis
 EOL_SOH      = 80.0      # End-of-Life threshold (%) — first cycle SOH <= this
 RUL_SCALE    = 200.0     # normalise RUL (cycles) to ~[0,1] for training stability
-RUL_FEAT_DIM = 54        # per-cycle feature dim (reuses extract_window_features)
+RUL_FEAT_DIM = 57        # per-cycle feature dim (reuses extract_window_features)
 RUL_MODEL_VERSION       = "1.0"
 RUL_MAMBA_PATH          = os.path.join(WEIGHTS_DIR, f"soh_mamba_rul_v{RUL_MODEL_VERSION}.pth")
 RUL_FEATURE_SCALER_PATH = os.path.join(WEIGHTS_DIR, "feature_scaler_rul.pkl")

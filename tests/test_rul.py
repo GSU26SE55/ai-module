@@ -22,7 +22,7 @@ def test_find_eol_fallback_last_when_never_crosses():
 # --- make_rul_windows -----------------------------------------------------
 
 def test_rul_window_labels_and_shape():
-    n, feat_dim, lookback = 10, 54, 3
+    n, feat_dim, lookback = 10, 57, 3
     feats = np.random.rand(n, feat_dim).astype(np.float32)
     # SOH crosses 80 at index 6
     sohs = np.linspace(95, 75, n).astype(np.float32)
@@ -39,25 +39,25 @@ def test_rul_window_labels_and_shape():
 
 
 def test_rul_window_empty_when_too_short():
-    feats = np.random.rand(2, 54).astype(np.float32)
+    feats = np.random.rand(2, 57).astype(np.float32)
     sohs = np.array([90.0, 70.0], dtype=np.float32)
     X, y, last_idx, _ = make_rul_windows(feats, sohs, lookback=5, stride=1, eol_soh=80.0)
-    assert X.shape == (0, 5, 54)
+    assert X.shape == (0, 5, 57)
     assert len(y) == 0
 
 
 # --- RULPredictor ---------------------------------------------------------
 
 def test_rul_predictor_output_shape():
-    model = RULPredictor(feat_dim=54, d_model=64, d_state=16)
-    x = torch.randn(4, 30, 54)
+    model = RULPredictor(feat_dim=57, d_model=64, d_state=16)
+    x = torch.randn(4, 30, 57)
     out = model(x)
     assert out.shape == (4,)
 
 
 def test_rul_predictor_attention_pooling():
-    model = RULPredictor(feat_dim=54, pooling="attention")
-    x = torch.randn(2, 30, 54)
+    model = RULPredictor(feat_dim=57, pooling="attention")
+    x = torch.randn(2, 30, 57)
     out = model(x)
     assert out.shape == (2,)
 
@@ -69,8 +69,8 @@ def test_rul_predictor_invalid_pooling_raises():
 
 
 def test_rul_predictor_grad_flows():
-    model = RULPredictor(feat_dim=54)
-    x = torch.randn(3, 30, 54)
+    model = RULPredictor(feat_dim=57)
+    x = torch.randn(3, 30, 57)
     out = model(x).sum()
     out.backward()
     assert model.input_proj.weight.grad is not None

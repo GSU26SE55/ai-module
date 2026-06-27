@@ -30,6 +30,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.core.config import (
     FEATURE_SCALER_PATH,
+    FEATURE_SCALER_VERSION,
     FEATURES,
     LONG_FEATURE_SCALER_PATH,
     LONG_INPUT_FEATURES,
@@ -260,7 +261,7 @@ def main() -> None:
                 "X":                     torch.tensor(X,      dtype=torch.float32),
                 "X_feat":                torch.tensor(X_feat, dtype=torch.float32),
                 "y":                     torch.tensor(y,      dtype=torch.float32),
-                "feature_scaler_version": "1.2",
+                "feature_scaler_version": FEATURE_SCALER_VERSION,
             },
             path,
         )

@@ -12,7 +12,7 @@ class TestExtractWindowFeatures:
     def test_output_shape(self):
         window = np.random.rand(30, 3).astype(np.float32)
         feats = extract_window_features(window)
-        assert feats.shape == (54,), f"Expected (54,), got {feats.shape}"
+        assert feats.shape == (57,), f"Expected (57,), got {feats.shape}"
 
     def test_output_dtype(self):
         window = np.random.rand(30, 3).astype(np.float32)
@@ -45,7 +45,7 @@ class TestExtractWindowFeatures:
 
     def test_long_sequence_shape(self):
         window = np.random.rand(4096, 3).astype(np.float32)
-        assert extract_window_features(window).shape == (54,)
+        assert extract_window_features(window).shape == (57,)
 
 
     def test_spectral_kurtosis_responds_to_transient(self):
@@ -69,7 +69,7 @@ class TestExtractBatchFeatures:
     def test_output_shape(self):
         windows = np.random.rand(16, 30, 3).astype(np.float32)
         feats = extract_batch_features(windows)
-        assert feats.shape == (16, 54), f"Expected (16,54), got {feats.shape}"
+        assert feats.shape == (16, 57), f"Expected (16,57), got {feats.shape}"
 
     def test_no_nan_or_inf(self):
         windows = np.random.rand(8, 30, 3).astype(np.float32)
