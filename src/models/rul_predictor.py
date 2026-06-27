@@ -2,7 +2,7 @@
 RUL predictor (GH-13): cycle-level Mamba for Remaining Useful Life estimation.
 
 Re-frames the long-context problem onto the CYCLE axis. Each input token is one
-discharge cycle represented by its 54-dim spectral+kurtosis feature vector, so a
+discharge cycle represented by its 57-dim spectral+kurtosis feature vector, so a
 sequence of RUL_LOOKBACK cycles carries the genuine long-range degradation
 trajectory (unlike raw-timestep L=4096, which only spans ~13 cycles and dilutes
 the signal). Output = normalised remaining cycles to End-of-Life.
@@ -34,7 +34,7 @@ class RULPredictor(nn.Module):
 
     def __init__(
         self,
-        feat_dim: int = 54,
+        feat_dim: int = 57,
         d_model: int = 64,
         d_state: int = 16,
         n_layers: int = 2,

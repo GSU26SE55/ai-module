@@ -225,7 +225,7 @@ class OfficialMambaBlock(nn.Module):
 class PatchDegradationEncoder(nn.Module):
     """Per-patch degradation-sensitive feature injection for long sequences (L=4096).
 
-    The global 54-dim feature vector (computed over the full 4096-step window) averages
+    The global 57-dim feature vector (computed over the full 4096-step window) averages
     degradation dynamics across 100+ discharge cycles. This module computes four
     degradation-sensitive statistics — RMS, peak-to-peak, std, and excess kurtosis —
     per patch per channel, then projects to d_model and adds to each patch token
@@ -312,7 +312,7 @@ class MambaSOHPredictor(nn.Module):
         d_state: int = 16,
         n_layers: int = 2,
         dropout: float = 0.2,
-        feat_dim: int = 54,
+        feat_dim: int = 57,
         pooling: str = "last",
         use_official_mamba: bool = False,
         patch_size: int = 1,    # 1 = no patching (L=30 default); 16 for L=4096
@@ -377,7 +377,7 @@ class MambaSOHPredictor(nn.Module):
                 self.discharge_bias = nn.Parameter(torch.tensor(2.0))
         # FiLM: 2-layer MLP projects cycle features → gamma + beta for hidden state
         # modulation. Deeper MLP improves nonlinear feature conditioning vs single
-        # Linear, especially when feat_dim (54) and d_model (64) are close in size.
+        # Linear, especially when feat_dim (57) and d_model (64) are close in size.
         self.film_proj = nn.Sequential(
             nn.Linear(feat_dim, feat_dim),
             nn.SiLU(),

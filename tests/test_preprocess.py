@@ -72,7 +72,7 @@ class TestProcessedFeatureVersion:
         torch.save(
             {
                 "X": torch.zeros(1, WINDOW_SIZE, 6),
-                "X_feat": torch.zeros(1, 54),
+                "X_feat": torch.zeros(1, 57),
                 "y": torch.zeros(1),
                 "feature_scaler_version": FEATURE_SCALER_VERSION,
             },
@@ -80,7 +80,7 @@ class TestProcessedFeatureVersion:
         )
         X, X_feat, y = load_split(str(path))
         assert X.shape == (1, WINDOW_SIZE, 6)
-        assert X_feat.shape == (1, 54)
+        assert X_feat.shape == (1, 57)
         assert y.shape == (1,)
 
     def test_load_split_rejects_stale_feature_version(self, tmp_path):
@@ -88,7 +88,7 @@ class TestProcessedFeatureVersion:
         torch.save(
             {
                 "X": torch.zeros(1, WINDOW_SIZE, 6),
-                "X_feat": torch.zeros(1, 54),
+                "X_feat": torch.zeros(1, 57),
                 "y": torch.zeros(1),
                 "feature_scaler_version": "0.9",  # outdated — should trigger mismatch
             },
@@ -119,7 +119,7 @@ class TestLongWindows:
 
         expected_n = (T - seq_len) // stride + 1
         assert X.shape == (expected_n, seq_len, 6)
-        assert F.shape == (expected_n, 54)
+        assert F.shape == (expected_n, 57)
         assert y.shape == (expected_n,)
 
     def test_label_is_last_timestep_soh(self):

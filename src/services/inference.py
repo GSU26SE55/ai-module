@@ -80,11 +80,10 @@ def run_inference(readings: list[list[float]]) -> dict:
     x_tensor = torch.tensor(x_scaled, dtype=torch.float32).unsqueeze(0)
 
     # Cycle-level features: compute from scaled window (first 3 channels: voltage, current, temp)
-    # Matches SPECTRAL_FEAT_DIM=54 config. FiLM conditioning is soft — degrades
-    # gracefully from cycle-level to window-level features at inference time.
-    raw_feat = extract_window_features(x_scaled[:, :3])         # (54,)
+    # Matches SPECTRAL_FEAT_DIM=57 config (10 spectral incl. Gini + 9 statistical × 3 channels).
+    raw_feat = extract_window_features(x_scaled[:, :3])         # (57,)
     feat_scaled = model_loader.feature_scaler.transform(raw_feat.reshape(1, -1))
-    x_feat_tensor = torch.tensor(feat_scaled, dtype=torch.float32)  # (1, 54)
+    x_feat_tensor = torch.tensor(feat_scaled, dtype=torch.float32)  # (1, 57)
 
     # MC Dropout: run 20 forward passes with Dropout ON → measure prediction uncertainty
     # Lock prevents concurrent requests from corrupting model train/eval state
@@ -105,7 +104,7 @@ def run_inference(readings: list[list[float]]) -> dict:
     # confidence: std=0% → 1.0, std=5% → 0.0 (linear scale)
     soh_confidence = round(float(max(0.0, min(1.0, 1.0 - soh_std / 5.0))), 3)
 
-    # IsolationForest trained on spectral features (54 dims) — use same features at inference
+    # IsolationForest trained on spectral features (57 dims) — use same features at inference
     score = float(model_loader.iso_model.decision_function(feat_scaled)[0])
     classification = classify_anomaly(score, soh)
     anomaly_confidence = round(min(1.0, max(0.0, abs(score))), 3)

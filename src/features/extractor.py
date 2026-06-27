@@ -1,9 +1,9 @@
 """
 Feature extraction: Spectral + Statistical (Kurtosis) features from a sliding window.
 
-Each window (T, C) yields 54 scalar features:
-  - 9 spectral features × C channels  (FFT-based)
-  - 9 statistical features × C channels (kurtosis, crest factor, …)
+Each window (T, C) yields 57 scalar features:
+  - 10 spectral features × C channels  (FFT-based, incl. spectral Gini)
+  - 9  statistical features × C channels (kurtosis, crest factor, …)
 """
 
 import numpy as np
@@ -15,13 +15,30 @@ from scipy.stats import skew as scipy_skew
 # Per-channel feature extraction
 # ---------------------------------------------------------------------------
 
+def _spectral_gini(power: np.ndarray) -> float:
+    """Gini coefficient of the FFT power spectrum.
+
+    Measures spectral energy concentration. As Li-ion batteries age, increasing
+    internal resistance redistributes energy across a broader frequency range,
+    lowering the Gini coefficient. Complements spectral flatness (which uses a
+    geometric/arithmetic mean ratio) by capturing the full distribution inequality.
+    """
+    x = np.sort(power.astype(np.float64))
+    n = len(x)
+    total = x.sum()
+    if total < 1e-12:
+        return 0.0
+    ranks = np.arange(1, n + 1, dtype=np.float64)
+    return float(np.clip((2.0 * (ranks * x).sum()) / (n * total) - (n + 1) / n, 0.0, 1.0))
+
+
 def _spectral_features(x: np.ndarray) -> np.ndarray:
     """
-    9 FFT-based features from a 1-D signal.
+    10 FFT-based features from a 1-D signal.
 
-    Returns ndarray of shape (9,):
+    Returns ndarray of shape (10,):
       [centroid, entropy, peak_freq, peak_power_db,
-       flatness, rolloff, band_low, band_mid, band_high]
+       flatness, rolloff, band_low, band_mid, band_high, gini]
     """
     n = len(x)
     fft_vals = np.fft.rfft(x)
@@ -58,9 +75,11 @@ def _spectral_features(x: np.ndarray) -> np.ndarray:
     band_mid  = float(power[bs : 2 * bs].sum() / total)
     band_high = float(power[2 * bs :].sum() / total)
 
+    gini = _spectral_gini(power)
+
     return np.array(
         [centroid, entropy, peak_freq, peak_power_db,
-         flatness, rolloff, band_low, band_mid, band_high],
+         flatness, rolloff, band_low, band_mid, band_high, gini],
         dtype=np.float32,
     )
 
@@ -108,14 +127,14 @@ def _statistical_features(x: np.ndarray) -> np.ndarray:
 
 def extract_window_features(window: np.ndarray) -> np.ndarray:
     """
-    Extract 54 scalar features from a scaled window.
+    Extract 57 scalar features from a scaled window.
 
     Args:
         window: np.ndarray of shape (T, C) — MinMaxScaler already applied.
 
     Returns:
-        np.ndarray of shape (54,) — [spectral×C, statistical×C], float32.
-        Layout: [spec_ch0…spec_ch2, stat_ch0…stat_ch2] (9×3 + 9×3).
+        np.ndarray of shape (57,) — [spectral×C, statistical×C], float32.
+        Layout: [spec_ch0…spec_ch2, stat_ch0…stat_ch2] (10×3 + 9×3).
     """
     if window.ndim != 2:
         raise ValueError(f"Expected window shape (T, C), got {window.shape}")
@@ -135,7 +154,7 @@ def extract_batch_features(windows: np.ndarray) -> np.ndarray:
         windows: np.ndarray of shape (N, T, C).
 
     Returns:
-        np.ndarray of shape (N, 54), float32.
+        np.ndarray of shape (N, 57), float32.
     """
     return np.stack([extract_window_features(w) for w in windows], axis=0)
 
