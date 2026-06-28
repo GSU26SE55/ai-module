@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.core.config import (
     FEATURE_SCALER_PATH,
     FEATURE_SCALER_VERSION,
+    FEATURE_SCALER_VERSION_LONG,
     FEATURES,
     LONG_FEATURE_SCALER_PATH,
     LONG_INPUT_FEATURES,
@@ -235,9 +236,10 @@ def main() -> None:
     X_feat_train = feat_scaler.fit_transform(X_feat_train_raw).astype(np.float32)
 
     feat_scaler_out = LONG_FEATURE_SCALER_PATH if long_seq else FEATURE_SCALER_PATH
+    feat_scaler_ver = FEATURE_SCALER_VERSION_LONG if long_seq else FEATURE_SCALER_VERSION
     os.makedirs(os.path.dirname(feat_scaler_out), exist_ok=True)
     joblib.dump(
-        {"scaler": feat_scaler, "version": "1.2", "n_features": X_feat_train.shape[1]},
+        {"scaler": feat_scaler, "version": feat_scaler_ver, "n_features": X_feat_train.shape[1]},
         feat_scaler_out,
     )
     print(f"Saved feature_scaler -> {feat_scaler_out}")
