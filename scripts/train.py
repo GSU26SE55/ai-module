@@ -345,7 +345,7 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
                patch_size: int = LONG_PATCH_SIZE, patch_stride: int = LONG_PATCH_STRIDE,
                weighted_loss: bool = False, eol_weight_scale: float = 2.0,
                cosine_t0: int = 25, weight_decay: float = 1e-5, dropout: float = 0.2,
-               jitter: float = 0.0) -> None:
+               jitter: float = 0.0, swa: bool = False, swa_start_frac: float = 0.75) -> None:
     """Train the long-sequence model (L up to 4096) with progressive length warmup.
 
     Each stage truncates sequences to a shorter length (cheap epochs), carrying
@@ -432,6 +432,9 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
     best_val_loss = float("inf")
     best_state = None
     patience_counter = 0
+    swa_state = None   # running weight average over the final stage's tail (SWA, Izmailov 2018)
+    swa_n = 0
+    swa_start = 0
     for si, stage_len in enumerate(stages):
         is_final = (si == len(stages) - 1)
         if is_final:
@@ -453,9 +456,15 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
             # Patience must cover at least one full CAWR cycle so early-stopping
             # doesn't fire on the temporary val_loss increase after an LR restart.
             final_patience = max(PATIENCE, cosine_t0 + 5)
+            # SWA: from this epoch on, average weights every epoch (low-LR tail of the
+            # cosine anneal). Averaging points along the trajectory finds a wider, flatter
+            # optimum that generalises better than any single checkpoint (Izmailov et al.,
+            # UAI 2018). No BatchNorm in this model → averaged weights need no recalibration.
+            swa_start = max(1, int(round(final_epochs * swa_start_frac))) if swa else 0
             logger.info(
                 f"Final stage: reset LR={LR}, CosineAnnealingWarmRestarts "
                 f"T_0={cosine_t0} T_mult=2 eta_min=1e-5 (patience={final_patience})"
+                + (f" | SWA from epoch {swa_start}" if swa else "")
             )
         Xtr_s  = truncate_seq(X_train, stage_len)
         Xval_s = truncate_seq(X_val,   stage_len)
@@ -492,12 +501,39 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
                     patience_counter = 0
                 else:
                     patience_counter += 1
+                # SWA: fold this epoch's weights into the running average (tail only)
+                if swa and epoch >= swa_start:
+                    cur = model.state_dict()
+                    if swa_state is None:
+                        swa_state = {k: v.detach().float().clone() for k, v in cur.items()}
+                        swa_n = 1
+                    else:
+                        for k, v in cur.items():
+                            if torch.is_floating_point(v):
+                                swa_state[k].mul_(swa_n / (swa_n + 1)).add_(v.detach().float() / (swa_n + 1))
+                        swa_n += 1
                 if patience_counter >= final_patience:
                     logger.info(f"Early stopping at epoch {epoch} (patience={final_patience})")
                     break
 
     if best_state is not None:
         model.load_state_dict(best_state)
+    final_weights = "best-val-checkpoint"
+
+    # SWA selection: compare the averaged weights vs the best single checkpoint on the
+    # VALIDATION set (never the test set — that would leak). Keep whichever wins on val.
+    if swa and swa_state is not None and swa_n > 0:
+        model.load_state_dict(swa_state)
+        swa_val = evaluate(model, X_val, X_feat_val, y_val, device, batch_size=eval_batch)
+        logger.info(
+            f"SWA: averaged {swa_n} epochs | SWA val_loss={swa_val['loss']:.6f} "
+            f"vs best-ckpt val_loss={best_val_loss:.6f}"
+        )
+        if swa_val["loss"] <= best_val_loss:
+            final_weights = f"SWA(avg={swa_n})"
+        elif best_state is not None:
+            model.load_state_dict(best_state)   # SWA worse on val → revert
+    logger.info(f"Final weights: {final_weights}")
 
     test_metrics = evaluate(model, X_test, X_feat_test, y_test, device, batch_size=eval_batch)
     logger.info("-" * 55)
@@ -532,6 +568,8 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
             "weight_decay":      weight_decay,
             "dropout":           dropout,
             "jitter":            jitter,
+            "swa":               final_weights.startswith("SWA"),
+            "final_weights":     final_weights,
             "test_mae":          test_metrics["mae"],
             "test_rmse":         test_metrics["rmse"],
         },
@@ -951,6 +989,12 @@ def main() -> None:
     parser.add_argument("--jitter", type=float, default=0.0,
                         help="Train-time Gaussian input-noise std on scaled sequences "
                              "(default 0.0=off; try 0.0075 ~0.75%% of [0,1] range for cell-to-cell robustness)")
+    parser.add_argument("--swa", action="store_true",
+                        help="Stochastic Weight Averaging: average weights over the final stage's "
+                             "tail epochs (Izmailov 2018). Kept only if it beats the best checkpoint on val. "
+                             "Needs the final stage to run long (use --cosine-t0 == --final-epochs so it doesn't early-stop).")
+    parser.add_argument("--swa-start-frac", type=float, default=0.75,
+                        help="Start SWA averaging at this fraction of --final-epochs (default 0.75 = last 25%%)")
     args = parser.parse_args()
     if args.forecast:
         holdouts = args.holdout.split(",") if args.holdout else None
@@ -979,6 +1023,8 @@ def main() -> None:
             weight_decay=args.weight_decay,
             dropout=args.dropout,
             jitter=args.jitter,
+            swa=args.swa,
+            swa_start_frac=args.swa_start_frac,
         )
     else:
         train(args.data_dir or "data/processed", args.epochs, args.log_dir)
