@@ -387,7 +387,7 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
         d_model=D_MODEL, d_state=D_STATE, pooling="attention",
         use_official_mamba=official_mamba,
         patch_size=patch_size, patch_stride=patch_stride,
-        dropout=dropout,
+        dropout=dropout, attention_heads=attention_heads,
     ).to(device)
     if compile_model:
         try:
@@ -557,6 +557,7 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
             "d_state":           D_STATE,
             "patch_size":        patch_size,
             "patch_stride":      patch_stride,
+            "attention_heads":   attention_heads,   # GH-37: multi-head attn pooling (1 = single-head)
             # v2.0 additions
             "patch_deg_enc":     patch_size > 1,   # PatchDegradationEncoder active
             "film_depth":        2,                 # 2-layer FiLM MLP

@@ -282,6 +282,40 @@ class PatchDegradationEncoder(nn.Module):
         return self.proj(stats)                                   # (B, nW, d_model)
 
 
+class MultiHeadAttentionPool(nn.Module):
+    """Multi-head attention pooling: T tokens -> 1 vector (GH-37, long-seq L=4096).
+
+    Single-head pooling (weighted average) forces ONE aggregation pattern over the
+    256/511 patch tokens. With n_heads, each head learns its own attention
+    distribution over tokens and pools its own d_model/n_heads slice — letting the
+    model attend to distinct temporal facets in parallel (e.g. degradation slope,
+    volatility, charge/discharge asymmetry, anomaly spikes). Heads are concatenated
+    then linearly projected. Ref: Vaswani et al., NeurIPS 2017.
+
+    forward(h, bias): h (B, T, d_model); optional bias (B, T, 1) added to every
+    head's token logits before softmax (carries the discharge-phase steering).
+    """
+
+    def __init__(self, d_model: int, n_heads: int):
+        super().__init__()
+        if d_model % n_heads != 0:
+            raise ValueError(f"d_model ({d_model}) must be divisible by n_heads ({n_heads}).")
+        self.n_heads = n_heads
+        self.head_dim = d_model // n_heads
+        self.score = nn.Linear(d_model, n_heads)   # one attention logit per head per token
+        self.proj = nn.Linear(d_model, d_model)
+
+    def forward(self, h: torch.Tensor, bias: torch.Tensor | None = None) -> torch.Tensor:
+        B, T, D = h.shape
+        scores = self.score(h)                              # (B, T, n_heads)
+        if bias is not None:
+            scores = scores + bias                          # broadcast (B,T,1) over heads
+        w = torch.softmax(scores, dim=1)                    # softmax over tokens, per head
+        hh = h.view(B, T, self.n_heads, self.head_dim)      # (B, T, H, head_dim)
+        ctx = torch.einsum("bth,bthd->bhd", w, hh)          # (B, H, head_dim) weighted sum
+        return self.proj(ctx.reshape(B, D))                 # (B, d_model)
+
+
 class MambaSOHPredictor(nn.Module):
     """
     Input:  x      (batch, L, input_features) — L=30 (window=30 production) or L=4096 (long-seq)
@@ -317,6 +351,7 @@ class MambaSOHPredictor(nn.Module):
         use_official_mamba: bool = False,
         patch_size: int = 1,    # 1 = no patching (L=30 default); 16 for L=4096
         patch_stride: int = 1,  # = patch_size for non-overlapping (fastest)
+        attention_heads: int = 1,  # >1 = multi-head attention pooling (GH-37); 1 = single-head (back-compat)
     ):
         super().__init__()
         if pooling not in ("last", "attention"):
@@ -365,8 +400,14 @@ class MambaSOHPredictor(nn.Module):
         self.dropout = nn.Dropout(dropout)
         # Attention pooling (long-seq): score each token → softmax → weighted sum.
         # "last" stays default so window=30 inference is byte-for-byte unchanged.
+        # attention_heads>1 => multi-head pooling (GH-37); ==1 keeps the original
+        # single-head path so existing checkpoints load byte-for-byte unchanged.
+        self.attention_heads = attention_heads if pooling == "attention" else 1
         if pooling == "attention":
-            self.attn_score = nn.Linear(d_model, 1)
+            if self.attention_heads > 1:
+                self.attn_pool = MultiHeadAttentionPool(d_model, self.attention_heads)
+            else:
+                self.attn_score = nn.Linear(d_model, 1)
             # Discharge-weighted bias: patches that span the discharge phase
             # (phase channel ≈ 2) contain the strongest SOH signal. A learnable
             # scalar bias (init=2.0) is added to the raw attention logits for
@@ -404,7 +445,8 @@ class MambaSOHPredictor(nn.Module):
             h = layer(h)
         h = self.norm(h)
         if self.pooling == "attention":
-            scores = self.attn_score(h)                    # (batch, T, 1)
+            # Discharge-phase steering bias (B, T, 1), shared by single- and multi-head.
+            bias = None
             if self.patch_size > 1 and hasattr(self, "discharge_bias"):
                 # Phase channel is the last input channel (index -1).
                 # Values: 0=rest, 1=charge, 2=discharge.
@@ -413,9 +455,15 @@ class MambaSOHPredictor(nn.Module):
                 phase_per_patch = phase.unfold(1, self.patch_size, self.patch_stride).mean(dim=-1)
                 # Normalise to [0,1]: discharge (2) → 1, rest (0) → 0
                 discharge_ind = (phase_per_patch / 2.0).clamp(0.0, 1.0).unsqueeze(-1)
-                scores = scores + self.discharge_bias * discharge_ind
-            w = torch.softmax(scores, dim=1)               # (batch, T, 1)
-            h = (w * h).sum(dim=1)                         # (batch, d_model)
+                bias = self.discharge_bias * discharge_ind
+            if self.attention_heads > 1:
+                h = self.attn_pool(h, bias)                # (batch, d_model)
+            else:
+                scores = self.attn_score(h)                # (batch, T, 1)
+                if bias is not None:
+                    scores = scores + bias
+                w = torch.softmax(scores, dim=1)           # (batch, T, 1)
+                h = (w * h).sum(dim=1)                     # (batch, d_model)
         else:  # "last"
             h = h[:, -1, :]                               # (batch, d_model)
 

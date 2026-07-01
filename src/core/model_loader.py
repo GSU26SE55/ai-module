@@ -121,6 +121,7 @@ def load_long_model(device: str | None = None) -> MambaSOHPredictor:
         pooling=checkpoint.get("pooling", "attention"),
         patch_size=checkpoint.get("patch_size", LONG_PATCH_SIZE),
         patch_stride=checkpoint.get("patch_stride", LONG_PATCH_STRIDE),
+        attention_heads=checkpoint.get("attention_heads", 1),
     ).to(long_device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
