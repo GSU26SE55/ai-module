@@ -345,7 +345,7 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
                patch_size: int = LONG_PATCH_SIZE, patch_stride: int = LONG_PATCH_STRIDE,
                weighted_loss: bool = False, eol_weight_scale: float = 2.0,
                cosine_t0: int = 25, weight_decay: float = 1e-5, dropout: float = 0.2,
-               jitter: float = 0.0) -> None:
+               jitter: float = 0.0, attention_heads: int = 1) -> None:
     """Train the long-sequence model (L up to 4096) with progressive length warmup.
 
     Each stage truncates sequences to a shorter length (cheap epochs), carrying
@@ -387,7 +387,7 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
         d_model=D_MODEL, d_state=D_STATE, pooling="attention",
         use_official_mamba=official_mamba,
         patch_size=patch_size, patch_stride=patch_stride,
-        dropout=dropout,
+        dropout=dropout, attention_heads=attention_heads,
     ).to(device)
     if compile_model:
         try:
@@ -521,6 +521,7 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
             "d_state":           D_STATE,
             "patch_size":        patch_size,
             "patch_stride":      patch_stride,
+            "attention_heads":   attention_heads,   # GH-37: multi-head attn pooling (1 = single-head)
             # v2.0 additions
             "patch_deg_enc":     patch_size > 1,   # PatchDegradationEncoder active
             "film_depth":        2,                 # 2-layer FiLM MLP
@@ -951,6 +952,9 @@ def main() -> None:
     parser.add_argument("--jitter", type=float, default=0.0,
                         help="Train-time Gaussian input-noise std on scaled sequences "
                              "(default 0.0=off; try 0.0075 ~0.75%% of [0,1] range for cell-to-cell robustness)")
+    parser.add_argument("--attention-heads", type=int, default=1,
+                        help="GH-37: multi-head attention pooling for long-seq (default 1 = single-head; "
+                             "try 4 — d_model must be divisible by it). Only affects pooling='attention'.")
     args = parser.parse_args()
     if args.forecast:
         holdouts = args.holdout.split(",") if args.holdout else None
@@ -979,6 +983,7 @@ def main() -> None:
             weight_decay=args.weight_decay,
             dropout=args.dropout,
             jitter=args.jitter,
+            attention_heads=args.attention_heads,
         )
     else:
         train(args.data_dir or "data/processed", args.epochs, args.log_dir)
