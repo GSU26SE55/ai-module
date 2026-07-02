@@ -346,7 +346,7 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
                weighted_loss: bool = False, eol_weight_scale: float = 2.0,
                cosine_t0: int = 25, weight_decay: float = 1e-5, dropout: float = 0.2,
                jitter: float = 0.0, swa: bool = False, swa_start_frac: float = 0.75,
-               attention_heads: int = 1) -> None:
+               attention_heads: int = 1, warmup_cosine_t0: int = 0) -> None:
     """Train the long-sequence model (L up to 4096) with progressive length warmup.
 
     Each stage truncates sequences to a shorter length (cheap epochs), carrying
@@ -399,13 +399,17 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
     # AdamW (decoupled weight decay, Loshchilov & Hutter ICLR 2019) — correct form
     # for the L2 regularization that targets the cross-battery generalization gap.
     optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=weight_decay)
-    # Warmup stages use ReduceLROnPlateau (cheap, short epochs).
-    # Final stage switches to CosineAnnealingWarmRestarts — prevents the monotonic
-    # LR decay that caused the v1.x MAE ceiling (ReduceLROnPlateau killed LR before
-    # the model could escape local minima in the SSM parameter space).
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.5, patience=5, min_lr=1e-6
+    # GH-38: warmup stages now use CosineAnnealingWarmRestarts too (was ReduceLROnPlateau).
+    # One continuous CAWR across the warmup loop with T_0 = warmup restart period; with
+    # T_0 = stage_epochs the LR anneals fully within a stage then restarts to full LR at
+    # each new (longer) stage — letting the SSM escape local minima instead of the
+    # monotonic LR decay that capped v1.x. Final stage still builds its own CAWR (with
+    # --cosine-t0) after resetting LR. Ref: SGDR, Loshchilov & Hutter, ICLR 2017.
+    warmup_t0 = max(1, warmup_cosine_t0 if warmup_cosine_t0 > 0 else stage_epochs)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        optimizer, T_0=warmup_t0, T_mult=1, eta_min=1e-6,
     )
+    logger.info(f"Warmup scheduler: CosineAnnealingWarmRestarts(T_0={warmup_t0}, T_mult=1, eta_min=1e-6)")
     # SmoothL1Loss(beta=0.02): clips gradient for residuals > 2% SOH, stabilising
     # training against noisy SOH labels (vs MSELoss which amplifies outliers).
     # Weighted variant upweights near-EOL samples (SOH approaching 80%).
@@ -484,12 +488,9 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
             )
             val_metrics = evaluate(model, Xval_s, X_feat_val, y_val, device, batch_size=eval_batch)
             val_loss    = val_metrics["loss"]
-            # Warmup stages: ReduceLROnPlateau needs val_loss. Final stage: CAWR
-            # steps purely by epoch count (no loss argument).
-            if is_final:
-                scheduler.step()
-            else:
-                scheduler.step(val_loss)
+            # GH-38: both warmup and final stage now use CosineAnnealingWarmRestarts,
+            # which steps purely by epoch count (no val_loss argument).
+            scheduler.step()
             current_lr = optimizer.param_groups[0]["lr"]
             logger.debug(
                 f"  L={stage_len} ep{epoch}  train={train_loss:.6f} "
@@ -566,6 +567,8 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
             "weighted_loss":     weighted_loss,
             "scheduler":         "cosine_warmrestarts",
             "cosine_t0":         cosine_t0,
+            "scheduler_warmup":  "cosine_warmrestarts",   # GH-38 (was reduce_lr_on_plateau)
+            "warmup_cosine_t0":  warmup_cosine_t0 if warmup_cosine_t0 > 0 else stage_epochs,
             "optimizer":         "adamw",
             "weight_decay":      weight_decay,
             "dropout":           dropout,
@@ -1000,6 +1003,9 @@ def main() -> None:
     parser.add_argument("--attention-heads", type=int, default=1,
                         help="GH-37: multi-head attention pooling for long-seq (default 1 = single-head; "
                              "try 4 — d_model must be divisible by it). Only affects pooling='attention'.")
+    parser.add_argument("--warmup-cosine-t0", type=int, default=0,
+                        help="GH-38: T_0 for CosineAnnealingWarmRestarts in the WARMUP stages "
+                             "(default 0 = use --stage-epochs so LR restarts at each stage boundary).")
     args = parser.parse_args()
     if args.forecast:
         holdouts = args.holdout.split(",") if args.holdout else None
@@ -1031,6 +1037,7 @@ def main() -> None:
             swa=args.swa,
             swa_start_frac=args.swa_start_frac,
             attention_heads=args.attention_heads,
+            warmup_cosine_t0=args.warmup_cosine_t0,
         )
     else:
         train(args.data_dir or "data/processed", args.epochs, args.log_dir)
