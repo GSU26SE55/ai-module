@@ -30,7 +30,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.core.config import COSINE_T0, D_MODEL, D_STATE, EOL_SOH, FEATURE_SCALER_VERSION, FEATURE_SCALER_VERSION_LONG, INPUT_FEATURES, ISO_FOREST_PATH, LONG_INPUT_FEATURES, LONG_MAMBA_PATH, LONG_MODEL_VERSION, LONG_PATCH_SIZE, LONG_PATCH_STRIDE, MAMBA_PATH, MODEL_VERSION, RUL_FEAT_DIM, RUL_LOOKBACK, RUL_MAMBA_PATH, RUL_MODEL_VERSION, RUL_SCALE, SPECTRAL_FEAT_DIM, WARMUP_STAGES, WINDOW_SIZE  # noqa: E402
+from src.core.config import COSINE_T0, D_MODEL, D_STATE, EOL_SOH, FEATURE_SCALER_VERSION, FEATURE_SCALER_VERSION_LONG, INPUT_FEATURES, ISO_FOREST_PATH, LONG_D_STATE, LONG_INPUT_FEATURES, LONG_MAMBA_PATH, LONG_MODEL_VERSION, LONG_PATCH_SIZE, LONG_PATCH_STRIDE, MAMBA_PATH, MODEL_VERSION, RUL_FEAT_DIM, RUL_LOOKBACK, RUL_MAMBA_PATH, RUL_MODEL_VERSION, RUL_SCALE, SPECTRAL_FEAT_DIM, WARMUP_STAGES, WINDOW_SIZE  # noqa: E402
 from src.models.rul_predictor import RULPredictor  # noqa: E402
 from src.models.soh_predictor import MambaSOHPredictor  # noqa: E402
 
@@ -346,7 +346,8 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
                weighted_loss: bool = False, eol_weight_scale: float = 2.0,
                cosine_t0: int = 25, weight_decay: float = 1e-5, dropout: float = 0.2,
                jitter: float = 0.0, swa: bool = False, swa_start_frac: float = 0.75,
-               attention_heads: int = 1, warmup_cosine_t0: int = 0) -> None:
+               attention_heads: int = 1, warmup_cosine_t0: int = 0,
+               d_state: int = LONG_D_STATE) -> None:
     """Train the long-sequence model (L up to 4096) with progressive length warmup.
 
     Each stage truncates sequences to a shorter length (cheap epochs), carrying
@@ -385,7 +386,7 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
         )
     model = MambaSOHPredictor(
         input_features=LONG_INPUT_FEATURES, feat_dim=SPECTRAL_FEAT_DIM,
-        d_model=D_MODEL, d_state=D_STATE, pooling="attention",
+        d_model=D_MODEL, d_state=d_state, pooling="attention",
         use_official_mamba=official_mamba,
         patch_size=patch_size, patch_stride=patch_stride,
         dropout=dropout, attention_heads=attention_heads,
@@ -556,7 +557,7 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
             "input_features":    LONG_INPUT_FEATURES,
             "feat_dim":          SPECTRAL_FEAT_DIM,
             "d_model":           D_MODEL,
-            "d_state":           D_STATE,
+            "d_state":           d_state,
             "patch_size":        patch_size,
             "patch_stride":      patch_stride,
             "attention_heads":   attention_heads,   # GH-37: multi-head attn pooling (1 = single-head)
@@ -1006,6 +1007,9 @@ def main() -> None:
     parser.add_argument("--warmup-cosine-t0", type=int, default=0,
                         help="GH-38: T_0 for CosineAnnealingWarmRestarts in the WARMUP stages "
                              "(default 0 = use --stage-epochs so LR restarts at each stage boundary).")
+    parser.add_argument("--long-d-state", type=int, default=LONG_D_STATE,
+                        help=f"GH-34: SSM state dim for the long-seq model only (default {LONG_D_STATE}; "
+                             "try 16 to ablate). Global D_STATE (window=30 + RUL) stays 16.")
     args = parser.parse_args()
     if args.forecast:
         holdouts = args.holdout.split(",") if args.holdout else None
@@ -1038,6 +1042,7 @@ def main() -> None:
             swa_start_frac=args.swa_start_frac,
             attention_heads=args.attention_heads,
             warmup_cosine_t0=args.warmup_cosine_t0,
+            d_state=args.long_d_state,
         )
     else:
         train(args.data_dir or "data/processed", args.epochs, args.log_dir)

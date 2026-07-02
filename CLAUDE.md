@@ -24,6 +24,8 @@
 
 **MambaSOHPredictor:** `Linear(3→64) → MambaBlock×2(d_model=64, d_state=16, d_conv=4, expand=2) → LayerNorm → last token → Linear(64→32) → GELU+Dropout(0.2) → Linear(32→1)`
 
+> **GH-34:** model **long-seq (L=4096)** dùng `d_state=32` (config `LONG_D_STATE`) để bắt long-range degradation; window=30 production + RUL **giữ `d_state=16`** (global `D_STATE`).
+
 > Pure PyTorch — không dùng `mamba-ssm` CUDA library, chạy được Windows 11 native.
 > Artifact: `models/weights/soh_mamba_v1.0.pth` (không phải `soh_lstm_*.pth`)
 
