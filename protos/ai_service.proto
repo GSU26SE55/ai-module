@@ -1,0 +1,181 @@
+// AI Module gRPC contract — GSU26SE55 (GH-39)
+//
+// Mirrors the REST Pydantic schemas in src/schemas/predict.py and
+// src/schemas/prescribe.py, including the flat backward-compat fields
+// kept until BE migrates to the nested response.
+//
+// Numeric fields use `double` (Python float is 64-bit; proto `float`
+// would silently truncate values on round-trip).
+//
+// Regenerate stubs with: python scripts/gen_proto.py
+
+syntax = "proto3";
+
+package aimodule.v1;
+
+option csharp_namespace = "AiModule.V1";
+
+service AiService {
+  // Mirror of POST /predict
+  rpc Predict(PredictRequest) returns (PredictResponse);
+  // Mirror of POST /prescribe
+  rpc Prescribe(PrescribeRequest) returns (PrescribeResponse);
+  // Mirror of GET /health
+  rpc Health(HealthRequest) returns (HealthResponse);
+  // Bidirectional streaming variant of Predict (server impl lands in GH-41)
+  rpc PredictStream(stream PredictRequest) returns (stream PredictResponse);
+}
+
+// ── Predict ────────────────────────────────────────────────────────────
+
+// One timestep of sensor values. 6 features preferred; 3 allowed for
+// legacy artifacts (voltage, current, temperature). Window = 30 timesteps.
+message Reading {
+  repeated double values = 1;
+}
+
+message PredictRequest {
+  string battery_id = 1;
+  repeated Reading readings = 2;
+}
+
+message WarningItem {
+  string code = 1;      // e.g. "VOLTAGE_LOW", "TEMP_CRITICAL", "SOH_LOW"
+  string severity = 2;  // "warning" | "critical"
+  string message = 3;
+}
+
+message FeatureStat {
+  double mean = 1;
+  double min = 2;
+  double max = 3;
+}
+
+message PredictionInfo {
+  double soh_percent = 1;
+  double soh_confidence = 2;               // MC Dropout uncertainty [0,1]
+  double soh_std = 3;                      // MC Dropout std in % SOH
+  int32 rul_cycles_estimate = 4;
+  double degradation_rate_per_cycle = 5;
+  string soh_trend = 6;                    // "accelerating" | "stable" | "slowing"
+  int32 cycles_to_maintenance = 7;
+  repeated double soh_trajectory = 8;
+  string health_stage = 9;
+}
+
+message AnomalyInfo {
+  double anomaly_score = 1;
+  string anomaly_status = 2;
+  double anomaly_confidence = 3;  // IsolationForest magnitude — NOT calibrated probability
+}
+
+message RiskInfo {
+  string risk_level = 1;
+  string priority = 2;
+  string action_code = 3;
+  repeated string reasons = 4;
+}
+
+message EvidenceInfo {
+  repeated WarningItem warnings = 1;
+  map<string, FeatureStat> feature_summary = 2;
+}
+
+message ResponseMetadata {
+  string model_version = 1;
+  int32 window_size = 2;
+  int32 input_features = 3;
+  double inference_ms = 4;
+}
+
+message PredictResponse {
+  string battery_id = 1;
+  PredictionInfo prediction = 2;
+  AnomalyInfo anomaly = 3;
+  RiskInfo risk = 4;
+  EvidenceInfo evidence = 5;
+  ResponseMetadata metadata = 6;
+
+  // Backward-compatible flat fields. Keep until BE migrates to nested response.
+  double soh_percent = 7;
+  string classification = 8;  // "Normal" | "Degrading" | "Failed"
+  double confidence = 9;      // |IsolationForest score|, range [0, 1]
+  double inference_ms = 10;
+
+  int32 rul_cycles_estimate = 11;
+  double degradation_rate_per_cycle = 12;
+  string soh_trend = 13;
+  int32 cycles_to_maintenance = 14;
+  repeated double soh_trajectory = 15;
+
+  double anomaly_score = 16;
+  string recommended_action = 17;  // MONITOR | SCHEDULE_MAINTENANCE | SCHEDULE_REPLACEMENT | REPLACE_IMMEDIATELY
+
+  repeated WarningItem warnings = 18;
+  map<string, FeatureStat> feature_summary = 19;
+}
+
+// ── Prescribe ──────────────────────────────────────────────────────────
+
+message PrescribeRequest {
+  string battery_id = 1;
+  repeated Reading readings = 2;
+
+  // Optional battery history context (PrescribeRequest extends PredictRequest)
+  optional int32 age_cycles = 3;
+  optional string last_maintenance_date = 4;
+  repeated string ticket_history = 5;
+  // If true, also run RAG + LLM enrichment (slower, off the P1 hot-path).
+  bool enrich = 6;
+}
+
+message RetrievedDoc {
+  string title = 1;
+  string content = 2;
+  string source = 3;  // e.g. "maintenance/bms_warning_codes.md"
+  double relevance_score = 4;
+}
+
+message PrescribeResponse {
+  string battery_id = 1;
+
+  // Prediction context (from /predict)
+  double soh_percent = 2;
+  string risk_level = 3;  // Critical / High / Medium / Low
+  string priority = 4;    // P1 / P2 / P3 / None
+  string action_code = 5;
+
+  // Prescription (rule-based by default; LLM-generated when enriched=true)
+  string prescription = 6;
+  repeated string action_steps = 7;
+  repeated string escalation_conditions = 8;
+  repeated string ppe_required = 9;
+  repeated string sop_references = 10;
+
+  // True when LLM+RAG enrichment ran successfully; false = rule-based fallback.
+  bool enriched = 11;
+
+  // Retrieved evidence (empty unless enriched)
+  repeated RetrievedDoc maintenance_docs = 12;
+  repeated RetrievedDoc safety_docs = 13;
+
+  // Safety gate
+  bool human_verification_required = 14;
+  repeated string safety_warnings = 15;
+
+  double inference_ms = 16;
+  double rag_ms = 17;
+  double llm_ms = 18;
+}
+
+// ── Health ─────────────────────────────────────────────────────────────
+
+message HealthRequest {}
+
+message HealthResponse {
+  string status = 1;
+  string model_version = 2;
+  bool scaler_loaded = 3;
+  bool mamba_loaded = 4;
+  bool isolation_forest_loaded = 5;
+}
