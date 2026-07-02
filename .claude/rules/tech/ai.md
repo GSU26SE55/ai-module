@@ -177,6 +177,28 @@ async def health():
 
 ---
 
+## Serving — Hybrid REST + gRPC (GH-39→42)
+
+<!-- ⚠️ LEADER: section này thêm ở repo ai-module (GH-42) — cần đưa vào nguồn sync workflow-ai để không bị ghi đè -->
+
+Cùng pipeline inference/prescription expose qua 2 transport song song — **KHÔNG duplicate logic**, servicer gRPC gọi chung `run_inference()`/`run_prescription()` với FastAPI:
+
+| Transport | Port | Entrypoint |
+|-----------|------|-----------|
+| REST (FastAPI) | 8000 | `uvicorn main:app` |
+| gRPC `aimodule.v1.AiService` | 50051 (env `GRPC_PORT`) | `python -m src.grpc_server` |
+
+**Quy tắc:**
+- Contract duy nhất: `protos/ai_service.proto` — sửa contract PHẢI qua repo ai-module, chỉ **thêm** field number mới, không reuse/đổi số cũ (wire compatibility). Stub sinh bằng `python scripts/gen_proto.py`, commit vào `src/grpc_gen/`.
+- Validate input gRPC bằng **chính Pydantic schema của REST** — 2 transport reject giống nhau (`ValidationError` → `INVALID_ARGUMENT`).
+- Response 2 transport phải **parity field-by-field** — có test enforce (`tests/test_grpc_server.py`).
+- `PredictStream` (bidi): 1 request = 1 window 30 đầy đủ = 1 response, in-order; window lỗi giữa stream → stream abort sau k−1 responses (bidi không có per-message error).
+- gRPC insecure — chỉ nội bộ docker network, KHÔNG expose port 50051 ra ngoài.
+- Benchmark trước khi ship thay đổi serving: `python scripts/benchmark_grpc.py` (transport overhead <50ms luôn enforce; SLA <100ms enforce với `--real-weights` trên môi trường deploy).
+- BE integration: `docs/grpc-integration-be.md`.
+
+---
+
 ## Model Artifact Management
 
 ### Đường dẫn chuẩn (bắt buộc nhất quán giữa training và inference)
