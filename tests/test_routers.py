@@ -69,7 +69,7 @@ class TestPredictRouter:
     def _valid_payload(self):
         return {
             "battery_id": "B0005",
-            "readings": [[3.7 + i * 0.001, 1.5, 25.0, 1.5, 3.7, float(i)] for i in range(WINDOW_SIZE)],
+            "readings": [[3.7 + i * 0.001, 1.5, 25.0, float(i)] for i in range(WINDOW_SIZE)],
         }
 
     def test_predict_returns_200(self, client):

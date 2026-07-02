@@ -37,6 +37,7 @@ from src.core.config import (
     LONG_INPUT_FEATURES,
     LONG_SCALER_PATH,
     RAW_FEATURES,
+    SCALER_VERSION,
     WINDOW_SIZE,
     WINDOW_STRIDE,
 )
@@ -132,9 +133,9 @@ def cycles_to_windows(
     Scale cycles, compute cycle-level features on full cycle, then slice windows.
     All WINDOW_SIZE-step windows of a cycle share the same feature vector.
 
-    long_seq=True: extends each cycle to LONG_INPUT_FEATURES (8) by appending
+    long_seq=True: extends each cycle to LONG_INPUT_FEATURES (6) by appending
     IC curve (dQ/dV) and phase mask columns before scaling. The supplied scaler
-    must have been fit on 8-feature data (scaler_long.pkl).
+    must have been fit on 6-feature data (scaler_long.pkl).
     """
     all_X, all_feat, all_y = [], [], []
 
@@ -145,7 +146,7 @@ def cycles_to_windows(
             # Extend raw cycle: append IC curve + phase mask before scaling
             ic    = compute_ic_feature(cycle_raw[:, 0], cycle_raw[:, 1])  # (T,)
             phase = compute_phase_mask(cycle_raw[:, 1])                    # (T,)
-            cycle_ext    = np.column_stack([cycle_raw, ic, phase])         # (T, 8)
+            cycle_ext    = np.column_stack([cycle_raw, ic, phase])         # (T, 6)
             cycle_scaled = scaler.transform(cycle_ext).astype(np.float32)
         else:
             cycle_scaled = scaler.transform(cycle_raw).astype(np.float32)
@@ -191,7 +192,7 @@ def main() -> None:
     os.makedirs(os.path.dirname("models/weights/scaler.pkl"), exist_ok=True)
 
     if long_seq:
-        # Long-seq mode (WINDOW_SIZE=4096): add IC curve + phase mask → 8 features.
+        # Long-seq mode (WINDOW_SIZE=4096): add IC curve + phase mask → 6 features.
         # Fit a separate MinMaxScaler on 8-feature train data → scaler_long.pkl.
         # The 6-feature scaler.pkl (for the production window=30 model) is unchanged.
         print(f"\nLong-seq mode (WINDOW_SIZE={WINDOW_SIZE}): adding IC curve + phase mask (features 7-8)...")
@@ -216,13 +217,13 @@ def main() -> None:
         )
         print(f"Saved scaler_long ({LONG_INPUT_FEATURES} features) -> {LONG_SCALER_PATH}")
     else:
-        # Standard window=30 mode: 6-feature MinMaxScaler
+        # Standard window=30 mode: INPUT_FEATURES-feature MinMaxScaler
         print("\nFitting MinMaxScaler...")
         train_raw = np.concatenate([c for c, _ in train_cycles], axis=0)
         scaler    = MinMaxScaler()
         scaler.fit(train_raw)
         joblib.dump(
-            {"scaler": scaler, "version": "1.1", "trained_on": TRAIN_IDS, "features": FEATURES},
+            {"scaler": scaler, "version": SCALER_VERSION, "trained_on": TRAIN_IDS, "features": FEATURES},
             "models/weights/scaler.pkl",
         )
         print("Saved scaler -> models/weights/scaler.pkl")

@@ -3,15 +3,15 @@ import pytest
 import torch
 
 from scripts.train import load_split
-from src.core.config import FEATURE_SCALER_VERSION, WINDOW_SIZE
+from src.core.config import FEATURE_SCALER_VERSION, INPUT_FEATURES, WINDOW_SIZE
 
 
 class TestWindowUtils:
     def test_window_size(self):
         """A valid reading sequence must have exactly WINDOW_SIZE timesteps."""
-        readings = [[3.7, 1.5, 25.0, 1.0, 3.5, 12.0]] * WINDOW_SIZE
+        readings = [[3.7, 1.5, 25.0, 12.0]] * WINDOW_SIZE
         assert len(readings) == WINDOW_SIZE
-        assert all(len(r) == 6 for r in readings)
+        assert all(len(r) == INPUT_FEATURES for r in readings)
 
     def test_invalid_window_size_raises(self):
         """PredictRequest validator must reject sequences != WINDOW_SIZE timesteps."""
@@ -20,7 +20,7 @@ class TestWindowUtils:
         from src.schemas.predict import PredictRequest
 
         with pytest.raises(ValidationError, match=f"{WINDOW_SIZE} timesteps"):
-            PredictRequest(battery_id="B0005", readings=[[3.7, 1.5, 25.0, 1.0, 3.5, 12.0]] * (WINDOW_SIZE - 1))
+            PredictRequest(battery_id="B0005", readings=[[3.7, 1.5, 25.0, 12.0]] * (WINDOW_SIZE - 1))
 
     def test_invalid_feature_count_raises(self):
         """PredictRequest validator must reject rows with unsupported feature count."""
@@ -36,7 +36,7 @@ class TestWindowUtils:
 
         req = PredictRequest(
             battery_id="B0005",
-            readings=[[3.7, 1.5, 25.0, 1.0, 3.5, 12.0]] * WINDOW_SIZE,
+            readings=[[3.7, 1.5, 25.0, 12.0]] * WINDOW_SIZE,
         )
         assert req.battery_id == "B0005"
         assert len(req.readings) == WINDOW_SIZE

@@ -7,7 +7,7 @@ import torch
 _MC_LOCK = threading.RLock()  # protects model.train()/eval() during MC Dropout
 
 from src.core import model_loader
-from src.core.config import INPUT_FEATURES, MODEL_VERSION, WINDOW_SIZE
+from src.core.config import FEATURES, INPUT_FEATURES, MODEL_VERSION, WINDOW_SIZE
 from src.features.extractor import (
     compute_ic_feature,
     compute_phase_mask,
@@ -22,7 +22,7 @@ from src.models.anomaly_detector import (
     generate_warnings,
 )
 
-_FEATURE_NAMES = ["voltage", "current", "temperature", "current_load", "voltage_load", "time"]
+_FEATURE_NAMES = FEATURES  # single source of truth: src/core/config.py
 
 
 def _expected_feature_count() -> int:
@@ -65,7 +65,7 @@ def run_inference(readings: list[list[float]]) -> dict:
     Full inference pipeline: scale → Mamba SOH → IsolationForest → classify.
 
     Args:
-        readings: (30, 6) preferred or legacy (30, 3) raw sensor values
+        readings: (30, 4) preferred or legacy (30, 3) raw sensor values
 
     Returns:
         dict with soh_percent, classification, confidence, inference_ms,
@@ -184,7 +184,7 @@ def predict_soh_long(readings: list[list[float]], device: str | None = None) -> 
     and is out of scope for the long pipeline.
 
     Args:
-        readings: (L, 6) preferred or legacy (L, 3) raw sensor values, L up to 4096.
+        readings: (L, 4) preferred or legacy (L, 3) raw sensor values, L up to 4096.
         device:   override device ("cpu" / "cuda"); defaults to CUDA if available.
     """
     if model_loader.long_soh_model is None or (device is not None and str(model_loader.long_device) != device):
@@ -193,10 +193,10 @@ def predict_soh_long(readings: list[list[float]], device: str | None = None) -> 
 
     start = time.perf_counter()
     raw = np.array(readings, dtype=np.float32)
-    x   = _align_features(raw)          # (L, 6) — align to base 6 features
+    x   = _align_features(raw)          # (L, 4) — align to base features
 
     # Extend to 8 features: append IC curve (dQ/dV) + phase mask.
-    # These are computed from raw voltage/current so the API stays at 6 features.
+    # These are computed from raw voltage/current so the API stays at base features.
     ic    = compute_ic_feature(x[:, 0], x[:, 1])   # (L,)
     phase = compute_phase_mask(x[:, 1])             # (L,)
     x8    = np.column_stack([x, ic, phase])         # (L, 8)

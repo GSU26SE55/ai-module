@@ -1,7 +1,7 @@
 import os
 
 MODEL_VERSION = "1.3"
-SCALER_VERSION = "1.1"
+SCALER_VERSION = "1.2"   # v1.2: feature ablation 6→4 (bỏ current_load/voltage_load) — retrain bắt buộc
 FEATURE_SCALER_VERSION = "1.3"
 FEATURE_SCALER_VERSION_LONG = "long-2.0"   # long-sequence (8-feature) pipeline — independent of standard
 
@@ -15,7 +15,7 @@ ISO_FOREST_PATH     = os.path.join(WEIGHTS_DIR, f"isolation_forest_v{MODEL_VERSI
 
 WINDOW_SIZE   = 30
 WINDOW_STRIDE = 30
-INPUT_FEATURES    = 6
+INPUT_FEATURES    = 4   # feature ablation: bỏ current_load/voltage_load (xem FEATURES)
 SPECTRAL_FEAT_DIM = 57  # 10 spectral (incl. Gini) + 9 statistical × 3 channels (voltage, current, temperature)
 D_MODEL = 64
 D_STATE = 16
@@ -29,11 +29,11 @@ LONG_PATCH_SIZE   = 16                      # compresses L=4096 → 256 tokens (
 LONG_PATCH_STRIDE = 16                      # non-overlapping (fastest); use 8 for P16S8 as in PatchTST/MambaDecomp
 LONG_D_STATE      = 32                       # GH-34: SSM state dim for long-seq ONLY (global D_STATE=16 kept for window=30 + RUL)
 WARMUP_STAGES   = [256, 512, 1024, 2048, 4096]  # progressive length warmup (GH-10 P1)
-LONG_MODEL_VERSION       = "2.1"   # v2.1: +8 train batteries (incl. 4°C domain B0041/45/53/54/55/56); arch unchanged from v2.0 (PatchDegradationEncoder + 2-layer FiLM + SmoothL1 + CAWR)
+LONG_MODEL_VERSION       = "2.2"   # v2.2: feature ablation 6→4 base (bỏ current_load/voltage_load) → LONG_INPUT_FEATURES=6; v2.1: +8 train batteries (incl. 4°C domain)
 LONG_MAMBA_PATH          = os.path.join(WEIGHTS_DIR, f"soh_mamba_long_v{LONG_MODEL_VERSION}.pth")
 COSINE_T0                = 25     # CosineAnnealingWarmRestarts T_0 for final training stage
 LONG_FEATURE_SCALER_PATH = os.path.join(WEIGHTS_DIR, "feature_scaler_long.pkl")
-LONG_INPUT_FEATURES      = 8     # 6 base + IC curve (dQ/dV) + phase mask
+LONG_INPUT_FEATURES      = 6     # 4 base + IC curve (dQ/dV) + phase mask
 LONG_SCALER_PATH         = os.path.join(WEIGHTS_DIR, "scaler_long.pkl")  # 8-feature MinMaxScaler
 
 # --- RUL (GH-13) — cycle-level Mamba: 1 token = 1 discharge cycle ---
@@ -59,20 +59,18 @@ FORECAST_STRIDE   = 1
 FORECAST_MODEL_VERSION = "1.0"
 FORECAST_MAMBA_PATH    = os.path.join(WEIGHTS_DIR, f"soh_mamba_forecast_v{FORECAST_MODEL_VERSION}.pth")
 
+# Feature ablation (GH-25): bỏ current_load/voltage_load — 2 kênh load redundant/noisy,
+# giữ 4 features đo trực tiếp. Thứ tự cột PHẢI khớp giữa preprocess và inference.
 FEATURES = [
     "voltage",
     "current",
     "temperature",
-    "current_load",
-    "voltage_load",
     "time",
 ]
 RAW_FEATURES = [
     "Voltage_measured",
     "Current_measured",
     "Temperature_measured",
-    "Current_load",
-    "Voltage_load",
     "Time",
 ]
 

@@ -18,7 +18,7 @@ v2 fits a SEPARATE 8-feature MinMaxScaler (scaler_long.pkl) on TRAIN timelines.
 The window=30 scaler.pkl (6 features) is NOT used — the two scalers are independent.
 
 Strategy:
-  - Each battery: concatenate discharge cycles → timeline (T, 8)
+  - Each battery: concatenate discharge cycles → timeline (T, 6)
   - Fit 8-feature MinMaxScaler on all TRAIN timelines → scaler_long.pkl
   - Slide LONG_SEQ_LEN window (stride LONG_SEQ_STRIDE) over scaled timeline
   - Label = SOH of last timestep in window
@@ -52,6 +52,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from scripts.preprocess import TEST_IDS, TRAIN_IDS, VAL_IDS, load_cycles  # noqa: E402
 from src.core.config import (  # noqa: E402
     FEATURE_SCALER_VERSION_LONG,
+    FEATURES,
     LONG_FEATURE_SCALER_PATH,
     LONG_INPUT_FEATURES,
     LONG_SCALER_PATH,
@@ -65,11 +66,11 @@ random.seed(SEED)
 np.random.seed(SEED)
 torch.manual_seed(SEED)
 
-LONG_SCALER_VERSION = "2.0"
+LONG_SCALER_VERSION = "2.1"   # v2.1: feature ablation — 4 base + ic + progress (6 total)
 
-assert LONG_INPUT_FEATURES == 8, (
-    f"preprocess_long.py produces 8 features but config.LONG_INPUT_FEATURES={LONG_INPUT_FEATURES}."
-    " Update config.py if you want a different feature count."
+assert LONG_INPUT_FEATURES == len(FEATURES) + 2, (
+    f"preprocess_long.py produces {len(FEATURES) + 2} features (base {len(FEATURES)} + ic + progress)"
+    f" but config.LONG_INPUT_FEATURES={LONG_INPUT_FEATURES}. Update config.py."
 )
 
 
@@ -81,10 +82,10 @@ def _add_derived_features(cycle: np.ndarray) -> np.ndarray:
     """Add IC curve + discharge progress to one raw discharge cycle.
 
     Args:
-        cycle: (T, 6) — [voltage, current, temp, current_load, voltage_load, time]
+        cycle: (T, 4) — [voltage, current, temperature, time] (config.FEATURES)
                          all RAW (unscaled) values.
     Returns:
-        (T, 8) — appends [ic_curve, discharge_progress].
+        (T, 6) — appends [ic_curve, discharge_progress].
 
     Both features are computed on raw values WITHIN this single cycle so there
     are no discontinuities from the time-column reset at cycle boundaries.
@@ -104,7 +105,7 @@ def _add_derived_features(cycle: np.ndarray) -> np.ndarray:
     """
     voltage  = cycle[:, 0].astype(np.float64)   # V
     current  = cycle[:, 1].astype(np.float64)   # A (negative during NASA discharge)
-    time_col = cycle[:, 5].astype(np.float64)   # s (cumulative within cycle)
+    time_col = cycle[:, FEATURES.index("time")].astype(np.float64)   # s (cumulative within cycle)
 
     # dt: time between consecutive measurements (force positive, min 1 ms)
     dt = np.diff(time_col, prepend=time_col[0])
@@ -131,7 +132,7 @@ def _add_derived_features(cycle: np.ndarray) -> np.ndarray:
 # ---------------------------------------------------------------------------
 
 def battery_timeline(data_dir: str, battery_id: str) -> tuple[np.ndarray, np.ndarray]:
-    """Concatenate all discharge cycles of one battery into a single timeline (T, 8).
+    """Concatenate all discharge cycles of one battery into a single timeline (T, 6).
 
     Derived features (IC curve, discharge progress) are computed per-cycle on RAW
     values before concatenation, so the cycle-boundary time-reset never corrupts dQ/dV.
@@ -145,7 +146,7 @@ def battery_timeline(data_dir: str, battery_id: str) -> tuple[np.ndarray, np.nda
         raise ValueError(f"No usable discharge cycles for '{battery_id}'")
     X_parts = []
     for c, _ in cycles:
-        X_parts.append(_add_derived_features(c))   # (T, 8) per cycle — raw
+        X_parts.append(_add_derived_features(c))   # (T, 6) per cycle — raw
     X_raw  = np.concatenate(X_parts, axis=0).astype(np.float32)
     soh_ts = np.concatenate(
         [np.full(len(c), soh, dtype=np.float32) for c, soh in cycles]
@@ -236,14 +237,12 @@ def main() -> None:
         {
             "scaler":   long_scaler,
             "version":  LONG_SCALER_VERSION,
-            "features": ["voltage", "current", "temperature",
-                         "current_load", "voltage_load", "time",
-                         "ic_curve", "discharge_progress"],
+            "features": FEATURES + ["ic_curve", "discharge_progress"],
             "trained_on": TRAIN_IDS,
         },
         LONG_SCALER_PATH,
     )
-    print(f"Saved scaler_long.pkl -> {LONG_SCALER_PATH}  (v{LONG_SCALER_VERSION}, 8 features)")
+    print(f"Saved scaler_long.pkl -> {LONG_SCALER_PATH}  (v{LONG_SCALER_VERSION}, {LONG_INPUT_FEATURES} features)")
 
     # --- Build windows for each split ---
     print("\nBuilding train long-windows...")

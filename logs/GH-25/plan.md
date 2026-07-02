@@ -75,3 +75,17 @@
 - **GH-9 dependency?** → GH-25 dựa trên fp32 SSM scan của GH-9 (must-land để metric GPU đáng tin).
 - **Được đổi kiến trúc không?** → Có, nếu loss/data/TTA không đủ → bump v2.0 + viết ADR (exception `ai.md` freeze).
 - **Lever ưu tiên?** → Cả 4, thứ tự ablation: Huber/weighting + regeneration trước → TTA → sweep.
+
+---
+
+## Cập nhật 2026-07-02 — Feature ablation 6→4 (chuẩn bị retrain)
+
+**Thay đổi (branch `feat/GH-25-feature-ablation-4f`):** bỏ 2 features `current_load`/`voltage_load` — giữ 4: `[voltage, current, temperature, time]`. Áp dụng CẢ HAI pipeline (đã hỏi & chốt với user):
+- Chuẩn window-30: `INPUT_FEATURES` 6→4, `SCALER_VERSION` 1.1→1.2
+- Long L=4096: `LONG_INPUT_FEATURES` 8→6 (4 base + ic + progress), `LONG_MODEL_VERSION` 2.1→**2.2**, `LONG_SCALER_VERSION` 2.0→2.1
+
+**Files:** `src/core/config.py`, `src/services/inference.py` (`_FEATURE_NAMES` → config), `scripts/preprocess.py` (version hardcode → `SCALER_VERSION`), `scripts/preprocess_long.py` (assert động, **time index 5→`FEATURES.index("time")`**, features list động), `notebooks/kaggle_train_long.ipynb` (BRANCH + v2.2), tests fixtures 6→4 cột, `docs/kaggle-4096-training.md`.
+
+**Verify:** full suite 170 pass (1 flaky pre-existing 9b41269, pass isolate); schema {3,4} đúng (6 cột bị reject); inference end-to-end 4-feature OK; gRPC suites 29/29 (proto `Reading` dimension-agnostic — không đổi contract).
+
+**Hệ quả:** artifacts hiện tại (long v2.1, mamba v1.2) không tương thích — retrain bắt buộc trên Kaggle (notebook đã trỏ branch này). BE gọi API sau retrain phải gửi 4 cột (6 cột sẽ bị 422/INVALID_ARGUMENT).

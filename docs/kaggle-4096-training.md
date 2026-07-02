@@ -280,7 +280,7 @@ Uoc tinh thoi gian tren P100:
 
 ```python
 required = [
-    "scaler_long.pkl",              # 8-feature MinMaxScaler (v2.0)
+    "scaler_long.pkl",              # 6-feature MinMaxScaler (v2.1 — GH-25 ablation: 4 base + ic + progress)
     "feature_scaler_long.pkl",      # 54-dim spectral feature StandardScaler
     "soh_mamba_long_v2.0.pth",      # long-seq Mamba model weights
 ]

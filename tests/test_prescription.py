@@ -11,7 +11,7 @@ from src.services.rule_prescription import build_rule_prescription
 
 
 def make_dummy_readings(n: int = WINDOW_SIZE) -> list[list[float]]:
-    return [[3.7 + i * 0.001, 1.5, 25.0, 1.5, 3.7, float(i)] for i in range(n)]
+    return [[3.7 + i * 0.001, 1.5, 25.0, float(i)] for i in range(n)]
 
 
 def fake_inference_result(
