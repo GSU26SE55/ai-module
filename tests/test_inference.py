@@ -153,33 +153,48 @@ class TestLongInference:
         from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
         from src.core import model_loader
-        from src.core.config import LONG_MODEL_VERSION
+        from src.core.config import LONG_INPUT_FEATURES, LONG_MODEL_VERSION
 
+        # 6-feature scaler → used by _align_features (reads model_loader.scaler.n_features_in_)
         raw_scaler  = MinMaxScaler().fit(np.random.rand(50, INPUT_FEATURES))
+        # 8-feature long scaler → transforms [6 base + IC curve + phase mask] before the long model
+        long_scaler = MinMaxScaler().fit(np.random.rand(50, LONG_INPUT_FEATURES))
         feat_scaler = StandardScaler().fit(np.random.rand(50, SPECTRAL_FEAT_DIM))
-        scaler_path = tmp_path / "scaler.pkl"
-        feat_path   = tmp_path / "feature_scaler_long.pkl"
-        joblib.dump({"scaler": raw_scaler,  "version": "1.0"},      scaler_path)
+        long_scaler_path = tmp_path / "scaler_long.pkl"
+        feat_path        = tmp_path / "feature_scaler_long.pkl"
+        joblib.dump({"scaler": long_scaler, "version": "2.0"},      long_scaler_path)
         joblib.dump({"scaler": feat_scaler, "version": "long-1.0"}, feat_path)
 
+        # Long model takes 8 input features (6 base + IC curve + phase mask)
         model = MambaSOHPredictor(
-            input_features=INPUT_FEATURES, feat_dim=SPECTRAL_FEAT_DIM,
+            input_features=LONG_INPUT_FEATURES, feat_dim=SPECTRAL_FEAT_DIM,
             d_model=8, d_state=4, pooling="attention",
         )
         model_path = tmp_path / "soh_mamba_long.pth"
         torch.save(
             {
                 "model_state_dict": model.state_dict(), "version": LONG_MODEL_VERSION,
-                "pooling": "attention", "input_features": INPUT_FEATURES,
+                "pooling": "attention", "input_features": LONG_INPUT_FEATURES,
                 "feat_dim": SPECTRAL_FEAT_DIM, "d_model": 8, "d_state": 4,
+                # patch_size=1 (no-patch) — must match how load_long_model reconstructs;
+                # default LONG_PATCH_SIZE=16 would build patch_embed and mismatch state_dict.
+                "patch_size": 1, "patch_stride": 1,
             },
             model_path,
         )
 
-        monkeypatch.setattr(model_loader, "SCALER_PATH", str(scaler_path))
+        # load_long_model calls torch.compile(mode="reduce-overhead"); inductor needs a
+        # C++ toolchain (absent on some dev boxes) and fails at forward-time (not caught by
+        # the compile() try/except). Unit tests exercise inference logic, not compilation →
+        # make torch.compile a no-op so the test is toolchain-independent.
+        monkeypatch.setattr(torch, "compile", lambda m, *a, **k: m)
+        monkeypatch.setattr(model_loader, "LONG_SCALER_PATH", str(long_scaler_path))
         monkeypatch.setattr(model_loader, "LONG_FEATURE_SCALER_PATH", str(feat_path))
         monkeypatch.setattr(model_loader, "LONG_MAMBA_PATH", str(model_path))
-        for attr in ("scaler", "long_feature_scaler", "long_soh_model", "long_device"):
+        # predict_soh_long → _align_features reads model_loader.scaler.n_features_in_ (6);
+        # set it directly since load_models() is not called in the long-only path.
+        monkeypatch.setattr(model_loader, "scaler", raw_scaler)
+        for attr in ("long_scaler", "long_feature_scaler", "long_soh_model", "long_device"):
             monkeypatch.setattr(model_loader, attr, None)
 
     def test_predict_soh_long_chunked_path(self, tmp_path, monkeypatch):
