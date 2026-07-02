@@ -79,6 +79,24 @@ uvicorn main:app --reload --port 8000
 
 ---
 
+## Serving — REST + gRPC (hybrid)
+
+The same inference/prescription pipeline is exposed over two transports running side by side:
+
+| Transport | Port | Start | Use for |
+|-----------|------|-------|---------|
+| REST (FastAPI) | 8000 | `uvicorn main:app --port 8000` | current integrations, Swagger UI |
+| gRPC (`aimodule.v1.AiService`) | 50051 (env `GRPC_PORT`) | `python -m src.grpc_server` | lower latency, real-time sensor streaming |
+
+gRPC RPCs: `Predict`, `Prescribe`, `Health` (unary — mirror the REST endpoints, parity-tested field-by-field) and `PredictStream` (bidirectional streaming: N windows in → N predictions out, in order, over one connection).
+
+- Contract: [`protos/ai_service.proto`](protos/ai_service.proto) — regenerate Python stubs with `python scripts/gen_proto.py`
+- Demo client (all 4 RPCs, replaces Swagger for demos): `python scripts/grpc_client_demo.py`
+- Benchmark: `python scripts/benchmark_grpc.py` (add `--real-weights` to enforce the <100ms SLA with production artifacts)
+- BE (.NET) integration guide: [`docs/grpc-integration-be.md`](docs/grpc-integration-be.md)
+
+---
+
 ## API
 
 ### `POST /predict`

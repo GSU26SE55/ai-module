@@ -250,6 +250,43 @@ class TestPredictStream:
                 list(grpc_stub.PredictStream(iter([request])))
         assert exc_info.value.code() == grpc.StatusCode.INTERNAL
 
+    def test_concurrent_streams_do_not_mix_responses(self, grpc_stub):
+        """Two interleaved streams on the same server (GH-42) — each client
+        must get exactly its own battery_ids back, in its own order."""
+
+        def run_stream(prefix: str) -> list[str]:
+            requests = [
+                pb.PredictRequest(battery_id=f"{prefix}-{i}", readings=VALID_READINGS)
+                for i in range(3)
+            ]
+            return [r.battery_id for r in grpc_stub.PredictStream(iter(requests))]
+
+        with futures.ThreadPoolExecutor(max_workers=2) as pool:
+            future_a = pool.submit(run_stream, "A")
+            future_b = pool.submit(run_stream, "B")
+            ids_a, ids_b = future_a.result(timeout=120), future_b.result(timeout=120)
+
+        assert ids_a == ["A-0", "A-1", "A-2"]
+        assert ids_b == ["B-0", "B-1", "B-2"]
+
+
+# ── Prescribe qua channel thật (GH-42) ─────────────────────────────────
+
+
+def test_prescribe_via_channel_returns_valid_response(grpc_stub):
+    """GH-40 covered Prescribe via direct servicer + parity; this exercises
+    the full request path through a real channel with the dummy pipeline."""
+    response = grpc_stub.Prescribe(
+        pb.PrescribeRequest(battery_id="B0005", readings=VALID_READINGS, enrich=False)
+    )
+    assert response.battery_id == "B0005"
+    assert response.risk_level in ("Critical", "High", "Medium", "Low")
+    assert response.priority in ("P1", "P2", "P3", "None")
+    assert response.prescription != ""
+    assert len(response.action_steps) > 0
+    assert response.enriched is False
+    assert len(response.maintenance_docs) == 0  # empty unless enriched
+
 
 # ── Parity with REST ───────────────────────────────────────────────────
 # Both transports call the same pipeline; with run_inference patched to a
