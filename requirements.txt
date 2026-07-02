@@ -17,3 +17,10 @@ joblib==1.4.2
 chromadb==0.5.3
 sentence-transformers==3.0.1
 anthropic==0.34.2
+
+# gRPC contract + codegen (GH-39) — serving lib ngang hàng FastAPI, KHÔNG phải ML framework
+# (không vi phạm rule "chỉ PyTorch + scikit-learn") — xem logs/GH-39/plan.md
+# Pin cả 3 cùng nhau: protobuf runtime phải khớp version codegen của grpcio-tools
+grpcio==1.81.1
+grpcio-tools==1.81.1
+protobuf==6.33.6
