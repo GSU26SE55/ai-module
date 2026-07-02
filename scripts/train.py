@@ -345,7 +345,8 @@ def train_long(data_dir: str, log_dir: str, accum_steps: int = 4, micro_batch: i
                patch_size: int = LONG_PATCH_SIZE, patch_stride: int = LONG_PATCH_STRIDE,
                weighted_loss: bool = False, eol_weight_scale: float = 2.0,
                cosine_t0: int = 25, weight_decay: float = 1e-5, dropout: float = 0.2,
-               jitter: float = 0.0, swa: bool = False, swa_start_frac: float = 0.75) -> None:
+               jitter: float = 0.0, swa: bool = False, swa_start_frac: float = 0.75,
+               attention_heads: int = 1) -> None:
     """Train the long-sequence model (L up to 4096) with progressive length warmup.
 
     Each stage truncates sequences to a shorter length (cheap epochs), carrying
@@ -996,6 +997,9 @@ def main() -> None:
                              "Needs the final stage to run long (use --cosine-t0 == --final-epochs so it doesn't early-stop).")
     parser.add_argument("--swa-start-frac", type=float, default=0.75,
                         help="Start SWA averaging at this fraction of --final-epochs (default 0.75 = last 25%%)")
+    parser.add_argument("--attention-heads", type=int, default=1,
+                        help="GH-37: multi-head attention pooling for long-seq (default 1 = single-head; "
+                             "try 4 — d_model must be divisible by it). Only affects pooling='attention'.")
     args = parser.parse_args()
     if args.forecast:
         holdouts = args.holdout.split(",") if args.holdout else None
@@ -1026,6 +1030,7 @@ def main() -> None:
             jitter=args.jitter,
             swa=args.swa,
             swa_start_frac=args.swa_start_frac,
+            attention_heads=args.attention_heads,
         )
     else:
         train(args.data_dir or "data/processed", args.epochs, args.log_dir)
