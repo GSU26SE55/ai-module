@@ -155,13 +155,10 @@ def _to_prescribe_response(result: dict) -> ai_service_pb2.PrescribeResponse:
 
 
 class AiServiceServicer(ai_service_pb2_grpc.AiServiceServicer):
-    """Unary RPCs backed by the same pipeline FastAPI serves.
+    """RPCs backed by the same pipeline FastAPI serves."""
 
-    PredictStream is intentionally NOT overridden — the base class returns
-    UNIMPLEMENTED until GH-41.
-    """
-
-    def Predict(self, request, context):
+    def _predict_one(self, request, context) -> ai_service_pb2.PredictResponse:
+        """Shared unary/stream path: validate → run_inference → map to proto."""
         parsed = _validate(
             PredictRequest,
             {
@@ -176,6 +173,9 @@ class AiServiceServicer(ai_service_pb2_grpc.AiServiceServicer):
             logger.exception("Predict failed")
             context.abort(grpc.StatusCode.INTERNAL, f"inference failed: {exc}")
         return _to_predict_response(parsed.battery_id, result)
+
+    def Predict(self, request, context):
+        return self._predict_one(request, context)
 
     def Prescribe(self, request, context):
         payload = {
@@ -203,6 +203,22 @@ class AiServiceServicer(ai_service_pb2_grpc.AiServiceServicer):
             logger.exception("Prescribe failed")
             context.abort(grpc.StatusCode.INTERNAL, f"prescription failed: {exc}")
         return _to_prescribe_response(result)
+
+    def PredictStream(self, request_iterator, context):
+        """Bidirectional streaming Predict (GH-41) — sensor real-time.
+
+        Each streamed PredictRequest is one full 30-timestep window and goes
+        through the exact unary path (validate → run_inference → map), so a
+        stream of N windows yields N responses in request order. Ordering is
+        guaranteed by sequential processing in this handler thread; back-
+        pressure comes from gRPC/HTTP/2 flow control on request_iterator.
+
+        Error semantics: gRPC bidi has no per-message error channel — an
+        invalid window aborts the stream with INVALID_ARGUMENT after the
+        client has received responses for all prior windows.
+        """
+        for request in request_iterator:
+            yield self._predict_one(request, context)
 
     def Health(self, request, context):
         return ai_service_pb2.HealthResponse(

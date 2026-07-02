@@ -177,14 +177,78 @@ def test_predict_wrong_feature_count_aborts_invalid_argument(grpc_stub):
     assert exc_info.value.code() == grpc.StatusCode.INVALID_ARGUMENT
 
 
-def test_predict_stream_unimplemented(grpc_stub):
-    with pytest.raises(grpc.RpcError) as exc_info:
-        list(
-            grpc_stub.PredictStream(
-                iter([pb.PredictRequest(battery_id="B0005", readings=VALID_READINGS)])
-            )
+# ── PredictStream (GH-41) ──────────────────────────────────────────────
+
+
+class TestPredictStream:
+    def test_n_windows_yield_n_predictions_in_order(self, grpc_stub):
+        n = 5
+        requests = [
+            pb.PredictRequest(battery_id=f"B{i:04d}", readings=VALID_READINGS)
+            for i in range(n)
+        ]
+        responses = list(grpc_stub.PredictStream(iter(requests)))
+        assert len(responses) == n
+        # battery_id echoes the request → proves response i belongs to request i
+        assert [r.battery_id for r in responses] == [f"B{i:04d}" for i in range(n)]
+        for r in responses:
+            assert r.classification in ("Normal", "Degrading", "Failed")
+            assert 0.0 <= r.soh_percent <= 100.0
+
+    def test_stream_response_matches_unary(self, grpc_stub):
+        """Same window through the stream and through unary Predict must give
+        the identical message (fixed pipeline output — MC Dropout is stochastic)."""
+        request = pb.PredictRequest(battery_id="B0005", readings=VALID_READINGS)
+        with patch("src.grpc_server.run_inference", return_value=FIXED_PREDICT_RESULT):
+            streamed = list(grpc_stub.PredictStream(iter([request])))
+            unary = grpc_stub.Predict(request)
+        assert len(streamed) == 1
+        assert streamed[0] == unary
+
+    def test_invalid_window_mid_stream_aborts_after_prior_responses(self, grpc_stub):
+        bad = pb.PredictRequest(
+            battery_id="B-bad",
+            readings=[pb.Reading(values=[3.7] * INPUT_FEATURES) for _ in range(5)],
         )
-    assert exc_info.value.code() == grpc.StatusCode.UNIMPLEMENTED
+        requests = [
+            pb.PredictRequest(battery_id="B0000", readings=VALID_READINGS),
+            pb.PredictRequest(battery_id="B0001", readings=VALID_READINGS),
+            bad,
+            pb.PredictRequest(battery_id="B0003", readings=VALID_READINGS),
+        ]
+        received = []
+        with pytest.raises(grpc.RpcError) as exc_info:
+            for response in grpc_stub.PredictStream(iter(requests)):
+                received.append(response.battery_id)
+        assert exc_info.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+        # the two windows before the bad one were answered
+        assert received == ["B0000", "B0001"]
+
+    def test_empty_stream_returns_no_responses(self, grpc_stub):
+        responses = list(grpc_stub.PredictStream(iter([])))
+        assert responses == []
+
+    def test_client_cancel_mid_stream_leaves_server_usable(self, grpc_stub):
+        def requests_forever():
+            while True:
+                yield pb.PredictRequest(battery_id="B0005", readings=VALID_READINGS)
+
+        call = grpc_stub.PredictStream(requests_forever())
+        first = next(iter(call))
+        assert first.battery_id == "B0005"
+        call.cancel()
+        # server must stay healthy after the cancelled stream
+        health = grpc_stub.Health(pb.HealthRequest())
+        assert health.status == "ok"
+
+    def test_pipeline_error_mid_stream_aborts_internal(self, grpc_stub):
+        request = pb.PredictRequest(battery_id="B0005", readings=VALID_READINGS)
+        with patch(
+            "src.grpc_server.run_inference", side_effect=RuntimeError("model exploded")
+        ):
+            with pytest.raises(grpc.RpcError) as exc_info:
+                list(grpc_stub.PredictStream(iter([request])))
+        assert exc_info.value.code() == grpc.StatusCode.INTERNAL
 
 
 # ── Parity with REST ───────────────────────────────────────────────────
