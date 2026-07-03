@@ -21,6 +21,7 @@ from src.core.config import (
     FEATURE_SCALER_PATH,
     FEATURE_SCALER_VERSION,
     FEATURES,
+    BASE_FEATURES,
     INPUT_FEATURES,
     ISO_FOREST_PATH,
     MAMBA_PATH,
@@ -42,7 +43,7 @@ os.makedirs(WEIGHTS_DIR, exist_ok=True)
 
 # Dummy scaler — fit on random data with configured feature count
 scaler = MinMaxScaler()
-scaler.fit(np.random.rand(200, INPUT_FEATURES))
+scaler.fit(np.random.rand(200, len(BASE_FEATURES)))  # GH-54: scaler = 4 base cols
 joblib.dump(
     {
         "scaler": scaler,
@@ -80,9 +81,11 @@ torch.save(
 )
 print(f"✓ Saved dummy Mamba model → {MAMBA_PATH}")
 
-# Dummy IsolationForest — fit on random flattened windows
+# Dummy IsolationForest — fit on spectral+statistical features (matches train.py:
+# iso.fit(X_feat_train), NOT the raw window — run_inference() calls decision_function
+# on the 57-dim extract_window_features() output).
 iso = IsolationForest(contamination=0.1, n_estimators=100, random_state=SEED)
-iso.fit(np.random.rand(200, WINDOW_SIZE * INPUT_FEATURES))
+iso.fit(np.random.rand(200, SPECTRAL_FEAT_DIM))
 joblib.dump(iso, ISO_FOREST_PATH)
 print(f"✓ Saved dummy IsolationForest → {ISO_FOREST_PATH}")
 

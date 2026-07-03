@@ -1,25 +1,33 @@
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from src.core.config import FEATURES, INPUT_FEATURES, WINDOW_SIZE
+from src.core.config import BASE_FEATURES, WINDOW_SIZE
 
 
 LEGACY_INPUT_FEATURES = 3
 LEGACY_FEATURES = ["voltage", "current", "temperature"]
 
+# GH-54: API contract stays at 4 base columns — the 2 extra model inputs
+# (cycle_count, soc_percent) are derived server-side, never sent by BE.
+BASE_INPUT_FEATURES = len(BASE_FEATURES)
+
 
 class PredictRequest(BaseModel):
     battery_id: str
-    readings: list[list[float]]  # shape: (30, 6) preferred; (30, 3) allowed for legacy artifacts
+    readings: list[
+        list[float]
+    ]  # shape: (30, 4) preferred; (30, 3) allowed for legacy artifacts
 
     @field_validator("readings")
     @classmethod
     def validate_readings_shape(cls, v: list[list[float]]) -> list[list[float]]:
         if len(v) != WINDOW_SIZE:
-            raise ValueError(f"readings must have {WINDOW_SIZE} timesteps, got {len(v)}")
-        allowed_feature_counts = {LEGACY_INPUT_FEATURES, INPUT_FEATURES}
+            raise ValueError(
+                f"readings must have {WINDOW_SIZE} timesteps, got {len(v)}"
+            )
+        allowed_feature_counts = {LEGACY_INPUT_FEATURES, BASE_INPUT_FEATURES}
         feature_descriptions = {
             LEGACY_INPUT_FEATURES: LEGACY_FEATURES,
-            INPUT_FEATURES: FEATURES,
+            BASE_INPUT_FEATURES: BASE_FEATURES,
         }
         for i, row in enumerate(v):
             if len(row) not in allowed_feature_counts:
@@ -31,8 +39,8 @@ class PredictRequest(BaseModel):
 
 
 class WarningItem(BaseModel):
-    code: str       # e.g. "VOLTAGE_LOW", "TEMP_CRITICAL", "SOH_LOW"
-    severity: str   # "warning" | "critical"
+    code: str  # e.g. "VOLTAGE_LOW", "TEMP_CRITICAL", "SOH_LOW"
+    severity: str  # "warning" | "critical"
     message: str
 
 
@@ -44,8 +52,8 @@ class FeatureStat(BaseModel):
 
 class PredictionInfo(BaseModel):
     soh_percent: float
-    soh_confidence: float   # MC Dropout uncertainty [0,1]: 1=confident, 0=uncertain
-    soh_std: float          # MC Dropout std in % SOH — raw uncertainty
+    soh_confidence: float  # MC Dropout uncertainty [0,1]: 1=confident, 0=uncertain
+    soh_std: float  # MC Dropout std in % SOH — raw uncertainty
     rul_cycles_estimate: int
     degradation_rate_per_cycle: float
     soh_trend: str
@@ -57,7 +65,7 @@ class PredictionInfo(BaseModel):
 class AnomalyInfo(BaseModel):
     anomaly_score: float
     anomaly_status: str
-    anomaly_confidence: float   # IsolationForest magnitude — NOT calibrated probability
+    anomaly_confidence: float  # IsolationForest magnitude — NOT calibrated probability
 
 
 class RiskInfo(BaseModel):
@@ -91,8 +99,8 @@ class PredictResponse(BaseModel):
 
     # Backward-compatible flat fields. Keep until BE migrates to nested response.
     soh_percent: float
-    classification: str     # "Normal" | "Degrading" | "Failed"
-    confidence: float       # |IsolationForest score|, range [0, 1]
+    classification: str  # "Normal" | "Degrading" | "Failed"
+    confidence: float  # |IsolationForest score|, range [0, 1]
     inference_ms: float
 
     # ── RUL & Degradation Trend ───────────────────────────────────────────
