@@ -80,9 +80,14 @@ def _append_derived_features(
 
     Only when the loaded model expects exactly 2 more channels than the scaler
     provides (v1.4+ artifacts) — legacy models keep the scaled input as-is.
-    Both columns are normalized by fixed formulas (no refit of scaler.pkl):
-    cycle_idx / CYCLE_COUNT_NORM (0.0 when the caller doesn't know the cycle —
-    BE hiện chưa gửi) and window-local Coulomb-counting SOC / 100.
+
+    GH-56: if the payload already carries 6 columns, BE computed cycle_count
+    (raw cycle index) + soc_percent (raw 0-100, from the battery's full
+    charge/discharge history — more accurate than this window-local estimate)
+    directly, so use them as-is instead of re-deriving. Legacy 3/4-column
+    payloads fall back to the previous behaviour: cycle_idx / CYCLE_COUNT_NORM
+    (0.0 when the caller doesn't know the cycle) and window-local
+    Coulomb-counting SOC / 100.
     """
     model_dim = getattr(model_loader.soh_model, "input_features", x_scaled.shape[1])
     if model_dim != x_scaled.shape[1] + 2:
@@ -92,10 +97,16 @@ def _append_derived_features(
             f"model expects {model_dim} features (incl. derived soc_percent) but the "
             f"payload has only {raw.shape[1]} columns — the 'time' column is required."
         )
-    current = raw[:, BASE_FEATURES.index("current")]
-    time_col = raw[:, BASE_FEATURES.index("time")]
-    soc_norm = compute_soc_percent(current, time_col, NOMINAL_CAPACITY_AH) / 100.0
-    cycle_count_norm = 0.0 if cycle_idx is None else cycle_idx / CYCLE_COUNT_NORM
+    if raw.shape[1] >= len(BASE_FEATURES) + 2:
+        # GH-56: BE sends cycle_count (constant across the window) + soc_percent
+        # (per-timestep) directly as columns 5-6 — no server-side derivation needed.
+        cycle_count_norm = np.float32(raw[0, len(BASE_FEATURES)] / CYCLE_COUNT_NORM)
+        soc_norm = raw[:, len(BASE_FEATURES) + 1] / 100.0
+    else:
+        current = raw[:, BASE_FEATURES.index("current")]
+        time_col = raw[:, BASE_FEATURES.index("time")]
+        soc_norm = compute_soc_percent(current, time_col, NOMINAL_CAPACITY_AH) / 100.0
+        cycle_count_norm = 0.0 if cycle_idx is None else cycle_idx / CYCLE_COUNT_NORM
     return np.column_stack(
         [
             x_scaled,
@@ -110,11 +121,13 @@ def run_inference(readings: list[list[float]], cycle_idx: int | None = None) -> 
     Full inference pipeline: scale → Mamba SOH → IsolationForest → classify.
 
     Args:
-        readings:  (30, 4) preferred or legacy (30, 3) raw sensor values.
-                   Model input is (30, 6): 2 derived columns (cycle_count, SOC)
-                   are computed server-side (GH-54) — BE contract unchanged.
-        cycle_idx: 0-based discharge-cycle number of this battery, if the
-                   caller knows it (default None → cycle_count feature = 0).
+        readings:  (30, 6) preferred — BE sends cycle_count + soc_percent directly
+                   as columns 5-6 (GH-56); (30, 4) or legacy (30, 3) also accepted,
+                   in which case the 2 derived columns are computed server-side
+                   (GH-54: window-local Coulomb counting + cycle_idx below).
+        cycle_idx: 0-based discharge-cycle number of this battery, only used when
+                   readings has 4 (or 3) columns (default None → cycle_count feature = 0).
+                   Ignored when readings already carries 6 columns.
 
     Returns:
         dict with soh_percent, classification, confidence, inference_ms,

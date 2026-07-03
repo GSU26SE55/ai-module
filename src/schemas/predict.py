@@ -1,21 +1,26 @@
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from src.core.config import BASE_FEATURES, WINDOW_SIZE
+from src.core.config import BASE_FEATURES, FEATURES, INPUT_FEATURES, WINDOW_SIZE
 
 
 LEGACY_INPUT_FEATURES = 3
 LEGACY_FEATURES = ["voltage", "current", "temperature"]
 
-# GH-54: API contract stays at 4 base columns — the 2 extra model inputs
-# (cycle_count, soc_percent) are derived server-side, never sent by BE.
+# GH-54: 4 base columns — the 2 extra model inputs (cycle_count, soc_percent) are
+# derived server-side when the payload only has these 4.
 BASE_INPUT_FEATURES = len(BASE_FEATURES)
+
+# GH-56: BE may instead send all 6 columns directly (cycle_count + soc_percent
+# computed from the battery's full charge/discharge history — more accurate
+# than this service's window-local estimate). Used as-is when present.
+FULL_INPUT_FEATURES = INPUT_FEATURES
 
 
 class PredictRequest(BaseModel):
     battery_id: str
     readings: list[
         list[float]
-    ]  # shape: (30, 4) preferred; (30, 3) allowed for legacy artifacts
+    ]  # shape: (30, 6) preferred; (30, 4) or legacy (30, 3) also accepted
 
     @field_validator("readings")
     @classmethod
@@ -24,10 +29,15 @@ class PredictRequest(BaseModel):
             raise ValueError(
                 f"readings must have {WINDOW_SIZE} timesteps, got {len(v)}"
             )
-        allowed_feature_counts = {LEGACY_INPUT_FEATURES, BASE_INPUT_FEATURES}
+        allowed_feature_counts = {
+            LEGACY_INPUT_FEATURES,
+            BASE_INPUT_FEATURES,
+            FULL_INPUT_FEATURES,
+        }
         feature_descriptions = {
             LEGACY_INPUT_FEATURES: LEGACY_FEATURES,
             BASE_INPUT_FEATURES: BASE_FEATURES,
+            FULL_INPUT_FEATURES: FEATURES,
         }
         for i, row in enumerate(v):
             if len(row) not in allowed_feature_counts:

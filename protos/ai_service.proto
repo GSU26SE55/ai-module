@@ -28,8 +28,15 @@ service AiService {
 
 // ── Predict ────────────────────────────────────────────────────────────
 
-// One timestep of sensor values. 6 features preferred; 3 allowed for
-// legacy artifacts (voltage, current, temperature). Window = 30 timesteps.
+// One timestep of sensor values. Window = 30 timesteps. Accepted lengths:
+//   6 (preferred, GH-56) — [voltage, current, temperature, time, cycle_count,
+//      soc_percent]. cycle_count (raw cycle index) is constant across the
+//      window; soc_percent (raw 0-100, from the battery's full charge/
+//      discharge history) varies per timestep. Used as-is, no re-derivation.
+//   4 — [voltage, current, temperature, time]. cycle_count/soc_percent are
+//      derived server-side (GH-54: window-local Coulomb counting; cycle_count
+//      defaults to 0 unless the RPC's cycle_idx is set — REST has no such field).
+//   3 — legacy artifacts (voltage, current, temperature).
 message Reading {
   repeated double values = 1;
 }
