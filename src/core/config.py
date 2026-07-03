@@ -1,10 +1,11 @@
 import os
 
 MODEL_VERSION = (
-    "1.4"  # v1.4: +cycle_count +soc_percent (GH-54, 4→6 model input) — retrain bắt buộc
+    "1.5"  # v1.5: GH-58 fix spectral feature per-window (was per-cycle, train/serve
+    # mismatch) — retrain bắt buộc. v1.4 artifact stale, KHÔNG dùng cho production.
 )
 SCALER_VERSION = "1.2"  # v1.2: feature ablation 6→4 (bỏ current_load/voltage_load) — retrain bắt buộc
-FEATURE_SCALER_VERSION = "1.3"
+FEATURE_SCALER_VERSION = "1.4"  # v1.4: GH-58 tính per-window (was per-cycle) — retrain bắt buộc
 FEATURE_SCALER_VERSION_LONG = (
     "long-2.0"  # long-sequence (8-feature) pipeline — independent of standard
 )

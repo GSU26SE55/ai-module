@@ -3,7 +3,12 @@ import pytest
 import torch
 
 from scripts.train import load_split
-from src.core.config import BASE_FEATURES, FEATURE_SCALER_VERSION, WINDOW_SIZE
+from src.core.config import (
+    BASE_FEATURES,
+    FEATURE_SCALER_VERSION,
+    SPECTRAL_FEAT_DIM,
+    WINDOW_SIZE,
+)
 
 
 class TestWindowUtils:
@@ -191,3 +196,55 @@ class TestGh54DerivedColumns:
         X, _, _ = cycles_to_windows([(cycle, 95.0, 0)], scaler)
         assert X[0, 0, 5] == 1.0 and X[1, 0, 5] == 1.0
         assert X[0, -1, 5] < 1.0  # drained within the window
+
+
+class TestGh58PerWindowSpectralFeatures:
+    """GH-58 — X_feat must be computed PER WINDOW, matching run_inference()'s
+    extract_window_features(x_scaled[:, :3]) call on just the received window.
+    A prior version computed X_feat once on the FULL cycle and shared it across
+    every window sliced from that cycle — causing severe train/serve skew
+    (StandardScaler outliers up to -20 at inference vs the ~[-3, 3] range seen
+    in training). This test would have FAILED under that prior behaviour, since
+    all windows of a cycle used to share an identical X_feat row."""
+
+    def test_different_windows_get_different_features(self):
+        from sklearn.preprocessing import MinMaxScaler
+
+        from scripts.preprocess import cycles_to_windows
+
+        n = 90  # 3 windows of 30
+        rng = np.random.RandomState(42)
+        cycle = rng.rand(n, 4).astype(np.float32)
+        cycle[:, 3] = np.arange(n, dtype=np.float32) * 10.0  # time
+        # Give each window a distinctly different voltage pattern so their
+        # spectral/statistical features cannot coincidentally match.
+        t = np.arange(30, dtype=np.float32)
+        cycle[0:30, 0] = 3.7 + 0.05 * np.sin(t)  # oscillating
+        cycle[30:60, 0] = np.linspace(3.7, 3.2, 30)  # linear ramp
+        cycle[60:90, 0] = 3.5  # flat
+
+        scaler = MinMaxScaler().fit(cycle)
+        X, X_feat, y = cycles_to_windows([(cycle, 90.0, 0)], scaler)
+
+        assert X_feat.shape == (3, SPECTRAL_FEAT_DIM)
+        assert not np.allclose(X_feat[0], X_feat[1])
+        assert not np.allclose(X_feat[1], X_feat[2])
+        assert not np.allclose(X_feat[0], X_feat[2])
+
+    def test_matches_inference_feature_extraction(self):
+        """Same scaled window fed to preprocess's per-window path and to
+        run_inference()'s extractor must produce identical features."""
+        from sklearn.preprocessing import MinMaxScaler
+
+        from scripts.preprocess import cycles_to_windows
+        from src.features.extractor import extract_window_features
+
+        rng = np.random.RandomState(42)
+        cycle = rng.rand(WINDOW_SIZE, 4).astype(np.float32)  # exactly 1 window
+        cycle[:, 3] = np.arange(WINDOW_SIZE, dtype=np.float32) * 10.0  # time
+        scaler = MinMaxScaler().fit(cycle)
+        _, X_feat, _ = cycles_to_windows([(cycle, 95.0, 0)], scaler)
+
+        x_scaled = scaler.transform(cycle)
+        expected = extract_window_features(x_scaled[:, :3])
+        np.testing.assert_allclose(X_feat[0], expected)

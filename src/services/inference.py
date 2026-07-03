@@ -191,48 +191,55 @@ def run_inference(readings: list[list[float]], cycle_idx: int | None = None) -> 
 
     elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
 
-    return {
-        "prediction": {
-            "soh_percent": round(soh, 2),
-            "soh_confidence": soh_confidence,  # MC Dropout uncertainty
-            "soh_std": round(soh_std, 3),
-            "rul_cycles_estimate": degradation["rul_cycles_estimate"],
-            "degradation_rate_per_cycle": degradation["degradation_rate_per_cycle"],
-            "soh_trend": degradation["soh_trend"],
-            "cycles_to_maintenance": degradation["cycles_to_maintenance"],
-            "soh_trajectory": degradation["soh_trajectory"],
-            "health_stage": health_stage,
-        },
-        "anomaly": {
-            "anomaly_score": round(score, 4),
-            "anomaly_status": anomaly_status,
-            "anomaly_confidence": anomaly_confidence,
-        },
-        "risk": risk,
-        "evidence": {
-            "warnings": warnings,
-            "feature_summary": feature_summary,
-        },
-        "metadata": {
-            "model_version": MODEL_VERSION,
-            "window_size": WINDOW_SIZE,
-            "input_features": INPUT_FEATURES,
-            "inference_ms": elapsed_ms,
-        },
+    prediction = {
         "soh_percent": round(soh, 2),
-        "classification": classification,
-        "confidence": soh_confidence,  # MC Dropout (SOH uncertainty)
-        "inference_ms": elapsed_ms,
-        # RUL — battery-specific (from observed trend) when window is long enough
+        "soh_confidence": soh_confidence,  # MC Dropout uncertainty
+        "soh_std": round(soh_std, 3),
         "rul_cycles_estimate": degradation["rul_cycles_estimate"],
         "degradation_rate_per_cycle": degradation["degradation_rate_per_cycle"],
         "soh_trend": degradation["soh_trend"],
         "cycles_to_maintenance": degradation["cycles_to_maintenance"],
         "soh_trajectory": degradation["soh_trajectory"],
+        "health_stage": health_stage,
+    }
+    anomaly = {
         "anomaly_score": round(score, 4),
-        "recommended_action": risk["action_code"],
+        "anomaly_status": anomaly_status,
+        "anomaly_confidence": anomaly_confidence,
+    }
+    evidence = {
         "warnings": warnings,
         "feature_summary": feature_summary,
+    }
+    metadata = {
+        "model_version": MODEL_VERSION,
+        "window_size": WINDOW_SIZE,
+        "input_features": INPUT_FEATURES,
+        "inference_ms": elapsed_ms,
+    }
+
+    return {
+        "prediction": prediction,
+        "anomaly": anomaly,
+        "risk": risk,
+        "evidence": evidence,
+        "metadata": metadata,
+        # Backward-compatible flat fields — derived from the nested blocks above
+        # (single source of truth) so the two shapes can't drift apart. Keep
+        # until BE migrates to the nested response.
+        "soh_percent": prediction["soh_percent"],
+        "classification": classification,
+        "confidence": prediction["soh_confidence"],
+        "inference_ms": metadata["inference_ms"],
+        "rul_cycles_estimate": prediction["rul_cycles_estimate"],
+        "degradation_rate_per_cycle": prediction["degradation_rate_per_cycle"],
+        "soh_trend": prediction["soh_trend"],
+        "cycles_to_maintenance": prediction["cycles_to_maintenance"],
+        "soh_trajectory": prediction["soh_trajectory"],
+        "anomaly_score": anomaly["anomaly_score"],
+        "recommended_action": risk["action_code"],
+        "warnings": evidence["warnings"],
+        "feature_summary": evidence["feature_summary"],
     }
 
 
