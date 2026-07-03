@@ -1,11 +1,17 @@
 """
-Preprocessing script: NASA cleaned_dataset CSV → windowed tensors (30, 6) + cycle-level features.
+Preprocessing script: NASA cleaned_dataset CSV → windowed tensors (30, 6) + window-level features.
 
 Strategy:
   - MinMaxScaler fit/applied on raw timesteps
-  - Spectral+Kurtosis features computed on FULL discharge cycle (200-800 pts)
-    not on 30-step windows — FFT has 100-400 bins vs 16 previously.
-  - All 30-step windows from the same cycle share the same feature vector.
+  - Spectral+Kurtosis features computed PER 30-STEP WINDOW, matching
+    src/services/inference.py exactly (run_inference() only ever receives a
+    single 30-step window per request — it has no access to the full cycle,
+    so training must use the same window-scoped features or the model sees
+    an out-of-distribution input at serving time). A prior version computed
+    these on the full cycle (200-800 pts, richer FFT resolution) and shared
+    one feature vector across all windows of a cycle — this caused severe
+    train/serve skew (StandardScaler outliers up to -20 vs the expected
+    ~[-3, 3] range) and unusable predictions in production.
 
 Usage:
     python scripts/preprocess.py --data-dir data/raw/nasa/cleaned_dataset --output-dir data/processed
@@ -156,8 +162,8 @@ def cycles_to_windows(
     long_seq: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Scale cycles, compute cycle-level features on full cycle, then slice windows.
-    All WINDOW_SIZE-step windows of a cycle share the same feature vector.
+    Scale cycles, then slice windows and compute a per-window feature vector
+    for each — matching src/services/inference.py's run_inference() exactly.
 
     long_seq=True: extends each cycle to LONG_INPUT_FEATURES (6) by appending
     IC curve (dQ/dV) and phase mask columns before scaling. The supplied scaler
@@ -183,14 +189,15 @@ def cycles_to_windows(
         else:
             cycle_scaled = scaler.transform(cycle_raw).astype(np.float32)
 
-        # Cycle-level features: FFT on full cycle (voltage, current, temperature only)
-        cycle_feat = extract_window_features(cycle_scaled[:, :3])  # (54,)
-
         cycle_count_norm = np.float32(cycle_idx / CYCLE_COUNT_NORM)
 
         # Non-overlapping sliding windows
         for i in range(0, T - WINDOW_SIZE + 1, WINDOW_STRIDE):
             window = cycle_scaled[i : i + WINDOW_SIZE]
+            # Per-window features (voltage/current/temperature only) — matches
+            # run_inference()'s extract_window_features(x_scaled[:, :3]) exactly,
+            # since inference only ever sees this same WINDOW_SIZE slice.
+            window_feat = extract_window_features(window[:, :3])  # (54,)
             if not long_seq:
                 # GH-54: derived columns from the RAW window (current=col1, time=col3)
                 raw_win = cycle_raw[i : i + WINDOW_SIZE]
@@ -203,7 +210,7 @@ def cycles_to_windows(
                     ]
                 )
             all_X.append(window)
-            all_feat.append(cycle_feat)
+            all_feat.append(window_feat)
             all_y.append(soh)
 
     X = np.array(all_X, dtype=np.float32)
