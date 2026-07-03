@@ -1,7 +1,7 @@
 # Plan — GH-58: Fix train/serve mismatch: compute spectral features per-window in preprocess.py (not per-cycle)
 
 ## Metadata
-- **Status:** TESTING | **Role:** AI | **Ngày:** 2026-07-03
+- **Status:** MERGED (commit trực tiếp lên `dev`, không qua PR) | **Role:** AI | **Ngày:** 2026-07-03
 - **Issue:** #58 — https://github.com/GSU26SE55/ai-module/issues/58
 - **Sprint:** Sprint 4 (due 2026-07-11)
 

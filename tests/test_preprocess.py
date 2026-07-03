@@ -248,3 +248,36 @@ class TestGh58PerWindowSpectralFeatures:
         x_scaled = scaler.transform(cycle)
         expected = extract_window_features(x_scaled[:, :3])
         np.testing.assert_allclose(X_feat[0], expected)
+
+
+class TestGh59CycleCountClip:
+    """GH-59 — cycle_count_norm must clip to [0,1], not extrapolate for batteries
+    outliving CYCLE_COUNT_NORM=200 cycles (NASA's observed max, ~197)."""
+
+    def _make_cycle(self, n=30):
+        rng = np.random.RandomState(42)
+        cycle = rng.rand(n, 4).astype(np.float32)
+        cycle[:, 3] = np.arange(n, dtype=np.float32) * 10.0
+        return cycle
+
+    def test_clipped_for_extreme_cycle_idx(self):
+        from sklearn.preprocessing import MinMaxScaler
+
+        from scripts.preprocess import cycles_to_windows
+
+        cycle = self._make_cycle(30)
+        scaler = MinMaxScaler().fit(cycle)
+        X, _, _ = cycles_to_windows([(cycle, 95.0, 5000)], scaler)  # cycle_idx=5000
+        assert (X[:, :, 4] <= 1.0).all()
+        np.testing.assert_allclose(X[:, :, 4], 1.0)
+
+    def test_not_clipped_within_range(self):
+        from sklearn.preprocessing import MinMaxScaler
+
+        from scripts.preprocess import cycles_to_windows
+        from src.core.config import CYCLE_COUNT_NORM
+
+        cycle = self._make_cycle(30)
+        scaler = MinMaxScaler().fit(cycle)
+        X, _, _ = cycles_to_windows([(cycle, 95.0, 50)], scaler)
+        np.testing.assert_allclose(X[:, :, 4], 50 / CYCLE_COUNT_NORM, atol=1e-6)

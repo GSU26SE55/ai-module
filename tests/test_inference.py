@@ -383,6 +383,65 @@ class TestAppendDerivedFeatures:
         out_ignored_param = _append_derived_features(x_scaled, raw6, cycle_idx=999)
         np.testing.assert_allclose(out_ignored_param[:, 4], 42.0 / CYCLE_COUNT_NORM)
 
+    def test_cycle_count_norm_clipped_when_exceeding_norm(self, caplog):
+        """GH-59 — cycle_count > CYCLE_COUNT_NORM must clip to 1.0, not extrapolate,
+        and must log a warning (production-observability for future tuning)."""
+        from src.services.inference import _append_derived_features
+
+        raw = np.random.rand(WINDOW_SIZE, BASE_N).astype(np.float32)
+        raw[:, 3] = np.arange(WINDOW_SIZE) * 10.0
+        x_scaled = np.random.rand(WINDOW_SIZE, BASE_N).astype(np.float32)
+
+        with caplog.at_level("WARNING"):
+            out = _append_derived_features(x_scaled, raw, cycle_idx=5000)
+        np.testing.assert_allclose(out[:, 4], 1.0)
+        assert "cycle_count=5000" in caplog.text
+
+    def test_cycle_count_norm_clipped_negative(self):
+        """GH-59 — negative cycle_count (bad input) must clip to 0.0, not go negative."""
+        from src.services.inference import _append_derived_features
+
+        raw = np.random.rand(WINDOW_SIZE, BASE_N).astype(np.float32)
+        raw[:, 3] = np.arange(WINDOW_SIZE) * 10.0
+        x_scaled = np.random.rand(WINDOW_SIZE, BASE_N).astype(np.float32)
+
+        out = _append_derived_features(x_scaled, raw, cycle_idx=-1)
+        np.testing.assert_allclose(out[:, 4], 0.0)
+
+    def test_cycle_count_norm_at_boundary_no_warning(self, caplog):
+        """GH-59 — cycle_count exactly == CYCLE_COUNT_NORM is in-range: 1.0, no warning."""
+        from src.core.config import CYCLE_COUNT_NORM
+        from src.services.inference import _append_derived_features
+
+        raw = np.random.rand(WINDOW_SIZE, BASE_N).astype(np.float32)
+        raw[:, 3] = np.arange(WINDOW_SIZE) * 10.0
+        x_scaled = np.random.rand(WINDOW_SIZE, BASE_N).astype(np.float32)
+
+        with caplog.at_level("WARNING"):
+            out = _append_derived_features(x_scaled, raw, cycle_idx=int(CYCLE_COUNT_NORM))
+        np.testing.assert_allclose(out[:, 4], 1.0)
+        assert caplog.text == ""
+
+    def test_6col_payload_cycle_count_clipped(self, caplog):
+        """GH-59 — same clip + warning behavior via the 6-column BE-supplied path."""
+        from src.services.inference import _append_derived_features
+
+        raw4 = np.random.rand(WINDOW_SIZE, BASE_N).astype(np.float32)
+        raw4[:, 3] = np.arange(WINDOW_SIZE) * 10.0
+        raw6 = np.column_stack(
+            [
+                raw4,
+                np.full(WINDOW_SIZE, 5000.0, dtype=np.float32),
+                np.full(WINDOW_SIZE, 90.0, dtype=np.float32),
+            ]
+        )
+        x_scaled = np.random.rand(WINDOW_SIZE, BASE_N).astype(np.float32)
+
+        with caplog.at_level("WARNING"):
+            out = _append_derived_features(x_scaled, raw6, cycle_idx=None)
+        np.testing.assert_allclose(out[:, 4], 1.0)
+        assert "cycle_count=5000" in caplog.text
+
     def test_6col_matches_4col_plus_cycle_idx_when_soc_agrees(self):
         """Parity (AC GH-56): 6-cot (BE tinh) va 4-cot+cycle_idx (AI tu tinh) phai
         cho cung model input khi soc_percent BE gui khop cong thuc Coulomb counting."""

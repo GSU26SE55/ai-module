@@ -189,7 +189,9 @@ def cycles_to_windows(
         else:
             cycle_scaled = scaler.transform(cycle_raw).astype(np.float32)
 
-        cycle_count_norm = np.float32(cycle_idx / CYCLE_COUNT_NORM)
+        # GH-59: clip to [0,1] — defensive symmetry with inference.py's
+        # _append_derived_features(); a no-op for NASA data (max cycle_idx ~197).
+        cycle_count_norm = np.float32(np.clip(cycle_idx / CYCLE_COUNT_NORM, 0.0, 1.0))
 
         # Non-overlapping sliding windows
         for i in range(0, T - WINDOW_SIZE + 1, WINDOW_STRIDE):

@@ -1,3 +1,4 @@
+import logging
 import threading
 import time
 
@@ -5,6 +6,7 @@ import numpy as np
 import torch
 
 _MC_LOCK = threading.RLock()  # protects model.train()/eval() during MC Dropout
+logger = logging.getLogger(__name__)
 
 from src.core import model_loader
 from src.core.config import (
@@ -100,13 +102,28 @@ def _append_derived_features(
     if raw.shape[1] >= len(BASE_FEATURES) + 2:
         # GH-56: BE sends cycle_count (constant across the window) + soc_percent
         # (per-timestep) directly as columns 5-6 — no server-side derivation needed.
-        cycle_count_norm = np.float32(raw[0, len(BASE_FEATURES)] / CYCLE_COUNT_NORM)
+        raw_cycle_count = float(raw[0, len(BASE_FEATURES)])
+        cycle_count_norm = raw_cycle_count / CYCLE_COUNT_NORM
         soc_norm = raw[:, len(BASE_FEATURES) + 1] / 100.0
     else:
         current = raw[:, BASE_FEATURES.index("current")]
         time_col = raw[:, BASE_FEATURES.index("time")]
         soc_norm = compute_soc_percent(current, time_col, NOMINAL_CAPACITY_AH) / 100.0
+        raw_cycle_count = cycle_idx
         cycle_count_norm = 0.0 if cycle_idx is None else cycle_idx / CYCLE_COUNT_NORM
+
+    # GH-59: CYCLE_COUNT_NORM=200 is fit to NASA's observed max (~197 cycles) — a
+    # real battery outliving that goes out of the range the model was trained on
+    # (extrapolation). Clip to keep the feature in-distribution; log so production
+    # data can later inform whether CYCLE_COUNT_NORM should be raised.
+    if raw_cycle_count is not None and not (0 <= raw_cycle_count <= CYCLE_COUNT_NORM):
+        logger.warning(
+            "cycle_count=%s outside expected range [0, %s] — clipping cycle_count_norm to [0, 1]",
+            raw_cycle_count,
+            CYCLE_COUNT_NORM,
+        )
+    cycle_count_norm = np.float32(np.clip(cycle_count_norm, 0.0, 1.0))
+
     return np.column_stack(
         [
             x_scaled,
