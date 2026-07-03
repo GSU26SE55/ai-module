@@ -361,3 +361,47 @@ class TestAppendDerivedFeatures:
             raw = x_scaled.copy()
             out = inf._append_derived_features(x_scaled, raw, cycle_idx=None)
         assert out.shape == (WINDOW_SIZE, BASE_N)
+
+    def test_6col_payload_uses_be_values_directly(self):
+        """GH-56 — payload voi 6 cot: cycle_count/soc_percent (BE tinh) duoc dung
+        thang, khong tinh lai qua Coulomb counting."""
+        from src.core.config import CYCLE_COUNT_NORM
+        from src.services.inference import _append_derived_features
+
+        raw4 = np.random.rand(WINDOW_SIZE, BASE_N).astype(np.float32)
+        raw4[:, 3] = np.arange(WINDOW_SIZE) * 10.0
+        raw_cycle_count = np.full(WINDOW_SIZE, 42.0, dtype=np.float32)  # raw int, constant
+        raw_soc_percent = np.linspace(100.0, 80.0, WINDOW_SIZE).astype(np.float32)
+        raw6 = np.column_stack([raw4, raw_cycle_count, raw_soc_percent])
+        x_scaled = np.random.rand(WINDOW_SIZE, BASE_N).astype(np.float32)
+
+        out = _append_derived_features(x_scaled, raw6, cycle_idx=None)
+        assert out.shape == (WINDOW_SIZE, INPUT_FEATURES)
+        np.testing.assert_allclose(out[:, 4], 42.0 / CYCLE_COUNT_NORM)
+        np.testing.assert_allclose(out[:, 5], raw_soc_percent / 100.0)
+        # cycle_idx param is ignored once the payload already carries 6 columns
+        out_ignored_param = _append_derived_features(x_scaled, raw6, cycle_idx=999)
+        np.testing.assert_allclose(out_ignored_param[:, 4], 42.0 / CYCLE_COUNT_NORM)
+
+    def test_6col_matches_4col_plus_cycle_idx_when_soc_agrees(self):
+        """Parity (AC GH-56): 6-cot (BE tinh) va 4-cot+cycle_idx (AI tu tinh) phai
+        cho cung model input khi soc_percent BE gui khop cong thuc Coulomb counting."""
+        from src.core.config import NOMINAL_CAPACITY_AH
+        from src.features.extractor import compute_soc_percent
+        from src.services.inference import _append_derived_features
+
+        raw4 = np.random.rand(WINDOW_SIZE, BASE_N).astype(np.float32)
+        raw4[:, 1] = 1.5  # current (col "current")
+        raw4[:, 3] = np.arange(WINDOW_SIZE) * 10.0  # time (col "time")
+        cycle_idx = 100
+
+        # soc_percent BE would compute using the exact same formula AI uses server-side
+        soc_percent_be = compute_soc_percent(raw4[:, 1], raw4[:, 3], NOMINAL_CAPACITY_AH)
+        raw6 = np.column_stack(
+            [raw4, np.full(WINDOW_SIZE, float(cycle_idx), dtype=np.float32), soc_percent_be]
+        )
+        x_scaled = np.random.rand(WINDOW_SIZE, BASE_N).astype(np.float32)
+
+        out_6col = _append_derived_features(x_scaled, raw6, cycle_idx=None)
+        out_4col = _append_derived_features(x_scaled, raw4, cycle_idx=cycle_idx)
+        np.testing.assert_allclose(out_6col, out_4col, rtol=1e-5)

@@ -2,10 +2,12 @@
 Generate demo request payloads for /predict and /prescribe from real NASA test data.
 
 Extracts raw 30-step windows (B0048 held-out test battery, 4°C; B0005 train battery):
-  - demo/predict_healthy.json       — B0048 first discharge cycle (highest SOH)
-  - demo/predict_degraded.json      — B0048 last discharge cycle (lowest SOH)
-  - demo/predict_healthy_b0005.json — B0005 first discharge cycle (highest SOH)
-  - demo/prescribe_degraded.json    — B0048 degraded window + battery history context
+  - demo/predict_healthy.json          — B0048 first discharge cycle (highest SOH)
+  - demo/predict_degraded.json         — B0048 last discharge cycle (lowest SOH)
+  - demo/predict_healthy_b0005.json    — B0005 first discharge cycle (highest SOH)
+  - demo/predict_degraded_6field.json  — B0048 last cycle, 6-column format (GH-56:
+                                          BE sends cycle_count + soc_percent directly)
+  - demo/prescribe_degraded.json       — B0048 degraded window + battery history context
 
 Usage: python -X utf8 scripts/make_demo_payloads.py
 """
@@ -16,7 +18,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from scripts.preprocess import load_cycles  # noqa: E402
-from src.core.config import WINDOW_SIZE  # noqa: E402
+from src.core.config import BASE_FEATURES, NOMINAL_CAPACITY_AH, WINDOW_SIZE  # noqa: E402
+from src.features.extractor import compute_soc_percent  # noqa: E402
 
 DATA_DIR = os.path.join("data", "raw", "nasa", "cleaned_dataset")
 OUT_DIR = "demo"
@@ -41,6 +44,26 @@ def write_predict_payload(battery_id, cycle, soh, name):
     print(f"  {path}  (true SOH: {soh:.1f}%)")
 
 
+def write_predict_payload_6field(battery_id, cycle, soh, cycle_idx, name):
+    """GH-56: demo payload with BE-computed cycle_count (raw index, constant across
+    the window) + soc_percent (raw 0-100) as columns 5-6 — reference format for BE."""
+    window = middle_window(cycle)
+    current = window[:, BASE_FEATURES.index("current")]
+    time_col = window[:, BASE_FEATURES.index("time")]
+    soc = compute_soc_percent(current, time_col, NOMINAL_CAPACITY_AH)
+    payload = {
+        "battery_id": battery_id,
+        "readings": [
+            [round(float(v), 4) for v in row] + [cycle_idx, round(float(soc[i]), 4)]
+            for i, row in enumerate(window)
+        ],
+    }
+    path = os.path.join(OUT_DIR, f"predict_{name}.json")
+    with open(path, "w") as f:
+        json.dump(payload, f, indent=2)
+    print(f"  {path}  (true SOH: {soh:.1f}%, cycle_count={cycle_idx})")
+
+
 def main() -> None:
     os.makedirs(OUT_DIR, exist_ok=True)
 
@@ -50,9 +73,12 @@ def main() -> None:
         f"SOH {cycles_48[0][1]:.1f}% (first) -> {cycles_48[-1][1]:.1f}% (last)"
     )
     healthy_cycle, healthy_soh, _ = cycles_48[0]
-    degraded_cycle, degraded_soh, _ = cycles_48[-1]
+    degraded_cycle, degraded_soh, degraded_cycle_idx = cycles_48[-1]
     write_predict_payload("B0048", healthy_cycle, healthy_soh, "healthy")
     write_predict_payload("B0048", degraded_cycle, degraded_soh, "degraded")
+    write_predict_payload_6field(
+        "B0048", degraded_cycle, degraded_soh, degraded_cycle_idx, "degraded_6field"
+    )
 
     cycles_05 = load_cycles(DATA_DIR, "B0005")
     print(f"B0005: {len(cycles_05)} discharge cycles, SOH {cycles_05[0][1]:.1f}% (first)")

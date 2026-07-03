@@ -121,3 +121,23 @@ class TestPredictRouter:
         payload = {"battery_id": "B0005", "readings": [[3.7, 1.5]] * WINDOW_SIZE}
         resp = client.post("/predict/", json=payload)
         assert resp.status_code == 422
+
+    def test_predict_accepts_6col_payload(self, client):
+        """GH-56 — BE gui cycle_count + soc_percent truc tiep (6 cot)."""
+        payload = {
+            "battery_id": "B0005",
+            "readings": [
+                [3.7 + i * 0.001, 1.5, 25.0, float(i), 42.0, 100.0 - i]
+                for i in range(WINDOW_SIZE)
+            ],
+        }
+        resp = client.post("/predict/", json=payload)
+        assert resp.status_code == 200
+
+    def test_predict_invalid_5col_returns_422(self, client):
+        payload = {
+            "battery_id": "B0005",
+            "readings": [[3.7, 1.5, 25.0, float(i), 42.0] for i in range(WINDOW_SIZE)],
+        }
+        resp = client.post("/predict/", json=payload)
+        assert resp.status_code == 422

@@ -30,6 +30,14 @@ VALID_READINGS = [
     for _ in range(WINDOW_SIZE)
 ]
 
+# GH-56 — 6-col payload: BE sends cycle_count (constant, raw index) + soc_percent
+# (raw 0-100, varies per timestep) as columns 5-6 instead of AI deriving them.
+_rng6 = np.random.RandomState(42)
+VALID_READINGS_6COL = [
+    pb.Reading(values=[*_rng6.rand(BASE_N).tolist(), 42.0, 100.0 - i])
+    for i in range(WINDOW_SIZE)
+]
+
 FIXED_PREDICT_RESULT = {
     "prediction": {
         "soh_percent": 87.5,
@@ -352,6 +360,39 @@ def test_predict_parity_with_rest(servicer, rest_client):
         assert rpc.feature_summary[name].min == stat["min"]
         assert rpc.feature_summary[name].max == stat["max"]
         assert rpc.evidence.feature_summary[name].mean == stat["mean"]
+
+
+def test_predict_6col_parity_with_rest(servicer, rest_client):
+    """GH-56 — payload 6-cot (BE tinh cycle_count/soc_percent) duoc validate va
+    chuyen thang toi run_inference() giong het nhau tren ca 2 transport."""
+    request_json = {
+        "battery_id": "B0005",
+        "readings": [list(r.values) for r in VALID_READINGS_6COL],
+    }
+    with (
+        patch(
+            "src.grpc_server.run_inference", return_value=FIXED_PREDICT_RESULT
+        ) as grpc_mock,
+        patch(
+            "src.routers.predict.run_inference", return_value=FIXED_PREDICT_RESULT
+        ) as rest_mock,
+    ):
+        rest = rest_client.post("/predict/", json=request_json).json()
+        rpc = servicer.Predict(
+            pb.PredictRequest(battery_id="B0005", readings=VALID_READINGS_6COL), None
+        )
+
+    assert rpc.battery_id == rest["battery_id"] == "B0005"
+    assert rpc.soh_percent == rest["soh_percent"] == FIXED_PREDICT_RESULT["soh_percent"]
+
+    # both transports must parse the SAME 6-column readings before calling run_inference
+    (grpc_readings,), _ = grpc_mock.call_args
+    (rest_readings,), _ = rest_mock.call_args
+    assert grpc_readings == rest_readings
+    assert len(grpc_readings) == WINDOW_SIZE
+    assert all(len(row) == BASE_N + 2 for row in grpc_readings)
+    assert grpc_readings[0][4] == 42.0  # cycle_count, raw
+    assert grpc_readings[0][5] == 100.0  # soc_percent, raw
 
 
 def test_prescribe_parity_with_rest(servicer, rest_client):
