@@ -165,12 +165,16 @@ def run_inference(readings: list[list[float]], cycle_idx: int | None = None) -> 
     feat_scaled = model_loader.feature_scaler.transform(raw_feat.reshape(1, -1))
     x_feat_tensor = torch.tensor(feat_scaled, dtype=torch.float32)  # (1, 57)
 
-    # MC Dropout: 20 stochastic samples (Dropout ON) in ONE batched forward pass,
-    # not a python loop of 20 single-sample calls — measured 295ms -> 120ms on the
-    # real model (GH-62). Same statistics (each of the MC_RUNS rows independently
-    # samples its own dropout mask), just batched compute instead of sequential.
+    # MC Dropout: MC_RUNS stochastic samples (Dropout ON) in ONE batched forward
+    # pass, not a python loop of single-sample calls — measured 295ms -> 120ms on
+    # the real model (GH-62). Same statistics (each row independently samples its
+    # own dropout mask), just batched compute instead of sequential.
+    # GH-63: 20 -> 10 to close the remaining latency gap (measured ~126ms -> ~60ms
+    # for the forward pass alone) — fewer MC samples means a noisier soh_std/
+    # soh_confidence estimate, but still enough for the intended use (flagging low-
+    # confidence predictions), verified against the 20-sample baseline on demo payloads.
     # Lock prevents concurrent requests from corrupting model train/eval state
-    MC_RUNS = 20
+    MC_RUNS = 10
     with _MC_LOCK:
         model_loader.soh_model.train()  # enable Dropout
         try:

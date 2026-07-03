@@ -18,6 +18,7 @@ from src.core.config import (
     SCALER_PATH,
     SCALER_VERSION,
     SPECTRAL_FEAT_DIM,
+    WINDOW_SIZE,
 )
 from src.models.soh_predictor import MambaSOHPredictor
 
@@ -84,6 +85,33 @@ def load_models() -> None:
             soh_model = torch.compile(soh_model, mode="reduce-overhead")
         except Exception:
             pass  # older PyTorch — fall back to eager silently
+    else:
+        try:
+            # GH-63: production /predict runs CPU-only in many deploys — try fusing the
+            # window=30 scan's Python for-loop (src/models/soh_predictor.py _selective_scan,
+            # L<=32 path) via inductor. "default" (no CUDA graphs) since there's no GPU.
+            # torch.compile() itself is LAZY (wrapping always "succeeds" — the backend only
+            # runs on the first real forward pass), so a missing C++ toolchain or unsupported
+            # Triton backend (e.g. Windows) would otherwise crash the first production
+            # /predict request instead of failing here. Force it now with dummy forward
+            # passes so a failure falls back to eager at STARTUP, not on request #1.
+            #
+            # Warm up BOTH eval (`.eval()`) and train (`.train()`, used by MC Dropout in
+            # run_inference()) modes — dynamo guards on `self.training`, so compiling only
+            # in eval mode would defer the train-mode graph's compilation to the first real
+            # MC-Dropout call, reintroducing the exact crash-on-request-#1 risk this warm-up
+            # exists to prevent.
+            compiled = torch.compile(soh_model, mode="default")
+            dummy_x = torch.zeros(1, WINDOW_SIZE, input_features)
+            dummy_feat = torch.zeros(1, feat_dim)
+            with torch.no_grad():
+                compiled(dummy_x, dummy_feat)  # eval mode (soh_model.eval() above)
+                compiled.train()
+                compiled(dummy_x, dummy_feat)  # train mode (MC Dropout's actual path)
+                compiled.eval()
+            soh_model = compiled
+        except Exception:
+            pass  # compile unavailable/unsupported on this host — eager fallback
 
     iso_model = joblib.load(ISO_FOREST_PATH)
 
