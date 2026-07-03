@@ -165,17 +165,19 @@ def run_inference(readings: list[list[float]], cycle_idx: int | None = None) -> 
     feat_scaled = model_loader.feature_scaler.transform(raw_feat.reshape(1, -1))
     x_feat_tensor = torch.tensor(feat_scaled, dtype=torch.float32)  # (1, 57)
 
-    # MC Dropout: run 20 forward passes with Dropout ON → measure prediction uncertainty
+    # MC Dropout: 20 stochastic samples (Dropout ON) in ONE batched forward pass,
+    # not a python loop of 20 single-sample calls — measured 295ms -> 120ms on the
+    # real model (GH-62). Same statistics (each of the MC_RUNS rows independently
+    # samples its own dropout mask), just batched compute instead of sequential.
     # Lock prevents concurrent requests from corrupting model train/eval state
     MC_RUNS = 20
     with _MC_LOCK:
         model_loader.soh_model.train()  # enable Dropout
         try:
             with torch.no_grad():
-                mc_preds = [
-                    model_loader.soh_model(x_tensor, x_feat_tensor).item() * 100
-                    for _ in range(MC_RUNS)
-                ]
+                xb = x_tensor.repeat(MC_RUNS, 1, 1)
+                xfb = x_feat_tensor.repeat(MC_RUNS, 1)
+                mc_preds = (model_loader.soh_model(xb, xfb) * 100).tolist()
         finally:
             model_loader.soh_model.eval()  # always restore eval mode
 

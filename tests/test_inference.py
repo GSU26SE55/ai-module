@@ -106,6 +106,45 @@ class TestInferencePipeline:
         # confidence = soh_confidence (MC Dropout), anomaly_confidence = IF-based — different values
         assert 0.0 <= result["anomaly"]["anomaly_confidence"] <= 1.0
 
+    def test_mc_dropout_batched_still_stochastic(self):
+        """GH-62 — batching the 20 MC Dropout samples into one forward call must
+        NOT collapse them to identical values (i.e. dropout masks still differ
+        per row in the batch) — soh_std should be > 0, same as the old
+        sequential-loop behaviour."""
+        from src.services.inference import run_inference
+
+        result = run_inference(make_dummy_readings())
+        assert result["prediction"]["soh_std"] > 0.0
+
+    def test_mc_dropout_batched_faster_than_naive_loop(self):
+        """GH-62 — sanity-check the batched call is meaningfully faster than the
+        old sequential python loop over the same model (not a hard SLA — that's
+        scripts/benchmark_grpc.py's job — just confirms the optimization holds)."""
+        import time
+
+        import torch
+
+        from src.services.inference import model_loader
+
+        model = model_loader.soh_model
+        x_tensor = torch.rand(1, 30, INPUT_FEATURES)
+        x_feat_tensor = torch.rand(1, SPECTRAL_FEAT_DIM)
+        model.train()
+        try:
+            with torch.no_grad():
+                t0 = time.perf_counter()
+                for _ in range(20):
+                    model(x_tensor, x_feat_tensor)
+                sequential_ms = (time.perf_counter() - t0) * 1000
+
+                xb, xfb = x_tensor.repeat(20, 1, 1), x_feat_tensor.repeat(20, 1)
+                t0 = time.perf_counter()
+                model(xb, xfb)
+                batched_ms = (time.perf_counter() - t0) * 1000
+        finally:
+            model.eval()
+        assert batched_ms < sequential_ms
+
     def test_nested_rag_fields_are_present(self):
         from src.services.inference import run_inference
 
