@@ -7,10 +7,18 @@ import torch
 _MC_LOCK = threading.RLock()  # protects model.train()/eval() during MC Dropout
 
 from src.core import model_loader
-from src.core.config import FEATURES, INPUT_FEATURES, MODEL_VERSION, WINDOW_SIZE
+from src.core.config import (
+    BASE_FEATURES,
+    CYCLE_COUNT_NORM,
+    FEATURES,
+    INPUT_FEATURES,
+    MODEL_VERSION,
+    NOMINAL_CAPACITY_AH,
+    WINDOW_SIZE,
+)
 from src.features.extractor import (
-    compute_ic_feature,
-    compute_phase_mask,
+    compute_ic_curve_and_discharge_progress,
+    compute_soc_percent,
     extract_window_features,
 )
 from src.models.anomaly_detector import (
@@ -26,10 +34,15 @@ _FEATURE_NAMES = FEATURES  # single source of truth: src/core/config.py
 
 
 def _expected_feature_count() -> int:
+    """Feature count expected FROM THE PAYLOAD (= scaler width, base features).
+
+    GH-54: model input = base + 2 derived columns computed server-side, so when
+    falling back to the model dim, subtract the derived columns."""
     if hasattr(model_loader.scaler, "n_features_in_"):
         return int(model_loader.scaler.n_features_in_)
     if hasattr(model_loader.soh_model, "input_features"):
-        return int(model_loader.soh_model.input_features)
+        n = int(model_loader.soh_model.input_features)
+        return n - 2 if n == len(BASE_FEATURES) + 2 else n
     return 3
 
 
@@ -54,18 +67,54 @@ def _compute_feature_summary(raw: np.ndarray) -> dict:
         col = raw[:, i].astype(float)
         summary[_FEATURE_NAMES[i]] = {
             "mean": round(float(col.mean()), 4),
-            "min":  round(float(col.min()),  4),
-            "max":  round(float(col.max()),  4),
+            "min": round(float(col.min()), 4),
+            "max": round(float(col.max()), 4),
         }
     return summary
 
 
-def run_inference(readings: list[list[float]]) -> dict:
+def _append_derived_features(
+    x_scaled: np.ndarray, raw: np.ndarray, cycle_idx: int | None
+) -> np.ndarray:
+    """GH-54: append cycle_count_norm + soc_percent/100 as columns 5-6.
+
+    Only when the loaded model expects exactly 2 more channels than the scaler
+    provides (v1.4+ artifacts) — legacy models keep the scaled input as-is.
+    Both columns are normalized by fixed formulas (no refit of scaler.pkl):
+    cycle_idx / CYCLE_COUNT_NORM (0.0 when the caller doesn't know the cycle —
+    BE hiện chưa gửi) and window-local Coulomb-counting SOC / 100.
+    """
+    model_dim = getattr(model_loader.soh_model, "input_features", x_scaled.shape[1])
+    if model_dim != x_scaled.shape[1] + 2:
+        return x_scaled
+    if raw.shape[1] < len(BASE_FEATURES):
+        raise ValueError(
+            f"model expects {model_dim} features (incl. derived soc_percent) but the "
+            f"payload has only {raw.shape[1]} columns — the 'time' column is required."
+        )
+    current = raw[:, BASE_FEATURES.index("current")]
+    time_col = raw[:, BASE_FEATURES.index("time")]
+    soc_norm = compute_soc_percent(current, time_col, NOMINAL_CAPACITY_AH) / 100.0
+    cycle_count_norm = 0.0 if cycle_idx is None else cycle_idx / CYCLE_COUNT_NORM
+    return np.column_stack(
+        [
+            x_scaled,
+            np.full(len(x_scaled), cycle_count_norm, dtype=np.float32),
+            soc_norm,
+        ]
+    )
+
+
+def run_inference(readings: list[list[float]], cycle_idx: int | None = None) -> dict:
     """
     Full inference pipeline: scale → Mamba SOH → IsolationForest → classify.
 
     Args:
-        readings: (30, 4) preferred or legacy (30, 3) raw sensor values
+        readings:  (30, 4) preferred or legacy (30, 3) raw sensor values.
+                   Model input is (30, 6): 2 derived columns (cycle_count, SOC)
+                   are computed server-side (GH-54) — BE contract unchanged.
+        cycle_idx: 0-based discharge-cycle number of this battery, if the
+                   caller knows it (default None → cycle_count feature = 0).
 
     Returns:
         dict with soh_percent, classification, confidence, inference_ms,
@@ -74,14 +123,15 @@ def run_inference(readings: list[list[float]]) -> dict:
     """
     start = time.perf_counter()
 
-    raw = np.array(readings, dtype=np.float32)          # (30, F) — keep for warnings + summary
-    x = _align_features(raw)                             # (30, F_model)
+    raw = np.array(readings, dtype=np.float32)  # (30, F) — keep for warnings + summary
+    x = _align_features(raw)  # (30, F_scaler)
     x_scaled = model_loader.scaler.transform(x)
-    x_tensor = torch.tensor(x_scaled, dtype=torch.float32).unsqueeze(0)
+    x_model = _append_derived_features(x_scaled, raw, cycle_idx)  # (30, 6) — GH-54
+    x_tensor = torch.tensor(x_model, dtype=torch.float32).unsqueeze(0)
 
     # Cycle-level features: compute from scaled window (first 3 channels: voltage, current, temp)
     # Matches SPECTRAL_FEAT_DIM=57 config (10 spectral incl. Gini + 9 statistical × 3 channels).
-    raw_feat = extract_window_features(x_scaled[:, :3])         # (57,)
+    raw_feat = extract_window_features(x_scaled[:, :3])  # (57,)
     feat_scaled = model_loader.feature_scaler.transform(raw_feat.reshape(1, -1))
     x_feat_tensor = torch.tensor(feat_scaled, dtype=torch.float32)  # (1, 57)
 
@@ -89,7 +139,7 @@ def run_inference(readings: list[list[float]]) -> dict:
     # Lock prevents concurrent requests from corrupting model train/eval state
     MC_RUNS = 20
     with _MC_LOCK:
-        model_loader.soh_model.train()   # enable Dropout
+        model_loader.soh_model.train()  # enable Dropout
         try:
             with torch.no_grad():
                 mc_preds = [
@@ -99,8 +149,8 @@ def run_inference(readings: list[list[float]]) -> dict:
         finally:
             model_loader.soh_model.eval()  # always restore eval mode
 
-    soh      = float(max(0.0, min(100.0, float(np.mean(mc_preds)))))
-    soh_std  = float(np.std(mc_preds))
+    soh = float(max(0.0, min(100.0, float(np.mean(mc_preds)))))
+    soh_std = float(np.std(mc_preds))
     # confidence: std=0% → 1.0, std=5% → 0.0 (linear scale)
     soh_confidence = round(float(max(0.0, min(1.0, 1.0 - soh_std / 5.0))), 3)
 
@@ -130,49 +180,75 @@ def run_inference(readings: list[list[float]]) -> dict:
 
     return {
         "prediction": {
-            "soh_percent":                round(soh, 2),
-            "soh_confidence":             soh_confidence,   # MC Dropout uncertainty
-            "soh_std":                    round(soh_std, 3),
-            "rul_cycles_estimate":        degradation["rul_cycles_estimate"],
+            "soh_percent": round(soh, 2),
+            "soh_confidence": soh_confidence,  # MC Dropout uncertainty
+            "soh_std": round(soh_std, 3),
+            "rul_cycles_estimate": degradation["rul_cycles_estimate"],
             "degradation_rate_per_cycle": degradation["degradation_rate_per_cycle"],
-            "soh_trend":                  degradation["soh_trend"],
-            "cycles_to_maintenance":      degradation["cycles_to_maintenance"],
-            "soh_trajectory":             degradation["soh_trajectory"],
-            "health_stage":               health_stage,
+            "soh_trend": degradation["soh_trend"],
+            "cycles_to_maintenance": degradation["cycles_to_maintenance"],
+            "soh_trajectory": degradation["soh_trajectory"],
+            "health_stage": health_stage,
         },
         "anomaly": {
-            "anomaly_score":              round(score, 4),
-            "anomaly_status":             anomaly_status,
-            "anomaly_confidence":         anomaly_confidence,
+            "anomaly_score": round(score, 4),
+            "anomaly_status": anomaly_status,
+            "anomaly_confidence": anomaly_confidence,
         },
         "risk": risk,
         "evidence": {
-            "warnings":                   warnings,
-            "feature_summary":            feature_summary,
+            "warnings": warnings,
+            "feature_summary": feature_summary,
         },
         "metadata": {
-            "model_version":              MODEL_VERSION,
-            "window_size":                WINDOW_SIZE,
-            "input_features":             INPUT_FEATURES,
-            "inference_ms":               elapsed_ms,
+            "model_version": MODEL_VERSION,
+            "window_size": WINDOW_SIZE,
+            "input_features": INPUT_FEATURES,
+            "inference_ms": elapsed_ms,
         },
-        "soh_percent":                round(soh, 2),
-        "classification":             classification,
-        "confidence":                 soh_confidence,     # MC Dropout (SOH uncertainty)
-        "inference_ms":               elapsed_ms,
-
+        "soh_percent": round(soh, 2),
+        "classification": classification,
+        "confidence": soh_confidence,  # MC Dropout (SOH uncertainty)
+        "inference_ms": elapsed_ms,
         # RUL — battery-specific (from observed trend) when window is long enough
-        "rul_cycles_estimate":        degradation["rul_cycles_estimate"],
+        "rul_cycles_estimate": degradation["rul_cycles_estimate"],
         "degradation_rate_per_cycle": degradation["degradation_rate_per_cycle"],
-        "soh_trend":                  degradation["soh_trend"],
-        "cycles_to_maintenance":      degradation["cycles_to_maintenance"],
-        "soh_trajectory":             degradation["soh_trajectory"],
-
-        "anomaly_score":              round(score, 4),
-        "recommended_action":         risk["action_code"],
-        "warnings":                   warnings,
-        "feature_summary":            feature_summary,
+        "soh_trend": degradation["soh_trend"],
+        "cycles_to_maintenance": degradation["cycles_to_maintenance"],
+        "soh_trajectory": degradation["soh_trajectory"],
+        "anomaly_score": round(score, 4),
+        "recommended_action": risk["action_code"],
+        "warnings": warnings,
+        "feature_summary": feature_summary,
     }
+
+
+def _add_long_derived_features(x: np.ndarray) -> np.ndarray:
+    """Append ic_curve + discharge_progress to a raw (L, 4) window for the long-seq model.
+
+    x may span multiple concatenated discharge cycles (production sends whatever
+    window the caller has). Training computes both derived columns PER CYCLE,
+    before concatenating cycles into a battery timeline (scripts/preprocess_long.py)
+    — so this detects cycle boundaries via resets in the "time" column (time[i] <
+    time[i-1] marks a new cycle) and computes each segment independently, instead
+    of integrating straight through the voltage/current discontinuity at the
+    boundary. A window with no resets (single cycle) is treated as one segment.
+    """
+    time_col = BASE_FEATURES.index("time")
+    resets = np.where(np.diff(x[:, time_col]) < 0)[0] + 1
+    bounds = [0, *resets.tolist(), len(x)]
+
+    ic_parts, progress_parts = [], []
+    for s, e in zip(bounds[:-1], bounds[1:]):
+        ic_seg, progress_seg = compute_ic_curve_and_discharge_progress(
+            x[s:e, 0], x[s:e, 1], x[s:e, time_col]
+        )
+        ic_parts.append(ic_seg)
+        progress_parts.append(progress_seg)
+
+    return np.column_stack(
+        [x, np.concatenate(ic_parts), np.concatenate(progress_parts)]
+    )
 
 
 def predict_soh_long(readings: list[list[float]], device: str | None = None) -> dict:
@@ -187,24 +263,24 @@ def predict_soh_long(readings: list[list[float]], device: str | None = None) -> 
         readings: (L, 4) preferred or legacy (L, 3) raw sensor values, L up to 4096.
         device:   override device ("cpu" / "cuda"); defaults to CUDA if available.
     """
-    if model_loader.long_soh_model is None or (device is not None and str(model_loader.long_device) != device):
+    if model_loader.long_soh_model is None or (
+        device is not None and str(model_loader.long_device) != device
+    ):
         model_loader.load_long_model(device)
     dev = model_loader.long_device
 
     start = time.perf_counter()
     raw = np.array(readings, dtype=np.float32)
-    x   = _align_features(raw)          # (L, 4) — align to base features
+    x = _align_features(raw)  # (L, 4) — align to base features
 
-    # Extend to 8 features: append IC curve (dQ/dV) + phase mask.
-    # These are computed from raw voltage/current so the API stays at base features.
-    ic    = compute_ic_feature(x[:, 0], x[:, 1])   # (L,)
-    phase = compute_phase_mask(x[:, 1])             # (L,)
-    x8    = np.column_stack([x, ic, phase])         # (L, 8)
+    # Extend to 6 features: append ic_curve + discharge_progress (per-cycle,
+    # matching training — see _add_long_derived_features).
+    x6 = _add_long_derived_features(x)  # (L, 6)
 
-    x_scaled = model_loader.long_scaler.transform(x8)
+    x_scaled = model_loader.long_scaler.transform(x6)
     x_tensor = torch.tensor(x_scaled, dtype=torch.float32).unsqueeze(0).to(dev)
 
-    raw_feat    = extract_window_features(x_scaled[:, :3])
+    raw_feat = extract_window_features(x_scaled[:, :3])
     feat_scaled = model_loader.long_feature_scaler.transform(raw_feat.reshape(1, -1))
     x_feat_tensor = torch.tensor(feat_scaled, dtype=torch.float32).to(dev)
 
@@ -214,8 +290,8 @@ def predict_soh_long(readings: list[list[float]], device: str | None = None) -> 
     elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
 
     return {
-        "soh_percent":  round(soh, 2),
-        "seq_len":      int(raw.shape[0]),
-        "device":       str(dev),
+        "soh_percent": round(soh, 2),
+        "seq_len": int(raw.shape[0]),
+        "device": str(dev),
         "inference_ms": elapsed_ms,
     }

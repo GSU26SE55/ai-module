@@ -75,11 +75,15 @@ def load_models() -> None:
     soh_model = MambaSOHPredictor(input_features=input_features, feat_dim=feat_dim, d_model=d_model, d_state=d_state)
     soh_model.load_state_dict(checkpoint["model_state_dict"])
     soh_model.eval()
-    try:
-        # Fuses chunked scan + FiLM into single CUDA kernel — eliminates CPU-GPU ping-pong
-        soh_model = torch.compile(soh_model, mode="reduce-overhead")
-    except Exception:
-        pass  # CPU / older PyTorch — fall back to eager silently
+    if torch.cuda.is_available():
+        try:
+            # Fuses chunked scan + FiLM into single CUDA kernel — eliminates CPU-GPU ping-pong.
+            # CUDA-only: compilation is lazy (first real forward pass), so a CPU attempt would
+            # crash on request #1 instead of failing here — inductor's CPU backend needs a
+            # C++ compiler that dev/CI boxes don't have, and there's no CPU-GPU ping-pong to fuse anyway.
+            soh_model = torch.compile(soh_model, mode="reduce-overhead")
+        except Exception:
+            pass  # older PyTorch — fall back to eager silently
 
     iso_model = joblib.load(ISO_FOREST_PATH)
 
@@ -123,13 +127,20 @@ def load_long_model(device: str | None = None) -> MambaSOHPredictor:
         patch_stride=checkpoint.get("patch_stride", LONG_PATCH_STRIDE),
         attention_heads=checkpoint.get("attention_heads", 1),
     ).to(long_device)
-    model.load_state_dict(checkpoint["model_state_dict"])
+    state_dict = checkpoint["model_state_dict"]
+    if any(k.startswith("_orig_mod.") for k in state_dict):
+        # Checkpoint was saved from a torch.compile()-wrapped model (train.py --compile
+        # on Kaggle GPU) — compiled wrapper prefixes every key with "_orig_mod.".
+        state_dict = {k.removeprefix("_orig_mod."): v for k, v in state_dict.items()}
+    model.load_state_dict(state_dict)
     model.eval()
-    try:
-        # Fuses the 16-chunk scan loop into a single CUDA kernel: eliminates
-        # 16 CPU→GPU roundtrips per forward pass when L=4096.
-        model = torch.compile(model, mode="reduce-overhead")
-    except Exception:
-        pass
+    if torch.cuda.is_available():
+        try:
+            # Fuses the 16-chunk scan loop into a single CUDA kernel: eliminates
+            # 16 CPU→GPU roundtrips per forward pass when L=4096. CUDA-only — same
+            # reasoning as load_models() above (lazy compile, no CPU C++ toolchain).
+            model = torch.compile(model, mode="reduce-overhead")
+        except Exception:
+            pass
     long_soh_model = model
     return model

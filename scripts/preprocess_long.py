@@ -52,24 +52,27 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from scripts.preprocess import TEST_IDS, TRAIN_IDS, VAL_IDS, load_cycles  # noqa: E402
 from src.core.config import (  # noqa: E402
     FEATURE_SCALER_VERSION_LONG,
-    FEATURES,
+    BASE_FEATURES,
     LONG_FEATURE_SCALER_PATH,
     LONG_INPUT_FEATURES,
     LONG_SCALER_PATH,
     LONG_SEQ_LEN,
     LONG_SEQ_STRIDE,
 )
-from src.features.extractor import extract_window_features  # noqa: E402
+from src.features.extractor import (  # noqa: E402
+    compute_ic_curve_and_discharge_progress,
+    extract_window_features,
+)
 
 SEED = 42
 random.seed(SEED)
 np.random.seed(SEED)
 torch.manual_seed(SEED)
 
-LONG_SCALER_VERSION = "2.1"   # v2.1: feature ablation — 4 base + ic + progress (6 total)
+LONG_SCALER_VERSION = "2.1"  # v2.1: feature ablation — 4 base + ic + progress (6 total)
 
-assert LONG_INPUT_FEATURES == len(FEATURES) + 2, (
-    f"preprocess_long.py produces {len(FEATURES) + 2} features (base {len(FEATURES)} + ic + progress)"
+assert LONG_INPUT_FEATURES == len(BASE_FEATURES) + 2, (
+    f"preprocess_long.py produces {len(BASE_FEATURES) + 2} features (base {len(BASE_FEATURES)} + ic + progress)"
     f" but config.LONG_INPUT_FEATURES={LONG_INPUT_FEATURES}. Update config.py."
 )
 
@@ -78,11 +81,12 @@ assert LONG_INPUT_FEATURES == len(FEATURES) + 2, (
 # Derived-feature helpers (per-cycle, raw values before scaling)
 # ---------------------------------------------------------------------------
 
+
 def _add_derived_features(cycle: np.ndarray) -> np.ndarray:
     """Add IC curve + discharge progress to one raw discharge cycle.
 
     Args:
-        cycle: (T, 4) — [voltage, current, temperature, time] (config.FEATURES)
+        cycle: (T, 4) — [voltage, current, temperature, time] (config.BASE_FEATURES)
                          all RAW (unscaled) values.
     Returns:
         (T, 6) — appends [ic_curve, discharge_progress].
@@ -103,33 +107,20 @@ def _add_derived_features(cycle: np.ndarray) -> np.ndarray:
         Serves as the 'phase channel' used by MambaSOHPredictor's discharge-weighted
         attention bias (model reads x[..., -1] for this purpose).
     """
-    voltage  = cycle[:, 0].astype(np.float64)   # V
-    current  = cycle[:, 1].astype(np.float64)   # A (negative during NASA discharge)
-    time_col = cycle[:, FEATURES.index("time")].astype(np.float64)   # s (cumulative within cycle)
+    voltage = cycle[:, 0]
+    current = cycle[:, 1]
+    time_col = cycle[:, BASE_FEATURES.index("time")]
 
-    # dt: time between consecutive measurements (force positive, min 1 ms)
-    dt = np.diff(time_col, prepend=time_col[0])
-    dt = np.abs(dt).clip(min=1e-3)
-
-    # Incremental discharged charge |ΔQ| = |I| * dt  (always positive)
-    dq = np.abs(current) * dt
-    q_cumsum = np.cumsum(dq)
-
-    # IC = dQ / |dV|  (clipped: spikes at near-zero dV; cap at 20 A·s/V)
-    dv = np.diff(voltage, prepend=voltage[0])
-    ic = np.where(np.abs(dv) > 1e-4, dq / np.abs(dv), 0.0)
-    ic = np.clip(ic, 0.0, 20.0).astype(np.float32)
-
-    # Discharge progress: fraction of total capacity at each timestep
-    total_q = q_cumsum[-1]
-    discharge_progress = (q_cumsum / (total_q + 1e-9)).astype(np.float32)
-
+    ic, discharge_progress = compute_ic_curve_and_discharge_progress(
+        voltage, current, time_col
+    )
     return np.column_stack([cycle, ic, discharge_progress]).astype(np.float32)
 
 
 # ---------------------------------------------------------------------------
 # Timeline builder
 # ---------------------------------------------------------------------------
+
 
 def battery_timeline(data_dir: str, battery_id: str) -> tuple[np.ndarray, np.ndarray]:
     """Concatenate all discharge cycles of one battery into a single timeline (T, 6).
@@ -145,11 +136,11 @@ def battery_timeline(data_dir: str, battery_id: str) -> tuple[np.ndarray, np.nda
     if not cycles:
         raise ValueError(f"No usable discharge cycles for '{battery_id}'")
     X_parts = []
-    for c, _ in cycles:
-        X_parts.append(_add_derived_features(c))   # (T, 6) per cycle — raw
-    X_raw  = np.concatenate(X_parts, axis=0).astype(np.float32)
+    for c, _, _ in cycles:
+        X_parts.append(_add_derived_features(c))  # (T, 6) per cycle — raw
+    X_raw = np.concatenate(X_parts, axis=0).astype(np.float32)
     soh_ts = np.concatenate(
-        [np.full(len(c), soh, dtype=np.float32) for c, soh in cycles]
+        [np.full(len(c), soh, dtype=np.float32) for c, soh, _ in cycles]
     )
     return X_raw, soh_ts
 
@@ -157,6 +148,7 @@ def battery_timeline(data_dir: str, battery_id: str) -> tuple[np.ndarray, np.nda
 # ---------------------------------------------------------------------------
 # Window builder
 # ---------------------------------------------------------------------------
+
 
 def make_long_windows(
     X_raw: np.ndarray,
@@ -184,8 +176,8 @@ def make_long_windows(
     starts = list(range(0, T - seq_len + 1, stride))
 
     def _one(s: int):
-        win  = X_scaled[s : s + seq_len]
-        feat = extract_window_features(win[:, :3])   # voltage/current/temp only
+        win = X_scaled[s : s + seq_len]
+        feat = extract_window_features(win[:, :3])  # voltage/current/temp only
         return win, feat, float(soh_ts[s + seq_len - 1])
 
     results = Parallel(n_jobs=-1, prefer="threads")(delayed(_one)(s) for s in starts)
@@ -197,9 +189,9 @@ def make_long_windows(
         )
     Xs, feats, ys = zip(*results)
     return (
-        np.array(Xs,    dtype=np.float32),
+        np.array(Xs, dtype=np.float32),
         np.array(feats, dtype=np.float32),
-        np.array(ys,    dtype=np.float32),
+        np.array(ys, dtype=np.float32),
     )
 
 
@@ -207,16 +199,19 @@ def make_long_windows(
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data-dir",   default="data/raw/nasa/cleaned_dataset")
+    parser.add_argument("--data-dir", default="data/raw/nasa/cleaned_dataset")
     parser.add_argument("--output-dir", default="data/processed_long")
-    parser.add_argument("--seq-len",    type=int, default=LONG_SEQ_LEN)
-    parser.add_argument("--stride",     type=int, default=LONG_SEQ_STRIDE)
+    parser.add_argument("--seq-len", type=int, default=LONG_SEQ_LEN)
+    parser.add_argument("--stride", type=int, default=LONG_SEQ_STRIDE)
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
-    print(f"Long seq len: {args.seq_len} | stride: {args.stride} | features: {LONG_INPUT_FEATURES}")
+    print(
+        f"Long seq len: {args.seq_len} | stride: {args.stride} | features: {LONG_INPUT_FEATURES}"
+    )
 
     # --- Fit 8-feature MinMaxScaler on ALL train timelines (raw values) ---
     # Done BEFORE windowing so the scaler sees the full range of each feature.
@@ -235,25 +230,33 @@ def main() -> None:
     os.makedirs(os.path.dirname(LONG_SCALER_PATH), exist_ok=True)
     joblib.dump(
         {
-            "scaler":   long_scaler,
-            "version":  LONG_SCALER_VERSION,
-            "features": FEATURES + ["ic_curve", "discharge_progress"],
+            "scaler": long_scaler,
+            "version": LONG_SCALER_VERSION,
+            "features": BASE_FEATURES + ["ic_curve", "discharge_progress"],
             "trained_on": TRAIN_IDS,
         },
         LONG_SCALER_PATH,
     )
-    print(f"Saved scaler_long.pkl -> {LONG_SCALER_PATH}  (v{LONG_SCALER_VERSION}, {LONG_INPUT_FEATURES} features)")
+    print(
+        f"Saved scaler_long.pkl -> {LONG_SCALER_PATH}  (v{LONG_SCALER_VERSION}, {LONG_INPUT_FEATURES} features)"
+    )
 
     # --- Build windows for each split ---
     print("\nBuilding train long-windows...")
     Xtr, Ftr, ytr = [], [], []
-    for bid, (X_raw, soh_ts) in zip(TRAIN_IDS, train_timelines):  # reuse, no extra disk read
-        X, F, y = make_long_windows(X_raw, soh_ts, long_scaler, args.seq_len, args.stride)
+    for bid, (X_raw, soh_ts) in zip(
+        TRAIN_IDS, train_timelines
+    ):  # reuse, no extra disk read
+        X, F, y = make_long_windows(
+            X_raw, soh_ts, long_scaler, args.seq_len, args.stride
+        )
         print(f"  {bid}: timeline {len(X_raw)} steps -> {len(X)} windows")
-        Xtr.append(X); Ftr.append(F); ytr.append(y)
-    X_train      = np.concatenate(Xtr, axis=0)
+        Xtr.append(X)
+        Ftr.append(F)
+        ytr.append(y)
+    X_train = np.concatenate(Xtr, axis=0)
     X_feat_train = np.concatenate(Ftr, axis=0)
-    y_train      = np.concatenate(ytr, axis=0)
+    y_train = np.concatenate(ytr, axis=0)
     if len(X_train) == 0:
         raise RuntimeError(
             f"No train windows produced — battery timelines shorter than seq_len={args.seq_len}. "
@@ -264,36 +267,74 @@ def main() -> None:
     Xvl, Fvl, yvl = [], [], []
     for bid in VAL_IDS:
         X_raw, soh_ts = battery_timeline(args.data_dir, bid)
-        X, F, y = make_long_windows(X_raw, soh_ts, long_scaler, args.seq_len, args.stride)
+        X, F, y = make_long_windows(
+            X_raw, soh_ts, long_scaler, args.seq_len, args.stride
+        )
         print(f"  {bid}: timeline {len(X_raw)} steps -> {len(X)} windows")
-        Xvl.append(X); Fvl.append(F); yvl.append(y)
-    X_val      = np.concatenate(Xvl, axis=0) if Xvl and any(len(a) for a in Xvl) else np.empty((0, args.seq_len, LONG_INPUT_FEATURES), dtype=np.float32)
-    X_feat_val = np.concatenate(Fvl, axis=0) if Fvl and any(len(a) for a in Fvl) else np.empty((0, 54), dtype=np.float32)
-    y_val      = np.concatenate(yvl, axis=0) if yvl and any(len(a) for a in yvl) else np.empty((0,), dtype=np.float32)
+        Xvl.append(X)
+        Fvl.append(F)
+        yvl.append(y)
+    X_val = (
+        np.concatenate(Xvl, axis=0)
+        if Xvl and any(len(a) for a in Xvl)
+        else np.empty((0, args.seq_len, LONG_INPUT_FEATURES), dtype=np.float32)
+    )
+    X_feat_val = (
+        np.concatenate(Fvl, axis=0)
+        if Fvl and any(len(a) for a in Fvl)
+        else np.empty((0, 54), dtype=np.float32)
+    )
+    y_val = (
+        np.concatenate(yvl, axis=0)
+        if yvl and any(len(a) for a in yvl)
+        else np.empty((0,), dtype=np.float32)
+    )
 
     print(f"\nBuilding test long-windows ({TEST_IDS})...")
     Xts, Fts, yts = [], [], []
     for bid in TEST_IDS:
         X_raw, soh_ts = battery_timeline(args.data_dir, bid)
-        X, F, y = make_long_windows(X_raw, soh_ts, long_scaler, args.seq_len, args.stride)
+        X, F, y = make_long_windows(
+            X_raw, soh_ts, long_scaler, args.seq_len, args.stride
+        )
         print(f"  {bid}: timeline {len(X_raw)} steps -> {len(X)} windows")
-        Xts.append(X); Fts.append(F); yts.append(y)
-    X_test      = np.concatenate(Xts, axis=0) if Xts and any(len(a) for a in Xts) else np.empty((0, args.seq_len, LONG_INPUT_FEATURES), dtype=np.float32)
-    X_feat_test = np.concatenate(Fts, axis=0) if Fts and any(len(a) for a in Fts) else np.empty((0, 54), dtype=np.float32)
-    y_test      = np.concatenate(yts, axis=0) if yts and any(len(a) for a in yts) else np.empty((0,), dtype=np.float32)
+        Xts.append(X)
+        Fts.append(F)
+        yts.append(y)
+    X_test = (
+        np.concatenate(Xts, axis=0)
+        if Xts and any(len(a) for a in Xts)
+        else np.empty((0, args.seq_len, LONG_INPUT_FEATURES), dtype=np.float32)
+    )
+    X_feat_test = (
+        np.concatenate(Fts, axis=0)
+        if Fts and any(len(a) for a in Fts)
+        else np.empty((0, 54), dtype=np.float32)
+    )
+    y_test = (
+        np.concatenate(yts, axis=0)
+        if yts and any(len(a) for a in yts)
+        else np.empty((0,), dtype=np.float32)
+    )
 
     # --- Refit spectral feature_scaler on TRAIN windows only ---
-    print("\nRefitting feature_scaler_long on long-window spectral features (train only)...")
-    feat_scaler  = StandardScaler()
+    print(
+        "\nRefitting feature_scaler_long on long-window spectral features (train only)..."
+    )
+    feat_scaler = StandardScaler()
     X_feat_train = feat_scaler.fit_transform(X_feat_train).astype(np.float32)
-    if len(X_feat_val)  > 0:
-        X_feat_val  = feat_scaler.transform(X_feat_val).astype(np.float32)
+    if len(X_feat_val) > 0:
+        X_feat_val = feat_scaler.transform(X_feat_val).astype(np.float32)
     if len(X_feat_test) > 0:
         X_feat_test = feat_scaler.transform(X_feat_test).astype(np.float32)
 
     os.makedirs(os.path.dirname(LONG_FEATURE_SCALER_PATH), exist_ok=True)
     joblib.dump(
-        {"scaler": feat_scaler, "version": FEATURE_SCALER_VERSION_LONG, "n_features": X_feat_train.shape[1]},
+        {
+            "scaler": feat_scaler,
+            "version": FEATURE_SCALER_VERSION_LONG,
+            "n_features": X_feat_train.shape[1],
+        },
         LONG_FEATURE_SCALER_PATH,
     )
     print(f"Saved feature_scaler_long.pkl -> {LONG_FEATURE_SCALER_PATH}")
@@ -305,17 +346,17 @@ def main() -> None:
 
     for name, X, X_feat, y in [
         ("train", X_train, X_feat_train, y_train),
-        ("val",   X_val,   X_feat_val,   y_val),
-        ("test",  X_test,  X_feat_test,  y_test),
+        ("val", X_val, X_feat_val, y_val),
+        ("test", X_test, X_feat_test, y_test),
     ]:
         path = os.path.join(args.output_dir, f"{name}.pt")
         torch.save(
             {
-                "X":                      torch.tensor(X,      dtype=torch.float32),
-                "X_feat":                 torch.tensor(X_feat, dtype=torch.float32),
-                "y":                      torch.tensor(y,      dtype=torch.float32),
-                "seq_len":                args.seq_len,
-                "n_features":             LONG_INPUT_FEATURES,
+                "X": torch.tensor(X, dtype=torch.float32),
+                "X_feat": torch.tensor(X_feat, dtype=torch.float32),
+                "y": torch.tensor(y, dtype=torch.float32),
+                "seq_len": args.seq_len,
+                "n_features": LONG_INPUT_FEATURES,
                 "feature_scaler_version": FEATURE_SCALER_VERSION_LONG,
             },
             path,

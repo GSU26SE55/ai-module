@@ -30,7 +30,12 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.core import model_loader  # noqa: E402
-from src.core.config import INPUT_FEATURES, SPECTRAL_FEAT_DIM, WINDOW_SIZE  # noqa: E402
+from src.core.config import (
+    BASE_FEATURES,
+    INPUT_FEATURES,
+    SPECTRAL_FEAT_DIM,
+    WINDOW_SIZE,
+)  # noqa: E402
 from src.grpc_gen import ai_service_pb2 as pb  # noqa: E402
 from src.grpc_gen import ai_service_pb2_grpc as pb_grpc  # noqa: E402
 from src.grpc_server import AiServiceServicer  # noqa: E402
@@ -52,7 +57,9 @@ def install_dummy_models() -> None:
     from src.models.soh_predictor import MambaSOHPredictor
 
     torch.manual_seed(SEED)
-    scaler = MinMaxScaler().fit(np.random.rand(50, INPUT_FEATURES))
+    scaler = MinMaxScaler().fit(
+        np.random.rand(50, len(BASE_FEATURES))
+    )  # GH-54: 4 base cols
     feat_scaler = StandardScaler().fit(np.random.rand(50, SPECTRAL_FEAT_DIM))
     model = MambaSOHPredictor(
         input_features=INPUT_FEATURES, feat_dim=SPECTRAL_FEAT_DIM, d_model=8, d_state=4
@@ -113,7 +120,7 @@ def main() -> int:
     server.start()
     stub = pb_grpc.AiServiceStub(grpc.insecure_channel(f"localhost:{port}"))
 
-    readings_lists = np.random.rand(WINDOW_SIZE, INPUT_FEATURES).tolist()
+    readings_lists = np.random.rand(WINDOW_SIZE, len(BASE_FEATURES)).tolist()
     readings_proto = [pb.Reading(values=row) for row in readings_lists]
     predict_req = pb.PredictRequest(battery_id="B0005", readings=readings_proto)
     prescribe_req = pb.PrescribeRequest(

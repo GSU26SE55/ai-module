@@ -1,13 +1,22 @@
 """Tests for the hybrid Prescription Layer (GH-20)."""
+
 import time
 from unittest.mock import patch
 
 import numpy as np
 import pytest
 
-from src.core.config import INPUT_FEATURES, SPECTRAL_FEAT_DIM, WINDOW_SIZE
+from src.core.config import (
+    BASE_FEATURES,
+    INPUT_FEATURES,
+    SPECTRAL_FEAT_DIM,
+    WINDOW_SIZE,
+)
+
 from src.models.soh_predictor import MambaSOHPredictor
 from src.services.rule_prescription import build_rule_prescription
+
+BASE_N = len(BASE_FEATURES)  # GH-54: payload/scaler width (4)
 
 
 def make_dummy_readings(n: int = WINDOW_SIZE) -> list[list[float]]:
@@ -44,7 +53,13 @@ def fake_inference_result(
 class TestRulePrescription:
     def test_replace_immediately_steps_and_escalation(self):
         out = build_rule_prescription(
-            {"soh_percent": 68.0}, {"action_code": "REPLACE_IMMEDIATELY", "risk_level": "Critical", "priority": "P1"}, [],
+            {"soh_percent": 68.0},
+            {
+                "action_code": "REPLACE_IMMEDIATELY",
+                "risk_level": "Critical",
+                "priority": "P1",
+            },
+            [],
         )
         assert "end-of-life" in out["prescription"].lower()
         assert len(out["action_steps"]) >= 1
@@ -54,7 +69,9 @@ class TestRulePrescription:
 
     def test_monitor_has_no_ppe(self):
         out = build_rule_prescription(
-            {"soh_percent": 95.0}, {"action_code": "MONITOR", "risk_level": "Low", "priority": "None"}, [],
+            {"soh_percent": 95.0},
+            {"action_code": "MONITOR", "risk_level": "Low", "priority": "None"},
+            [],
         )
         assert out["ppe_required"] == []
         assert out["escalation_conditions"] == []
@@ -62,7 +79,11 @@ class TestRulePrescription:
     def test_thermal_warning_adds_step_and_escalation(self):
         out = build_rule_prescription(
             {"soh_percent": 70.0},
-            {"action_code": "REPLACE_IMMEDIATELY", "risk_level": "Critical", "priority": "P1"},
+            {
+                "action_code": "REPLACE_IMMEDIATELY",
+                "risk_level": "Critical",
+                "priority": "P1",
+            },
             [{"code": "TEMP_CRITICAL"}],
         )
         assert any("thermal" in s.lower() for s in out["action_steps"])
@@ -71,7 +92,11 @@ class TestRulePrescription:
     def test_electrical_warning_adds_arc_flash_ppe(self):
         out = build_rule_prescription(
             {"soh_percent": 70.0},
-            {"action_code": "REPLACE_IMMEDIATELY", "risk_level": "Critical", "priority": "P1"},
+            {
+                "action_code": "REPLACE_IMMEDIATELY",
+                "risk_level": "Critical",
+                "priority": "P1",
+            },
             [{"code": "OVERVOLTAGE_CRITICAL"}],
         )
         assert any("arc-flash" in p.lower() for p in out["ppe_required"])
@@ -79,7 +104,9 @@ class TestRulePrescription:
 
     def test_unknown_action_code_falls_back_to_monitor(self):
         out = build_rule_prescription(
-            {"soh_percent": 90.0}, {"action_code": "WAT", "risk_level": "Low", "priority": "None"}, [],
+            {"soh_percent": 90.0},
+            {"action_code": "WAT", "risk_level": "Low", "priority": "None"},
+            [],
         )
         assert "monitor" in out["prescription"].lower()
 
@@ -88,9 +115,14 @@ class TestRulePrescription:
 class TestPrescriptionPipeline:
     def test_default_is_rule_based_no_network(self):
         from src.services import prescription
-        with patch.object(prescription, "run_inference", return_value=fake_inference_result()):
+
+        with patch.object(
+            prescription, "run_inference", return_value=fake_inference_result()
+        ):
             with patch.object(prescription, "_get_retriever") as mock_ret:
-                out = prescription.run_prescription(make_dummy_readings(), "B0005", enrich=False)
+                out = prescription.run_prescription(
+                    make_dummy_readings(), "B0005", enrich=False
+                )
                 mock_ret.assert_not_called()  # rule path must NOT touch RAG
         assert out["enriched"] is False
         assert out["maintenance_docs"] == []
@@ -103,16 +135,37 @@ class TestPrescriptionPipeline:
 
         class FakeRetriever:
             def retrieve_maintenance(self, q, top_k=3):
-                return [{"title": "M", "content": "c", "source": "maintenance/x.md", "relevance_score": 0.9}]
+                return [
+                    {
+                        "title": "M",
+                        "content": "c",
+                        "source": "maintenance/x.md",
+                        "relevance_score": 0.9,
+                    }
+                ]
+
             def retrieve_safety(self, q, top_k=2):
                 return []
 
-        llm_out = {"prescription": "LLM-generated plan", "action_steps": ["step a"], "ppe_required": ["Face shield"]}
-        with patch.object(prescription, "run_inference", return_value=fake_inference_result()), \
-             patch.object(prescription, "_get_retriever", return_value=FakeRetriever()), \
-             patch("src.services._llm_client.is_available", return_value=True), \
-             patch("src.services._llm_client.generate_prescription_llm", return_value=llm_out):
-            out = prescription.run_prescription(make_dummy_readings(), "B0005", enrich=True)
+        llm_out = {
+            "prescription": "LLM-generated plan",
+            "action_steps": ["step a"],
+            "ppe_required": ["Face shield"],
+        }
+        with (
+            patch.object(
+                prescription, "run_inference", return_value=fake_inference_result()
+            ),
+            patch.object(prescription, "_get_retriever", return_value=FakeRetriever()),
+            patch("src.services._llm_client.is_available", return_value=True),
+            patch(
+                "src.services._llm_client.generate_prescription_llm",
+                return_value=llm_out,
+            ),
+        ):
+            out = prescription.run_prescription(
+                make_dummy_readings(), "B0005", enrich=True
+            )
         assert out["enriched"] is True
         assert out["prescription"] == "LLM-generated plan"
         assert out["action_steps"] == ["step a"]
@@ -123,15 +176,27 @@ class TestPrescriptionPipeline:
         from src.services import prescription
 
         class FakeRetriever:
-            def retrieve_maintenance(self, q, top_k=3): return []
-            def retrieve_safety(self, q, top_k=2): return []
+            def retrieve_maintenance(self, q, top_k=3):
+                return []
 
-        with patch.object(prescription, "run_inference", return_value=fake_inference_result()), \
-             patch.object(prescription, "_get_retriever", return_value=FakeRetriever()), \
-             patch("src.services._llm_client.is_available", return_value=True), \
-             patch("src.services._llm_client.generate_prescription_llm", side_effect=RuntimeError("API down")):
-            out = prescription.run_prescription(make_dummy_readings(), "B0005", enrich=True)
-        assert out["enriched"] is False               # fell back
+            def retrieve_safety(self, q, top_k=2):
+                return []
+
+        with (
+            patch.object(
+                prescription, "run_inference", return_value=fake_inference_result()
+            ),
+            patch.object(prescription, "_get_retriever", return_value=FakeRetriever()),
+            patch("src.services._llm_client.is_available", return_value=True),
+            patch(
+                "src.services._llm_client.generate_prescription_llm",
+                side_effect=RuntimeError("API down"),
+            ),
+        ):
+            out = prescription.run_prescription(
+                make_dummy_readings(), "B0005", enrich=True
+            )
+        assert out["enriched"] is False  # fell back
         assert "end-of-life" in out["prescription"].lower()  # rule text kept
         assert out["human_verification_required"] is True
 
@@ -139,13 +204,22 @@ class TestPrescriptionPipeline:
         from src.services import prescription
 
         class FakeRetriever:
-            def retrieve_maintenance(self, q, top_k=3): return []
-            def retrieve_safety(self, q, top_k=2): return []
+            def retrieve_maintenance(self, q, top_k=3):
+                return []
 
-        with patch.object(prescription, "run_inference", return_value=fake_inference_result()), \
-             patch.object(prescription, "_get_retriever", return_value=FakeRetriever()), \
-             patch("src.services._llm_client.is_available", return_value=False):
-            out = prescription.run_prescription(make_dummy_readings(), "B0005", enrich=True)
+            def retrieve_safety(self, q, top_k=2):
+                return []
+
+        with (
+            patch.object(
+                prescription, "run_inference", return_value=fake_inference_result()
+            ),
+            patch.object(prescription, "_get_retriever", return_value=FakeRetriever()),
+            patch("src.services._llm_client.is_available", return_value=False),
+        ):
+            out = prescription.run_prescription(
+                make_dummy_readings(), "B0005", enrich=True
+            )
         assert out["enriched"] is False
 
 
@@ -157,25 +231,29 @@ class TestPrescriptionLatency:
         from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
         dummy_scaler = MinMaxScaler()
-        dummy_scaler.fit(np.random.rand(50, INPUT_FEATURES))
+        dummy_scaler.fit(np.random.rand(50, BASE_N))
         dummy_feat_scaler = StandardScaler()
         dummy_feat_scaler.fit(np.random.rand(50, SPECTRAL_FEAT_DIM))
         dummy_model = MambaSOHPredictor(
-            input_features=INPUT_FEATURES, feat_dim=SPECTRAL_FEAT_DIM, d_model=8, d_state=4,
+            input_features=INPUT_FEATURES,
+            feat_dim=SPECTRAL_FEAT_DIM,
+            d_model=8,
+            d_state=4,
         )
         dummy_model.eval()
         dummy_iso = IsolationForest(n_estimators=10, random_state=42)
         dummy_iso.fit(np.random.rand(50, SPECTRAL_FEAT_DIM))
 
         with patch("src.services.inference.model_loader") as mock_loader:
-            mock_loader.scaler         = dummy_scaler
+            mock_loader.scaler = dummy_scaler
             mock_loader.feature_scaler = dummy_feat_scaler
-            mock_loader.soh_model      = dummy_model
-            mock_loader.iso_model      = dummy_iso
+            mock_loader.soh_model = dummy_model
+            mock_loader.iso_model = dummy_iso
             yield
 
     def test_rule_path_under_100ms(self):
         from src.services.prescription import run_prescription
+
         readings = make_dummy_readings()
         # warm-up (first call pays lazy init / JIT)
         run_prescription(readings, "B0005", enrich=False)

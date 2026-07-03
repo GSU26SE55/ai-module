@@ -4,8 +4,19 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from src.core.config import D_MODEL, D_STATE, INPUT_FEATURES, LONG_SEQ_LEN, SPECTRAL_FEAT_DIM, WINDOW_SIZE
+from src.core.config import (
+    BASE_FEATURES,
+    D_MODEL,
+    D_STATE,
+    INPUT_FEATURES,
+    LONG_SEQ_LEN,
+    SPECTRAL_FEAT_DIM,
+    WINDOW_SIZE,
+)
+
 from src.models.soh_predictor import MambaSOHPredictor
+
+BASE_N = len(BASE_FEATURES)  # GH-54: payload/scaler width (4)
 
 REQUIRED_KEYS = {
     "prediction",
@@ -37,7 +48,7 @@ class TestInferencePipeline:
         from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
         dummy_scaler = MinMaxScaler()
-        dummy_scaler.fit(np.random.rand(50, INPUT_FEATURES))
+        dummy_scaler.fit(np.random.rand(50, BASE_N))
 
         dummy_feat_scaler = StandardScaler()
         dummy_feat_scaler.fit(np.random.rand(50, SPECTRAL_FEAT_DIM))
@@ -55,14 +66,15 @@ class TestInferencePipeline:
         dummy_iso.fit(np.random.rand(50, SPECTRAL_FEAT_DIM))
 
         with patch("src.services.inference.model_loader") as mock_loader:
-            mock_loader.scaler         = dummy_scaler
+            mock_loader.scaler = dummy_scaler
             mock_loader.feature_scaler = dummy_feat_scaler
-            mock_loader.soh_model      = dummy_model
-            mock_loader.iso_model      = dummy_iso
+            mock_loader.soh_model = dummy_model
+            mock_loader.iso_model = dummy_iso
             yield
 
     def test_returns_expected_keys(self):
         from src.services.inference import run_inference
+
         result = run_inference(make_dummy_readings())
         assert REQUIRED_KEYS.issubset(result.keys()), (
             f"Missing keys: {REQUIRED_KEYS - result.keys()}"
@@ -70,19 +82,25 @@ class TestInferencePipeline:
 
     def test_classification_is_valid(self):
         from src.services.inference import run_inference
+
         result = run_inference(make_dummy_readings())
         assert result["classification"] in {"Normal", "Degrading", "Failed"}
         assert result["prediction"]["health_stage"] in {
-            "Healthy", "Degrading", "Maintenance Required", "End Of Life",
+            "Healthy",
+            "Degrading",
+            "Maintenance Required",
+            "End Of Life",
         }
 
     def test_soh_is_float(self):
         from src.services.inference import run_inference
+
         result = run_inference(make_dummy_readings())
         assert isinstance(result["soh_percent"], float)
 
     def test_confidence_in_range(self):
         from src.services.inference import run_inference
+
         result = run_inference(make_dummy_readings())
         assert 0.0 <= result["confidence"] <= 1.0
         # confidence = soh_confidence (MC Dropout), anomaly_confidence = IF-based — different values
@@ -90,6 +108,7 @@ class TestInferencePipeline:
 
     def test_nested_rag_fields_are_present(self):
         from src.services.inference import run_inference
+
         result = run_inference(make_dummy_readings())
         assert "soh_percent" in result["prediction"]
         assert "anomaly_status" in result["anomaly"]
@@ -101,15 +120,19 @@ class TestInferencePipeline:
 
     def test_rul_is_non_negative_int(self):
         from src.services.inference import run_inference
+
         result = run_inference(make_dummy_readings())
         assert isinstance(result["rul_cycles_estimate"], int)
         assert result["rul_cycles_estimate"] >= 0
 
     def test_recommended_action_is_valid(self):
         from src.services.inference import run_inference
+
         valid_actions = {
-            "MONITOR", "SCHEDULE_MAINTENANCE",
-            "SCHEDULE_REPLACEMENT", "REPLACE_IMMEDIATELY",
+            "MONITOR",
+            "SCHEDULE_MAINTENANCE",
+            "SCHEDULE_REPLACEMENT",
+            "REPLACE_IMMEDIATELY",
         }
         result = run_inference(make_dummy_readings())
         assert result["recommended_action"] in valid_actions
@@ -117,23 +140,27 @@ class TestInferencePipeline:
 
     def test_warnings_is_list(self):
         from src.services.inference import run_inference
+
         result = run_inference(make_dummy_readings())
         assert isinstance(result["warnings"], list)
         assert result["warnings"] == result["evidence"]["warnings"]
 
     def test_warnings_have_required_fields(self):
         from src.services.inference import run_inference
+
         for w in run_inference(make_dummy_readings())["warnings"]:
             assert "code" in w and "severity" in w and "message" in w
 
     def test_feature_summary_has_voltage(self):
         from src.services.inference import run_inference
+
         stat = run_inference(make_dummy_readings())["feature_summary"]["voltage"]
         assert "mean" in stat and "min" in stat and "max" in stat
 
     def test_long_sequence_inference_completes(self):
         """Long-sequence health inference is a batch/background path, not a 100ms realtime path."""
         from src.services.inference import run_inference
+
         readings = make_dummy_readings()
         latencies = []
         for _ in range(2):
@@ -141,7 +168,9 @@ class TestInferencePipeline:
             run_inference(readings)
             latencies.append((time.perf_counter() - start) * 1000)
         avg_ms = sum(latencies) / len(latencies)
-        assert avg_ms < 10000, f"Avg latency {avg_ms:.1f}ms is unexpectedly slow for test model"
+        assert avg_ms < 10000, (
+            f"Avg latency {avg_ms:.1f}ms is unexpectedly slow for test model"
+        )
 
 
 class TestLongInference:
@@ -156,29 +185,37 @@ class TestLongInference:
         from src.core.config import LONG_INPUT_FEATURES, LONG_MODEL_VERSION
 
         # 6-feature scaler → used by _align_features (reads model_loader.scaler.n_features_in_)
-        raw_scaler  = MinMaxScaler().fit(np.random.rand(50, INPUT_FEATURES))
+        raw_scaler = MinMaxScaler().fit(np.random.rand(50, BASE_N))
         # 8-feature long scaler → transforms [6 base + IC curve + phase mask] before the long model
         long_scaler = MinMaxScaler().fit(np.random.rand(50, LONG_INPUT_FEATURES))
         feat_scaler = StandardScaler().fit(np.random.rand(50, SPECTRAL_FEAT_DIM))
         long_scaler_path = tmp_path / "scaler_long.pkl"
-        feat_path        = tmp_path / "feature_scaler_long.pkl"
-        joblib.dump({"scaler": long_scaler, "version": "2.0"},      long_scaler_path)
+        feat_path = tmp_path / "feature_scaler_long.pkl"
+        joblib.dump({"scaler": long_scaler, "version": "2.0"}, long_scaler_path)
         joblib.dump({"scaler": feat_scaler, "version": "long-1.0"}, feat_path)
 
         # Long model takes 8 input features (6 base + IC curve + phase mask)
         model = MambaSOHPredictor(
-            input_features=LONG_INPUT_FEATURES, feat_dim=SPECTRAL_FEAT_DIM,
-            d_model=8, d_state=4, pooling="attention",
+            input_features=LONG_INPUT_FEATURES,
+            feat_dim=SPECTRAL_FEAT_DIM,
+            d_model=8,
+            d_state=4,
+            pooling="attention",
         )
         model_path = tmp_path / "soh_mamba_long.pth"
         torch.save(
             {
-                "model_state_dict": model.state_dict(), "version": LONG_MODEL_VERSION,
-                "pooling": "attention", "input_features": LONG_INPUT_FEATURES,
-                "feat_dim": SPECTRAL_FEAT_DIM, "d_model": 8, "d_state": 4,
+                "model_state_dict": model.state_dict(),
+                "version": LONG_MODEL_VERSION,
+                "pooling": "attention",
+                "input_features": LONG_INPUT_FEATURES,
+                "feat_dim": SPECTRAL_FEAT_DIM,
+                "d_model": 8,
+                "d_state": 4,
                 # patch_size=1 (no-patch) — must match how load_long_model reconstructs;
                 # default LONG_PATCH_SIZE=16 would build patch_embed and mismatch state_dict.
-                "patch_size": 1, "patch_stride": 1,
+                "patch_size": 1,
+                "patch_stride": 1,
             },
             model_path,
         )
@@ -194,14 +231,19 @@ class TestLongInference:
         # predict_soh_long → _align_features reads model_loader.scaler.n_features_in_ (6);
         # set it directly since load_models() is not called in the long-only path.
         monkeypatch.setattr(model_loader, "scaler", raw_scaler)
-        for attr in ("long_scaler", "long_feature_scaler", "long_soh_model", "long_device"):
+        for attr in (
+            "long_scaler",
+            "long_feature_scaler",
+            "long_soh_model",
+            "long_device",
+        ):
             monkeypatch.setattr(model_loader, attr, None)
 
     def test_predict_soh_long_chunked_path(self, tmp_path, monkeypatch):
         self._setup_artifacts(tmp_path, monkeypatch)
         from src.services.inference import predict_soh_long
 
-        readings = np.random.rand(600, INPUT_FEATURES).tolist()  # L>512 → chunked no-ckpt path
+        readings = np.random.rand(600, BASE_N).tolist()  # L>512 → chunked no-ckpt path
         out = predict_soh_long(readings, device="cpu")
         assert 0.0 <= out["soh_percent"] <= 100.0
         assert out["seq_len"] == 600
@@ -214,7 +256,7 @@ class TestLongInference:
         from src.services.inference import predict_soh_long
 
         assert model_loader.long_soh_model is None
-        predict_soh_long(np.random.rand(64, INPUT_FEATURES).tolist(), device="cpu")
+        predict_soh_long(np.random.rand(64, BASE_N).tolist(), device="cpu")
         assert model_loader.long_soh_model is not None
         assert model_loader.long_feature_scaler is not None
 
@@ -231,11 +273,18 @@ class TestLongInference:
 
         torch.manual_seed(42)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model = MambaSOHPredictor(
-            input_features=INPUT_FEATURES, feat_dim=SPECTRAL_FEAT_DIM,
-            d_model=D_MODEL, d_state=D_STATE, pooling="attention",
-        ).to(device).eval()
-        x  = torch.randn(1, LONG_SEQ_LEN, INPUT_FEATURES, device=device)
+        model = (
+            MambaSOHPredictor(
+                input_features=INPUT_FEATURES,
+                feat_dim=SPECTRAL_FEAT_DIM,
+                d_model=D_MODEL,
+                d_state=D_STATE,
+                pooling="attention",
+            )
+            .to(device)
+            .eval()
+        )
+        x = torch.randn(1, LONG_SEQ_LEN, INPUT_FEATURES, device=device)
         xf = torch.randn(1, SPECTRAL_FEAT_DIM, device=device)
 
         with torch.no_grad():
@@ -253,5 +302,62 @@ class TestLongInference:
         print(f"[GH-10] L={LONG_SEQ_LEN} latency on {device}: avg {avg:.1f}ms")
 
         if device.type == "cuda":
-            assert avg < 100, f"GPU L={LONG_SEQ_LEN} latency {avg:.1f}ms exceeds 100ms SLA"
+            assert avg < 100, (
+                f"GPU L={LONG_SEQ_LEN} latency {avg:.1f}ms exceeds 100ms SLA"
+            )
         # CPU: recorded only — SLA <100ms is enforced on GPU per GH-10 deploy decision.
+
+
+class TestAppendDerivedFeatures:
+    """GH-54 — run_inference builds (30,6) model input from a 4-col payload."""
+
+    @pytest.fixture(autouse=True)
+    def patch_loader(self):
+        from src.models.soh_predictor import MambaSOHPredictor
+
+        model = MambaSOHPredictor(
+            input_features=INPUT_FEATURES,
+            feat_dim=SPECTRAL_FEAT_DIM,
+            d_model=8,
+            d_state=4,
+        )
+        with patch("src.services.inference.model_loader") as mock_loader:
+            mock_loader.soh_model = model
+            yield
+
+    def test_appends_two_columns_with_defaults(self):
+        from src.services.inference import _append_derived_features
+
+        raw = np.random.rand(WINDOW_SIZE, BASE_N).astype(np.float32)
+        raw[:, 3] = np.arange(WINDOW_SIZE) * 10.0
+        x_scaled = np.random.rand(WINDOW_SIZE, BASE_N).astype(np.float32)
+
+        out = _append_derived_features(x_scaled, raw, cycle_idx=None)
+        assert out.shape == (WINDOW_SIZE, INPUT_FEATURES)
+        np.testing.assert_allclose(out[:, 4], 0.0)  # BE chua gui cycle_idx -> 0
+        assert out[0, 5] == 1.0  # SOC window-local bat dau 100%
+
+    def test_cycle_idx_normalized(self):
+        from src.core.config import CYCLE_COUNT_NORM
+        from src.services.inference import _append_derived_features
+
+        raw = np.random.rand(WINDOW_SIZE, BASE_N).astype(np.float32)
+        raw[:, 3] = np.arange(WINDOW_SIZE) * 10.0
+        x_scaled = np.random.rand(WINDOW_SIZE, BASE_N).astype(np.float32)
+
+        out = _append_derived_features(x_scaled, raw, cycle_idx=100)
+        np.testing.assert_allclose(out[:, 4], 100 / CYCLE_COUNT_NORM)
+
+    def test_legacy_model_passthrough(self):
+        """Model 4-input (pre-GH-54) -> khong append gi ca."""
+        from src.models.soh_predictor import MambaSOHPredictor
+        from src.services import inference as inf
+
+        legacy = MambaSOHPredictor(
+            input_features=BASE_N, feat_dim=SPECTRAL_FEAT_DIM, d_model=8, d_state=4
+        )
+        with patch.object(inf.model_loader, "soh_model", legacy, create=True):
+            x_scaled = np.random.rand(WINDOW_SIZE, BASE_N).astype(np.float32)
+            raw = x_scaled.copy()
+            out = inf._append_derived_features(x_scaled, raw, cycle_idx=None)
+        assert out.shape == (WINDOW_SIZE, BASE_N)

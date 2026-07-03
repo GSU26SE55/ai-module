@@ -19,7 +19,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.core.config import INPUT_FEATURES, WINDOW_SIZE  # noqa: E402
+from src.core.config import BASE_FEATURES, WINDOW_SIZE  # noqa: E402
 from src.grpc_gen import ai_service_pb2 as pb  # noqa: E402
 from src.grpc_gen import ai_service_pb2_grpc as pb_grpc  # noqa: E402
 
@@ -36,7 +36,7 @@ CONNECT_TIMEOUT_S = 5
 
 def make_window(battery_id: str) -> pb.PredictRequest:
     """One synthetic 30-timestep window (4 features: V, I, T, time)."""
-    rows = np.random.rand(WINDOW_SIZE, INPUT_FEATURES)
+    rows = np.random.rand(WINDOW_SIZE, len(BASE_FEATURES))
     rows[:, 0] = 3.5 + rows[:, 0] * 0.7  # voltage ~ [3.5, 4.2] V
     rows[:, 1] = 1.0 + rows[:, 1]  # current ~ [1, 2] A
     rows[:, 2] = 24.0 + rows[:, 2] * 6  # temperature ~ [24, 30] °C

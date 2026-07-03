@@ -12,10 +12,10 @@ def make_dummy_loader():
     from sklearn.ensemble import IsolationForest
     from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
-    from src.core.config import INPUT_FEATURES, SPECTRAL_FEAT_DIM
+    from src.core.config import BASE_FEATURES, INPUT_FEATURES, SPECTRAL_FEAT_DIM
 
     scaler = MinMaxScaler()
-    scaler.fit(np.random.rand(50, INPUT_FEATURES))
+    scaler.fit(np.random.rand(50, len(BASE_FEATURES)))  # GH-54: scaler = 4 base cols
 
     feat_scaler = StandardScaler()
     feat_scaler.fit(np.random.rand(50, SPECTRAL_FEAT_DIM))
@@ -41,10 +41,10 @@ def client():
         from main import app
 
         with patch("src.services.inference.model_loader") as mock_loader:
-            mock_loader.scaler         = scaler
+            mock_loader.scaler = scaler
             mock_loader.feature_scaler = feat_scaler
-            mock_loader.soh_model      = model
-            mock_loader.iso_model      = iso
+            mock_loader.soh_model = model
+            mock_loader.iso_model = iso
             with TestClient(app) as c:
                 yield c
 
@@ -69,7 +69,9 @@ class TestPredictRouter:
     def _valid_payload(self):
         return {
             "battery_id": "B0005",
-            "readings": [[3.7 + i * 0.001, 1.5, 25.0, float(i)] for i in range(WINDOW_SIZE)],
+            "readings": [
+                [3.7 + i * 0.001, 1.5, 25.0, float(i)] for i in range(WINDOW_SIZE)
+            ],
         }
 
     def test_predict_returns_200(self, client):
@@ -80,10 +82,21 @@ class TestPredictRouter:
         resp = client.post("/predict/", json=self._valid_payload())
         data = resp.json()
         required = {
-            "battery_id", "prediction", "anomaly", "risk", "evidence",
-            "metadata", "soh_percent", "classification", "confidence",
-            "inference_ms", "rul_cycles_estimate", "anomaly_score",
-            "recommended_action", "warnings", "feature_summary",
+            "battery_id",
+            "prediction",
+            "anomaly",
+            "risk",
+            "evidence",
+            "metadata",
+            "soh_percent",
+            "classification",
+            "confidence",
+            "inference_ms",
+            "rul_cycles_estimate",
+            "anomaly_score",
+            "recommended_action",
+            "warnings",
+            "feature_summary",
         }
         for key in required:
             assert key in data, f"Missing key: {key}"
@@ -97,7 +110,10 @@ class TestPredictRouter:
         assert resp.json()["battery_id"] == "B0005"
 
     def test_predict_invalid_shape_returns_422(self, client):
-        payload = {"battery_id": "B0005", "readings": [[3.7, 1.5, 25.0]] * (WINDOW_SIZE - 1)}
+        payload = {
+            "battery_id": "B0005",
+            "readings": [[3.7, 1.5, 25.0]] * (WINDOW_SIZE - 1),
+        }
         resp = client.post("/predict/", json=payload)
         assert resp.status_code == 422
 

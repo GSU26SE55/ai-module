@@ -15,14 +15,18 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.core import model_loader
-from src.core.config import INPUT_FEATURES, MODEL_VERSION, WINDOW_SIZE
+from src.core.config import BASE_FEATURES, INPUT_FEATURES, MODEL_VERSION, WINDOW_SIZE
 from src.grpc_gen import ai_service_pb2 as pb
 from src.grpc_gen import ai_service_pb2_grpc as pb_grpc
 from src.grpc_server import AiServiceServicer
 from tests.test_routers import make_dummy_loader
 
+BASE_N = len(
+    BASE_FEATURES
+)  # GH-54: API payload width (4) — model input is INPUT_FEATURES (6)
+
 VALID_READINGS = [
-    pb.Reading(values=np.random.RandomState(42).rand(INPUT_FEATURES).tolist())
+    pb.Reading(values=np.random.RandomState(42).rand(BASE_N).tolist())
     for _ in range(WINDOW_SIZE)
 ]
 
@@ -163,7 +167,7 @@ def test_predict_returns_valid_response(servicer):
 
 
 def test_predict_invalid_shape_aborts_invalid_argument(grpc_stub):
-    short = [pb.Reading(values=[3.7] * INPUT_FEATURES) for _ in range(5)]
+    short = [pb.Reading(values=[3.7] * BASE_N) for _ in range(5)]
     with pytest.raises(grpc.RpcError) as exc_info:
         grpc_stub.Predict(pb.PredictRequest(battery_id="B0005", readings=short))
     assert exc_info.value.code() == grpc.StatusCode.INVALID_ARGUMENT
@@ -208,7 +212,7 @@ class TestPredictStream:
     def test_invalid_window_mid_stream_aborts_after_prior_responses(self, grpc_stub):
         bad = pb.PredictRequest(
             battery_id="B-bad",
-            readings=[pb.Reading(values=[3.7] * INPUT_FEATURES) for _ in range(5)],
+            readings=[pb.Reading(values=[3.7] * BASE_N) for _ in range(5)],
         )
         requests = [
             pb.PredictRequest(battery_id="B0000", readings=VALID_READINGS),
