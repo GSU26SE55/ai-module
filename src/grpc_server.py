@@ -159,12 +159,35 @@ class AiServiceServicer(ai_service_pb2_grpc.AiServiceServicer):
 
     def _predict_one(self, request, context) -> ai_service_pb2.PredictResponse:
         """Shared unary/stream path: validate → run_inference → map to proto."""
+        if request.reading_objects:
+            # GH-77: named-field format — takes precedence over `readings`,
+            # mirrors REST's Union-type acceptance. Built as dicts so the
+            # SAME Pydantic schema (ReadingObject) validates/normalizes them,
+            # no separate gRPC-only logic.
+            readings = [
+                {
+                    "voltage": r.voltage,
+                    "current": r.current,
+                    "temperature": r.temperature,
+                    "time": r.time,
+                    **(
+                        {"cycle_count": r.cycle_count}
+                        if r.HasField("cycle_count")
+                        else {}
+                    ),
+                    **(
+                        {"soc_percent": r.soc_percent}
+                        if r.HasField("soc_percent")
+                        else {}
+                    ),
+                }
+                for r in request.reading_objects
+            ]
+        else:
+            readings = [list(r.values) for r in request.readings]
         parsed = _validate(
             PredictRequest,
-            {
-                "battery_id": request.battery_id,
-                "readings": [list(r.values) for r in request.readings],
-            },
+            {"battery_id": request.battery_id, "readings": readings},
             context,
         )
         try:

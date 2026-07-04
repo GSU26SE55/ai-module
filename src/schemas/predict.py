@@ -16,19 +16,60 @@ BASE_INPUT_FEATURES = len(BASE_FEATURES)
 FULL_INPUT_FEATURES = INPUT_FEATURES
 
 
+class ReadingObject(BaseModel):
+    """GH-76: named-field alternative to a positional [v, i, t, time, ...] row —
+    removes the column-order footgun (schema stays valid even if BE swaps two
+    columns by mistake, since a plain float list has no way to catch that)."""
+
+    voltage: float
+    current: float
+    temperature: float
+    time: float
+    cycle_count: float | None = None
+    soc_percent: float | None = None
+
+
 class PredictRequest(BaseModel):
     battery_id: str
-    readings: list[
-        list[float]
-    ]  # shape: (30, 6) preferred; (30, 4) or legacy (30, 3) also accepted
+    readings: list[list[float]] | list[ReadingObject]
+    # shape: (30, 6) preferred; (30, 4) or legacy (30, 3) also accepted.
+    # GH-76: list[ReadingObject] (named fields) accepted as an alternative to the
+    # positional list[list[float]] — normalized to the latter in the validator
+    # below, so every downstream consumer (run_inference, grpc_server, ...)
+    # keeps seeing plain float rows and needs no changes.
 
     @field_validator("readings")
     @classmethod
-    def validate_readings_shape(cls, v: list[list[float]]) -> list[list[float]]:
+    def validate_readings_shape(
+        cls, v: list[list[float]] | list[ReadingObject]
+    ) -> list[list[float]]:
         if len(v) != WINDOW_SIZE:
             raise ValueError(
                 f"readings must have {WINDOW_SIZE} timesteps, got {len(v)}"
             )
+
+        if v and isinstance(v[0], ReadingObject):
+            has_cycle = [r.cycle_count is not None for r in v]
+            has_soc = [r.soc_percent is not None for r in v]
+            if any(has_cycle) != all(has_cycle) or any(has_soc) != all(has_soc):
+                raise ValueError(
+                    "cycle_count/soc_percent must be set on either all readings "
+                    "or none — got a mix of present/missing across the window"
+                )
+            if has_cycle[0] != has_soc[0]:
+                raise ValueError(
+                    "cycle_count and soc_percent must be provided together "
+                    "(both or neither) — got only one of the two"
+                )
+            include_derived = has_cycle[0]
+            rows: list[list[float]] = []
+            for r in v:
+                row = [r.voltage, r.current, r.temperature, r.time]
+                if include_derived:
+                    row += [r.cycle_count, r.soc_percent]
+                rows.append(row)
+            v = rows
+
         allowed_feature_counts = {
             LEGACY_INPUT_FEATURES,
             BASE_INPUT_FEATURES,

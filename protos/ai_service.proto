@@ -41,9 +41,24 @@ message Reading {
   repeated double values = 1;
 }
 
+// GH-77: named-field alternative to Reading — gRPC parity with the REST
+// object-format readings added in GH-76. cycle_count/soc_percent use
+// `optional` so absence is distinguishable from 0.0 (checked via HasField()).
+message ReadingFields {
+  double voltage = 1;
+  double current = 2;
+  double temperature = 3;
+  double time = 4;
+  optional double cycle_count = 5;
+  optional double soc_percent = 6;
+}
+
 message PredictRequest {
   string battery_id = 1;
   repeated Reading readings = 2;
+  // GH-77: named-field alternative to `readings`. If non-empty, takes
+  // precedence over `readings` (mirrors REST's Union-type acceptance).
+  repeated ReadingFields reading_objects = 3;
 }
 
 message WarningItem {

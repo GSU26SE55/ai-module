@@ -12,13 +12,31 @@ class Reading(_message.Message):
     values: _containers.RepeatedScalarFieldContainer[float]
     def __init__(self, values: _Optional[_Iterable[float]] = ...) -> None: ...
 
+class ReadingFields(_message.Message):
+    __slots__ = ("voltage", "current", "temperature", "time", "cycle_count", "soc_percent")
+    VOLTAGE_FIELD_NUMBER: _ClassVar[int]
+    CURRENT_FIELD_NUMBER: _ClassVar[int]
+    TEMPERATURE_FIELD_NUMBER: _ClassVar[int]
+    TIME_FIELD_NUMBER: _ClassVar[int]
+    CYCLE_COUNT_FIELD_NUMBER: _ClassVar[int]
+    SOC_PERCENT_FIELD_NUMBER: _ClassVar[int]
+    voltage: float
+    current: float
+    temperature: float
+    time: float
+    cycle_count: float
+    soc_percent: float
+    def __init__(self, voltage: _Optional[float] = ..., current: _Optional[float] = ..., temperature: _Optional[float] = ..., time: _Optional[float] = ..., cycle_count: _Optional[float] = ..., soc_percent: _Optional[float] = ...) -> None: ...
+
 class PredictRequest(_message.Message):
-    __slots__ = ("battery_id", "readings")
+    __slots__ = ("battery_id", "readings", "reading_objects")
     BATTERY_ID_FIELD_NUMBER: _ClassVar[int]
     READINGS_FIELD_NUMBER: _ClassVar[int]
+    READING_OBJECTS_FIELD_NUMBER: _ClassVar[int]
     battery_id: str
     readings: _containers.RepeatedCompositeFieldContainer[Reading]
-    def __init__(self, battery_id: _Optional[str] = ..., readings: _Optional[_Iterable[_Union[Reading, _Mapping]]] = ...) -> None: ...
+    reading_objects: _containers.RepeatedCompositeFieldContainer[ReadingFields]
+    def __init__(self, battery_id: _Optional[str] = ..., readings: _Optional[_Iterable[_Union[Reading, _Mapping]]] = ..., reading_objects: _Optional[_Iterable[_Union[ReadingFields, _Mapping]]] = ...) -> None: ...
 
 class WarningItem(_message.Message):
     __slots__ = ("code", "severity", "message")

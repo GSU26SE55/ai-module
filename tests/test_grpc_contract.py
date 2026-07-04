@@ -202,7 +202,12 @@ def test_field_names_match_pydantic(pydantic_cls, proto_cls):
 
 
 def test_predict_request_fields():
-    assert proto_field_names(pb.PredictRequest) == pydantic_field_names(PredictRequest)
+    # GH-77: `reading_objects` is proto-only — it maps onto the Pydantic
+    # `readings` Union (list[list[float]] | list[ReadingObject]), not a
+    # separate named field, so it's excluded from the exact-match set.
+    assert proto_field_names(pb.PredictRequest) - {
+        "reading_objects"
+    } == pydantic_field_names(PredictRequest)
 
 
 def test_predict_response_covers_all_pydantic_fields():

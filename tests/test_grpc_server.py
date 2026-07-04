@@ -38,6 +38,30 @@ VALID_READINGS_6COL = [
     for i in range(WINDOW_SIZE)
 ]
 
+# GH-77 — named-field equivalents of VALID_READINGS / VALID_READINGS_6COL,
+# built from the exact same values so array vs object-format parity tests
+# compare identical numbers.
+VALID_READING_FIELDS = [
+    pb.ReadingFields(
+        voltage=r.values[0],
+        current=r.values[1],
+        temperature=r.values[2],
+        time=r.values[3],
+    )
+    for r in VALID_READINGS
+]
+VALID_READING_FIELDS_6COL = [
+    pb.ReadingFields(
+        voltage=r.values[0],
+        current=r.values[1],
+        temperature=r.values[2],
+        time=r.values[3],
+        cycle_count=r.values[4],
+        soc_percent=r.values[5],
+    )
+    for r in VALID_READINGS_6COL
+]
+
 FIXED_PREDICT_RESULT = {
     "prediction": {
         "soh_percent": 87.5,
@@ -189,6 +213,93 @@ def test_predict_wrong_feature_count_aborts_invalid_argument(grpc_stub):
     assert exc_info.value.code() == grpc.StatusCode.INVALID_ARGUMENT
 
 
+# ── reading_objects named-field parity (GH-77) ──────────────────────────
+
+
+def test_predict_reading_objects_matches_readings_array(servicer):
+    """gRPC named-field reading_objects must normalize to the exact same
+    rows the equivalent array-format readings would send to run_inference()."""
+    array_readings = [list(r.values) for r in VALID_READINGS]
+    with patch(
+        "src.grpc_server.run_inference", return_value=FIXED_PREDICT_RESULT
+    ) as mock_infer:
+        servicer.Predict(
+            pb.PredictRequest(battery_id="B0005", reading_objects=VALID_READING_FIELDS),
+            None,
+        )
+    (object_call_readings,), _ = mock_infer.call_args
+    assert object_call_readings == array_readings
+
+
+def test_predict_reading_objects_6field_matches_readings_array(servicer):
+    """Same parity check with cycle_count/soc_percent included."""
+    array_readings = [list(r.values) for r in VALID_READINGS_6COL]
+    with patch(
+        "src.grpc_server.run_inference", return_value=FIXED_PREDICT_RESULT
+    ) as mock_infer:
+        servicer.Predict(
+            pb.PredictRequest(
+                battery_id="B0005", reading_objects=VALID_READING_FIELDS_6COL
+            ),
+            None,
+        )
+    (object_call_readings,), _ = mock_infer.call_args
+    assert object_call_readings == array_readings
+
+
+def test_predict_reading_objects_matches_rest_object_format(servicer, rest_client):
+    """gRPC reading_objects and REST object-format readings — same input
+    logic, same normalized rows, across both transports."""
+    rest_readings = [
+        {
+            "voltage": r.values[0],
+            "current": r.values[1],
+            "temperature": r.values[2],
+            "time": r.values[3],
+        }
+        for r in VALID_READINGS
+    ]
+    with (
+        patch(
+            "src.grpc_server.run_inference", return_value=FIXED_PREDICT_RESULT
+        ) as grpc_mock,
+        patch(
+            "src.routers.predict.run_inference", return_value=FIXED_PREDICT_RESULT
+        ) as rest_mock,
+    ):
+        rest_client.post(
+            "/predict/", json={"battery_id": "B0005", "readings": rest_readings}
+        )
+        servicer.Predict(
+            pb.PredictRequest(battery_id="B0005", reading_objects=VALID_READING_FIELDS),
+            None,
+        )
+    (grpc_readings,), _ = grpc_mock.call_args
+    (rest_readings_normalized,), _ = rest_mock.call_args
+    assert grpc_readings == rest_readings_normalized
+
+
+def test_predict_reading_objects_takes_precedence_over_readings(servicer):
+    """If a client sends both readings and reading_objects (documented edge
+    case, not a validation error), reading_objects wins."""
+    array_readings = [list(r.values) for r in VALID_READINGS]
+    with patch(
+        "src.grpc_server.run_inference", return_value=FIXED_PREDICT_RESULT
+    ) as mock_infer:
+        servicer.Predict(
+            pb.PredictRequest(
+                battery_id="B0005",
+                readings=[
+                    pb.Reading(values=[9.9] * BASE_N) for _ in range(WINDOW_SIZE)
+                ],
+                reading_objects=VALID_READING_FIELDS,
+            ),
+            None,
+        )
+    (used_readings,), _ = mock_infer.call_args
+    assert used_readings == array_readings
+
+
 # ── PredictStream (GH-41) ──────────────────────────────────────────────
 
 
@@ -239,6 +350,19 @@ class TestPredictStream:
     def test_empty_stream_returns_no_responses(self, grpc_stub):
         responses = list(grpc_stub.PredictStream(iter([])))
         assert responses == []
+
+    def test_stream_accepts_reading_objects(self, grpc_stub):
+        """GH-77 — PredictStream shares _predict_one() with unary Predict, so
+        reading_objects must work per-window in the stream too, not just unary."""
+        requests = [
+            pb.PredictRequest(battery_id="B0000", reading_objects=VALID_READING_FIELDS),
+            pb.PredictRequest(battery_id="B0001", readings=VALID_READINGS),
+        ]
+        responses = list(grpc_stub.PredictStream(iter(requests)))
+        assert [r.battery_id for r in responses] == ["B0000", "B0001"]
+        for r in responses:
+            assert r.classification in ("Normal", "Degrading", "Failed")
+            assert 0.0 <= r.soh_percent <= 100.0
 
     def test_client_cancel_mid_stream_leaves_server_usable(self, grpc_stub):
         def requests_forever():
