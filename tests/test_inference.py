@@ -503,3 +503,64 @@ class TestAppendDerivedFeatures:
         out_6col = _append_derived_features(x_scaled, raw6, cycle_idx=None)
         out_4col = _append_derived_features(x_scaled, raw4, cycle_idx=cycle_idx)
         np.testing.assert_allclose(out_6col, out_4col, rtol=1e-5)
+
+
+class TestPackToCell:
+    """GH-65: n_series divides ONLY the voltage column, before scaler + warnings."""
+
+    @pytest.fixture(autouse=True)
+    def patch_model_loader(self):
+        from sklearn.ensemble import IsolationForest
+        from sklearn.preprocessing import MinMaxScaler, StandardScaler
+
+        dummy_scaler = MinMaxScaler()
+        dummy_scaler.fit(np.random.rand(50, BASE_N))
+        dummy_feat_scaler = StandardScaler()
+        dummy_feat_scaler.fit(np.random.rand(50, SPECTRAL_FEAT_DIM))
+        dummy_model = MambaSOHPredictor(
+            input_features=INPUT_FEATURES,
+            feat_dim=SPECTRAL_FEAT_DIM,
+            d_model=8,
+            d_state=4,
+        )
+        dummy_model.eval()
+        dummy_iso = IsolationForest(n_estimators=10, random_state=42)
+        dummy_iso.fit(np.random.rand(50, SPECTRAL_FEAT_DIM))
+        with patch("src.services.inference.model_loader") as mock_loader:
+            mock_loader.scaler = dummy_scaler
+            mock_loader.feature_scaler = dummy_feat_scaler
+            mock_loader.soh_model = dummy_model
+            mock_loader.iso_model = dummy_iso
+            yield
+
+    def test_voltage_divided_per_cell_in_feature_summary(self):
+        from src.services.inference import run_inference
+
+        cell_readings = make_dummy_readings()
+        pack_readings = [[r[0] * 3, r[1], r[2], r[3]] for r in cell_readings]
+        pack = run_inference(pack_readings, n_series=3)
+        cell = run_inference(cell_readings)
+        # voltage back to per-cell values; current/temperature untouched
+        assert pack["feature_summary"]["voltage"]["mean"] == pytest.approx(
+            cell["feature_summary"]["voltage"]["mean"], abs=1e-3
+        )
+        assert pack["feature_summary"]["current"] == cell["feature_summary"]["current"]
+        assert (
+            pack["feature_summary"]["temperature"]
+            == cell["feature_summary"]["temperature"]
+        )
+
+    def test_metadata_traces_n_series(self):
+        from src.services.inference import run_inference
+
+        assert run_inference(make_dummy_readings())["metadata"]["n_series"] == 1
+        pack = [[r[0] * 3, r[1], r[2], r[3]] for r in make_dummy_readings()]
+        assert run_inference(pack, n_series=3)["metadata"]["n_series"] == 3
+
+    def test_no_overvoltage_false_alarm_for_pack(self):
+        from src.services.inference import run_inference
+
+        pack = [[r[0] * 3, r[1], r[2], r[3]] for r in make_dummy_readings()]
+        result = run_inference(pack, n_series=3)
+        codes = [w["code"] for w in result["warnings"]]
+        assert not any("OVERVOLTAGE" in c for c in codes), codes

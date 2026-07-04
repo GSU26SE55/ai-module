@@ -20,6 +20,16 @@ ISO_FOREST_PATH = os.path.join(WEIGHTS_DIR, f"isolation_forest_v{MODEL_VERSION}.
 
 WINDOW_SIZE = 30
 WINDOW_STRIDE = 30
+
+# GH-66: khoảng hợp lệ per-cell cho input validation (phân phối train NASA + margin).
+# NASA 18650: discharge voltage ~2.5-4.2V, current ~±4A, ambient 4-44°C — khoảng dưới
+# đã nới margin để không reject dữ liệu hợp lệ ở biên. Giá trị NGOÀI khoảng bị reject
+# 422/INVALID_ARGUMENT (chặn silent garbage: 12V pack chưa quy đổi, cảm biến hỏng)
+# thay vì scaler transform ra ngoài [0,1] → SOH vô nghĩa với confidence bình thường.
+VOLTAGE_CELL_RANGE = (2.0, 4.5)  # V per-cell — check SAU khi chia pack_config.n_series (GH-65)
+CURRENT_RANGE = (-5.0, 5.0)  # A
+TEMPERATURE_RANGE = (-10.0, 60.0)  # °C
+SOC_RANGE = (0.0, 100.0)  # %
 INPUT_FEATURES = 6  # model input dim = 4 base (BASE_FEATURES, API payload) + 2 derived (GH-54: cycle_count, soc_percent)
 CYCLE_COUNT_NORM = 200.0  # GH-54: chia cycle_idx cho hằng số này (cycle dài nhất quan sát ~197, B0033/34); KHÔNG clip >1
 NOMINAL_CAPACITY_AH = (

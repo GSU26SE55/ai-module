@@ -28,15 +28,25 @@ class ReadingFields(_message.Message):
     soc_percent: float
     def __init__(self, voltage: _Optional[float] = ..., current: _Optional[float] = ..., temperature: _Optional[float] = ..., time: _Optional[float] = ..., cycle_count: _Optional[float] = ..., soc_percent: _Optional[float] = ...) -> None: ...
 
+class PackConfig(_message.Message):
+    __slots__ = ("n_series", "chemistry")
+    N_SERIES_FIELD_NUMBER: _ClassVar[int]
+    CHEMISTRY_FIELD_NUMBER: _ClassVar[int]
+    n_series: int
+    chemistry: str
+    def __init__(self, n_series: _Optional[int] = ..., chemistry: _Optional[str] = ...) -> None: ...
+
 class PredictRequest(_message.Message):
-    __slots__ = ("battery_id", "readings", "reading_objects")
+    __slots__ = ("battery_id", "readings", "reading_objects", "pack_config")
     BATTERY_ID_FIELD_NUMBER: _ClassVar[int]
     READINGS_FIELD_NUMBER: _ClassVar[int]
     READING_OBJECTS_FIELD_NUMBER: _ClassVar[int]
+    PACK_CONFIG_FIELD_NUMBER: _ClassVar[int]
     battery_id: str
     readings: _containers.RepeatedCompositeFieldContainer[Reading]
     reading_objects: _containers.RepeatedCompositeFieldContainer[ReadingFields]
-    def __init__(self, battery_id: _Optional[str] = ..., readings: _Optional[_Iterable[_Union[Reading, _Mapping]]] = ..., reading_objects: _Optional[_Iterable[_Union[ReadingFields, _Mapping]]] = ...) -> None: ...
+    pack_config: PackConfig
+    def __init__(self, battery_id: _Optional[str] = ..., readings: _Optional[_Iterable[_Union[Reading, _Mapping]]] = ..., reading_objects: _Optional[_Iterable[_Union[ReadingFields, _Mapping]]] = ..., pack_config: _Optional[_Union[PackConfig, _Mapping]] = ...) -> None: ...
 
 class WarningItem(_message.Message):
     __slots__ = ("code", "severity", "message")
@@ -118,16 +128,18 @@ class EvidenceInfo(_message.Message):
     def __init__(self, warnings: _Optional[_Iterable[_Union[WarningItem, _Mapping]]] = ..., feature_summary: _Optional[_Mapping[str, FeatureStat]] = ...) -> None: ...
 
 class ResponseMetadata(_message.Message):
-    __slots__ = ("model_version", "window_size", "input_features", "inference_ms")
+    __slots__ = ("model_version", "window_size", "input_features", "inference_ms", "n_series")
     MODEL_VERSION_FIELD_NUMBER: _ClassVar[int]
     WINDOW_SIZE_FIELD_NUMBER: _ClassVar[int]
     INPUT_FEATURES_FIELD_NUMBER: _ClassVar[int]
     INFERENCE_MS_FIELD_NUMBER: _ClassVar[int]
+    N_SERIES_FIELD_NUMBER: _ClassVar[int]
     model_version: str
     window_size: int
     input_features: int
     inference_ms: float
-    def __init__(self, model_version: _Optional[str] = ..., window_size: _Optional[int] = ..., input_features: _Optional[int] = ..., inference_ms: _Optional[float] = ...) -> None: ...
+    n_series: int
+    def __init__(self, model_version: _Optional[str] = ..., window_size: _Optional[int] = ..., input_features: _Optional[int] = ..., inference_ms: _Optional[float] = ..., n_series: _Optional[int] = ...) -> None: ...
 
 class PredictResponse(_message.Message):
     __slots__ = ("battery_id", "prediction", "anomaly", "risk", "evidence", "metadata", "soh_percent", "classification", "confidence", "inference_ms", "rul_cycles_estimate", "degradation_rate_per_cycle", "soh_trend", "cycles_to_maintenance", "soh_trajectory", "anomaly_score", "recommended_action", "warnings", "feature_summary")
@@ -179,20 +191,22 @@ class PredictResponse(_message.Message):
     def __init__(self, battery_id: _Optional[str] = ..., prediction: _Optional[_Union[PredictionInfo, _Mapping]] = ..., anomaly: _Optional[_Union[AnomalyInfo, _Mapping]] = ..., risk: _Optional[_Union[RiskInfo, _Mapping]] = ..., evidence: _Optional[_Union[EvidenceInfo, _Mapping]] = ..., metadata: _Optional[_Union[ResponseMetadata, _Mapping]] = ..., soh_percent: _Optional[float] = ..., classification: _Optional[str] = ..., confidence: _Optional[float] = ..., inference_ms: _Optional[float] = ..., rul_cycles_estimate: _Optional[int] = ..., degradation_rate_per_cycle: _Optional[float] = ..., soh_trend: _Optional[str] = ..., cycles_to_maintenance: _Optional[int] = ..., soh_trajectory: _Optional[_Iterable[float]] = ..., anomaly_score: _Optional[float] = ..., recommended_action: _Optional[str] = ..., warnings: _Optional[_Iterable[_Union[WarningItem, _Mapping]]] = ..., feature_summary: _Optional[_Mapping[str, FeatureStat]] = ...) -> None: ...
 
 class PrescribeRequest(_message.Message):
-    __slots__ = ("battery_id", "readings", "age_cycles", "last_maintenance_date", "ticket_history", "enrich")
+    __slots__ = ("battery_id", "readings", "age_cycles", "last_maintenance_date", "ticket_history", "enrich", "pack_config")
     BATTERY_ID_FIELD_NUMBER: _ClassVar[int]
     READINGS_FIELD_NUMBER: _ClassVar[int]
     AGE_CYCLES_FIELD_NUMBER: _ClassVar[int]
     LAST_MAINTENANCE_DATE_FIELD_NUMBER: _ClassVar[int]
     TICKET_HISTORY_FIELD_NUMBER: _ClassVar[int]
     ENRICH_FIELD_NUMBER: _ClassVar[int]
+    PACK_CONFIG_FIELD_NUMBER: _ClassVar[int]
     battery_id: str
     readings: _containers.RepeatedCompositeFieldContainer[Reading]
     age_cycles: int
     last_maintenance_date: str
     ticket_history: _containers.RepeatedScalarFieldContainer[str]
     enrich: bool
-    def __init__(self, battery_id: _Optional[str] = ..., readings: _Optional[_Iterable[_Union[Reading, _Mapping]]] = ..., age_cycles: _Optional[int] = ..., last_maintenance_date: _Optional[str] = ..., ticket_history: _Optional[_Iterable[str]] = ..., enrich: _Optional[bool] = ...) -> None: ...
+    pack_config: PackConfig
+    def __init__(self, battery_id: _Optional[str] = ..., readings: _Optional[_Iterable[_Union[Reading, _Mapping]]] = ..., age_cycles: _Optional[int] = ..., last_maintenance_date: _Optional[str] = ..., ticket_history: _Optional[_Iterable[str]] = ..., enrich: _Optional[bool] = ..., pack_config: _Optional[_Union[PackConfig, _Mapping]] = ...) -> None: ...
 
 class RetrievedDoc(_message.Message):
     __slots__ = ("title", "content", "source", "relevance_score")

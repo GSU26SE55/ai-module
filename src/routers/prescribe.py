@@ -23,6 +23,7 @@ async def prescribe(request: PrescribeRequest) -> dict:
         readings              = request.readings,
         battery_id            = request.battery_id,
         enrich                = request.enrich,
+        n_series              = request.pack_config.n_series if request.pack_config else 1,
         age_cycles            = request.age_cycles,
         last_maintenance_date = request.last_maintenance_date,
         ticket_history        = request.ticket_history,

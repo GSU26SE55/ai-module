@@ -36,6 +36,18 @@ DEFAULT_PORT = 50051
 # the same payloads FastAPI serves. Map them 1:1 onto the proto messages.
 
 
+def _pack_config_dict(pack_config) -> dict:
+    """GH-65: proto PackConfig → dict for the shared Pydantic schema.
+
+    proto3 scalar semantics: n_series=0 means "not set" → treat as 1 (single
+    cell) instead of failing the ge=1 constraint, so `pack_config {chemistry:
+    "NMC"}` behaves like REST's `{"chemistry": "NMC"}` (n_series defaults)."""
+    return {
+        "n_series": pack_config.n_series or 1,
+        "chemistry": pack_config.chemistry or None,
+    }
+
+
 def _to_warning_items(warnings: list[dict]) -> list[ai_service_pb2.WarningItem]:
     return [
         ai_service_pb2.WarningItem(
@@ -94,6 +106,7 @@ def _to_predict_response(
             window_size=metadata["window_size"],
             input_features=metadata["input_features"],
             inference_ms=metadata["inference_ms"],
+            n_series=metadata["n_series"],
         ),
         # Flat backward-compat fields — identical to the REST payload
         soh_percent=result["soh_percent"],
@@ -185,13 +198,13 @@ class AiServiceServicer(ai_service_pb2_grpc.AiServiceServicer):
             ]
         else:
             readings = [list(r.values) for r in request.readings]
-        parsed = _validate(
-            PredictRequest,
-            {"battery_id": request.battery_id, "readings": readings},
-            context,
-        )
+        payload = {"battery_id": request.battery_id, "readings": readings}
+        if request.HasField("pack_config"):
+            payload["pack_config"] = _pack_config_dict(request.pack_config)
+        parsed = _validate(PredictRequest, payload, context)
+        n_series = parsed.pack_config.n_series if parsed.pack_config else 1
         try:
-            result = run_inference(parsed.readings)
+            result = run_inference(parsed.readings, n_series=n_series)
         except Exception as exc:
             logger.exception("Predict failed")
             context.abort(grpc.StatusCode.INTERNAL, f"inference failed: {exc}")
@@ -212,12 +225,15 @@ class AiServiceServicer(ai_service_pb2_grpc.AiServiceServicer):
             payload["age_cycles"] = request.age_cycles
         if request.HasField("last_maintenance_date"):
             payload["last_maintenance_date"] = request.last_maintenance_date
+        if request.HasField("pack_config"):
+            payload["pack_config"] = _pack_config_dict(request.pack_config)
         parsed = _validate(PrescribeRequest, payload, context)
         try:
             result = run_prescription(
                 readings=parsed.readings,
                 battery_id=parsed.battery_id,
                 enrich=parsed.enrich,
+                n_series=parsed.pack_config.n_series if parsed.pack_config else 1,
                 age_cycles=parsed.age_cycles,
                 last_maintenance_date=parsed.last_maintenance_date,
                 ticket_history=parsed.ticket_history,

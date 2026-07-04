@@ -120,7 +120,14 @@ def main() -> int:
     server.start()
     stub = pb_grpc.AiServiceStub(grpc.insecure_channel(f"localhost:{port}"))
 
-    readings_lists = np.random.rand(WINDOW_SIZE, len(BASE_FEATURES)).tolist()
+    # GH-66: readings must be physically realistic — the input range guard rejects
+    # rand()∈[0,1) rows (voltage < 2.0V floor). Same shape/latency, valid values.
+    rows = np.random.rand(WINDOW_SIZE, len(BASE_FEATURES))
+    rows[:, 0] = 3.5 + rows[:, 0] * 0.6  # voltage [3.5, 4.1] V
+    rows[:, 1] = -2.0 + rows[:, 1] * 4.0  # current [-2, 2] A
+    rows[:, 2] = 20.0 + rows[:, 2] * 10.0  # temperature [20, 30] °C
+    rows[:, 3] = np.arange(WINDOW_SIZE) * 10.0  # time (s, cumulative)
+    readings_lists = rows.tolist()
     readings_proto = [pb.Reading(values=row) for row in readings_lists]
     predict_req = pb.PredictRequest(battery_id="B0005", readings=readings_proto)
     prescribe_req = pb.PrescribeRequest(

@@ -1,6 +1,17 @@
-from pydantic import BaseModel, ConfigDict, field_validator
+import math
 
-from src.core.config import BASE_FEATURES, FEATURES, INPUT_FEATURES, WINDOW_SIZE
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from src.core.config import (
+    BASE_FEATURES,
+    CURRENT_RANGE,
+    FEATURES,
+    INPUT_FEATURES,
+    SOC_RANGE,
+    TEMPERATURE_RANGE,
+    VOLTAGE_CELL_RANGE,
+    WINDOW_SIZE,
+)
 
 
 LEGACY_INPUT_FEATURES = 3
@@ -29,6 +40,20 @@ class ReadingObject(BaseModel):
     soc_percent: float | None = None
 
 
+class PackConfig(BaseModel):
+    """GH-65: pack-to-cell normalization for multi-cell packs (e.g. 12V ≈ 3S NMC).
+
+    voltage_cell = voltage_pack / n_series is applied BEFORE the scaler and BEFORE
+    warning thresholds (current is unchanged — series pack; temperature unchanged).
+    chemistry is trace metadata only: LiFePO4's flat 3.2-3.3V curve differs from the
+    NMC 18650 cells the model was trained on — accuracy validation is GH-67."""
+
+    n_series: int = Field(
+        1, ge=1, description="cells in series; 1 = single cell (default, legacy behavior)"
+    )
+    chemistry: str | None = None
+
+
 class PredictRequest(BaseModel):
     battery_id: str
     readings: list[list[float]] | list[ReadingObject]
@@ -37,6 +62,7 @@ class PredictRequest(BaseModel):
     # positional list[list[float]] — normalized to the latter in the validator
     # below, so every downstream consumer (run_inference, grpc_server, ...)
     # keeps seeing plain float rows and needs no changes.
+    pack_config: PackConfig | None = None
 
     @field_validator("readings")
     @classmethod
@@ -86,7 +112,60 @@ class PredictRequest(BaseModel):
                     f"readings[{i}] must have one of {sorted(allowed_feature_counts)} feature counts "
                     f"{feature_descriptions}, got {len(row)}"
                 )
+            # GH-66: Pydantic's plain `float` lets NaN/Inf through — reject them
+            # here, before any range math (NaN comparisons are silently False).
+            for j, value in enumerate(row):
+                if not math.isfinite(value):
+                    raise ValueError(
+                        f"readings[{i}].{FEATURES[j]} is {value} — "
+                        "NaN/Inf is not a valid sensor value"
+                    )
         return v
+
+    @model_validator(mode="after")
+    def validate_reading_ranges(self) -> "PredictRequest":
+        """GH-66: value-range guard — reject out-of-distribution readings (422 REST /
+        INVALID_ARGUMENT gRPC via the shared schema) instead of letting the scaler
+        transform them outside [0,1] and silently predicting garbage SOH.
+
+        Voltage is checked PER-CELL, i.e. after dividing by pack_config.n_series
+        (GH-65) — so a 12V pack with n_series=3 passes, while 12V without
+        pack_config is rejected with a hint. Ranges: src/core/config.py.
+        `time` has no range (finite-checked above); cycle_count keeps GH-59 clip."""
+        n_series = self.pack_config.n_series if self.pack_config else 1
+        v_lo, v_hi = VOLTAGE_CELL_RANGE
+        i_lo, i_hi = CURRENT_RANGE
+        t_lo, t_hi = TEMPERATURE_RANGE
+        s_lo, s_hi = SOC_RANGE
+        for i, row in enumerate(self.readings):
+            v_cell = row[0] / n_series
+            if not v_lo <= v_cell <= v_hi:
+                hint = (
+                    " — if this is a multi-cell pack (e.g. 12V ~ 3S), send "
+                    "pack_config.n_series so voltage can be normalized per-cell"
+                    if n_series == 1
+                    else f" (pack voltage {row[0]} / n_series {n_series})"
+                )
+                raise ValueError(
+                    f"readings[{i}].voltage: per-cell value {v_cell:.3f} V outside "
+                    f"allowed range [{v_lo}, {v_hi}] V{hint}"
+                )
+            if not i_lo <= row[1] <= i_hi:
+                raise ValueError(
+                    f"readings[{i}].current={row[1]} A outside allowed range "
+                    f"[{i_lo}, {i_hi}] A"
+                )
+            if not t_lo <= row[2] <= t_hi:
+                raise ValueError(
+                    f"readings[{i}].temperature={row[2]} °C outside allowed range "
+                    f"[{t_lo}, {t_hi}] °C"
+                )
+            if len(row) >= 6 and not s_lo <= row[5] <= s_hi:
+                raise ValueError(
+                    f"readings[{i}].soc_percent={row[5]} outside allowed range "
+                    f"[{s_lo}, {s_hi}]"
+                )
+        return self
 
 
 class WarningItem(BaseModel):
@@ -138,6 +217,7 @@ class ResponseMetadata(BaseModel):
     window_size: int
     input_features: int
     inference_ms: float
+    n_series: int = 1  # GH-65: pack→cell divisor applied to voltage (1 = single cell)
 
 
 class PredictResponse(BaseModel):
