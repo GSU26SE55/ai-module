@@ -1,0 +1,120 @@
+{
+  "seed": 42,
+  "rate_threshold": 0.4832742507716815,
+  "labels": {
+    "rate": {
+      "val": {
+        "n_windows": 1536,
+        "pos_rate": 0.3548,
+        "rules": {
+          "score<=-0.1": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0
+          },
+          "score<=-0.3": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0
+          },
+          "predict==-1": {
+            "precision": 0.4,
+            "recall": 0.0404,
+            "f1": 0.0733
+          }
+        }
+      },
+      "test": {
+        "n_windows": 768,
+        "pos_rate": 0.2057,
+        "rules": {
+          "score<=-0.1": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0
+          },
+          "score<=-0.3": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0
+          },
+          "predict==-1": {
+            "precision": 0.2609,
+            "recall": 0.038,
+            "f1": 0.0663
+          }
+        }
+      },
+      "tuned": {
+        "threshold": 0.2134,
+        "val": {
+          "precision": 0.3566,
+          "recall": 0.9945,
+          "f1": 0.5249
+        },
+        "test": {
+          "precision": 0.2063,
+          "recall": 1.0,
+          "f1": 0.342
+        }
+      }
+    },
+    "eol": {
+      "val": {
+        "n_windows": 1536,
+        "pos_rate": 0.9792,
+        "rules": {
+          "score<=-0.1": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0
+          },
+          "score<=-0.3": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0
+          },
+          "predict==-1": {
+            "precision": 1.0,
+            "recall": 0.0366,
+            "f1": 0.0706
+          }
+        }
+      },
+      "test": {
+        "n_windows": 768,
+        "pos_rate": 0.9792,
+        "rules": {
+          "score<=-0.1": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0
+          },
+          "score<=-0.3": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0
+          },
+          "predict==-1": {
+            "precision": 1.0,
+            "recall": 0.0306,
+            "f1": 0.0594
+          }
+        }
+      },
+      "tuned": {
+        "threshold": 0.2134,
+        "val": {
+          "precision": 0.9803,
+          "recall": 0.9907,
+          "f1": 0.9854
+        },
+        "test": {
+          "precision": 0.9791,
+          "recall": 0.9973,
+          "f1": 0.9881
+        }
+      }
+    }
+  }
+}

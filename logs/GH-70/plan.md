@@ -1,7 +1,7 @@
 # Plan — GH-70: [NCKH] Anomaly evaluation — ground truth + scripts/eval_anomaly.py → Table 5
 
 ## Metadata
-- **Status:** IN_PROGRESS | **Role:** AI | **Ngày:** 2026-07-04
+- **Status:** REVIEWING | **Role:** AI | **Ngày:** 2026-07-04
 - **Issue:** #70 — [NCKH] Anomaly evaluation — định nghĩa ground truth EOL-based + scripts/eval_anomaly.py → Table 5 (F1 > 0.80)
 - **Sprint:** NCKH paper (không milestone) — deadline: chốt định nghĩa với GVHD **trước 8/7**, có số **trước 13/7**
 
@@ -83,12 +83,20 @@ Viết được 2–3 câu cho Section 3.5: *"Since the NASA dataset lacks fault
 
 ## Steps
 - [x] **Bước 0 (GATE):** Mang phát hiện degenerate + 2 định nghĩa đi chốt với GVHD — GVHD đã duyệt định nghĩa rate-based per-battery — 2026-07-04
-- [ ] Bước 1: Viết hàm gán nhãn (rate-based per-battery + eol-based) + replay cycle→window mapping với assert
-- [ ] Bước 2: Fit IsolationForest trên train X_feat, tính score + P/R/F1 val/test theo 3 prediction rule
-- [ ] Bước 3: Threshold sweep trên val (chỉ khi F1 < 0.80) → report tuned trên test
-- [ ] Bước 4: Vẽ Figure F6 (histogram + ngưỡng) → PDF/SVG
-- [ ] Bước 5: Xuất `logs/nckh/anomaly/{results.json, table5.md, figure_f6.pdf/svg}`
-- [ ] Bước 6: Unit test hàm label + hàm chọn ngưỡng; `ruff` + `pytest` PASS
+- [x] Bước 1: Viết hàm gán nhãn (rate-based per-battery + eol-based) + replay cycle→window mapping với assert — 2026-07-04
+- [x] Bước 2: Fit IsolationForest trên train X_feat, tính score + P/R/F1 val/test theo 3 prediction rule — 2026-07-04
+- [x] Bước 3: Threshold sweep trên val (F1 < 0.80 → đã tuning, val-only) → report tuned trên test — 2026-07-04
+- [x] Bước 4: Vẽ Figure F6 (histogram + ngưỡng) → PDF/SVG — 2026-07-04
+- [x] Bước 5: Xuất `logs/nckh/anomaly/{results.json, table5.md, figure_f6.pdf/svg}` — 2026-07-04
+- [x] Bước 6: Unit test hàm label + hàm chọn ngưỡng; `ruff` + `pytest` PASS (7/7) — 2026-07-04
+
+## Kết quả thực tế (2026-07-04) — ⚠️ F1 target KHÔNG đạt, cần trao đổi GVHD
+
+Số chính thức trong `logs/nckh/anomaly/table5.md`. Tóm tắt:
+- **Rate label (primary):** class balance đã hết degenerate (val 35.5% / test 20.6% positive) ✓, nhưng IsolationForest score gần như không tương quan với nhãn — F1 = 0.000 ở cả 2 ngưỡng documented (−0.1/−0.3), tuned trên val chỉ đạt **F1 val 0.525 / test 0.342** (< 0.80).
+- **Nguyên nhân (đã verify, không phải bug):** score distribution val/test nằm hoàn toàn trong [−0.075, 0.22] — **không window nào chạm −0.1**, ngưỡng mapping production không bao giờ kích hoạt trên 4°C data. Train có đúng 10% score < 0 (contamination hoạt động đúng). IsolationForest phát hiện outlier trong feature space, không phát hiện chế độ suy thoái nhanh (temporal).
+- **EOL label (secondary):** tuned F1 0.985/0.988 — con số đẹp nhưng là artifact của 97.9% positive (predict-all đạt tương đương), không dùng làm headline được.
+- Threshold tuning chỉ trên val, không nhìn test — báo cáo trung thực cả default lẫn tuned theo đúng plan.
 
 ## Câu hỏi đã giải đáp
 1. **GVHD đã duyệt định nghĩa chưa?** → Chưa. Plan viết trước kèm option analysis; implement chờ thầy duyệt (Bước 0 là gate).

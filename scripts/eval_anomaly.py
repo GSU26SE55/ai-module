@@ -210,8 +210,8 @@ def main() -> None:
             }
             if max(pos_rate, 1 - pos_rate) > DEGENERATE_BALANCE:
                 print(
-                    f"⚠️  {label_def}/{split}: {max(pos_rate, 1 - pos_rate):.1%} single-class "
-                    "— metrics degenerate, escalate to GVHD before using in the paper."
+                    f"WARNING {label_def}/{split}: {max(pos_rate, 1 - pos_rate):.1%} single-class "
+                    "- metrics degenerate, escalate to GVHD before using in the paper."
                 )
         # Threshold tuning on VAL ONLY when no default rule reaches the target
         if max(r["f1"] for r in entry["val"]["rules"].values()) < TARGET_F1:
@@ -224,7 +224,7 @@ def main() -> None:
                 "test": evaluate(y_test, scores["test"] <= thr),
             }
             print(
-                f"{label_def}: default F1 < {TARGET_F1} → tuned on val: thr={thr:.4f}, F1={val_f1:.4f}"
+                f"{label_def}: default F1 < {TARGET_F1} -> tuned on val: thr={thr:.4f}, F1={val_f1:.4f}"
             )
         results["labels"][label_def] = entry
 
@@ -256,7 +256,9 @@ def main() -> None:
         fig.savefig(os.path.join(args.output_dir, f"figure_f6.{ext}"))
     plt.close(fig)
 
-    with open(os.path.join(args.output_dir, "results.json"), "w") as f:
+    with open(
+        os.path.join(args.output_dir, "results.json"), "w", encoding="utf-8"
+    ) as f:
         json.dump(results, f, indent=2)
 
     # Table 5 — markdown, paste-ready for the paper
@@ -298,7 +300,7 @@ def main() -> None:
         "real fault annotations; results measure separation of degradation regimes rather",
         "than field sensor-fault detection.",
     ]
-    with open(os.path.join(args.output_dir, "table5.md"), "w") as f:
+    with open(os.path.join(args.output_dir, "table5.md"), "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
 
     print(f"\nSaved results.json, table5.md, figure_f6.pdf/svg -> {args.output_dir}")
