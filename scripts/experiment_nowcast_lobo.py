@@ -48,7 +48,7 @@ def load_cycles_safe(data_dir, bid, min_cycles):
 
 def run_fold(held, train_cycles, test_cycles, epochs, device, logger, official_mamba=False):
     """Train on train_cycles, eval on held-out test_cycles. Returns (mae, rmse, n_test)."""
-    raw = np.concatenate([c for c, _ in train_cycles], axis=0)
+    raw = np.concatenate([c for c, _, _ in train_cycles], axis=0)
     minmax = MinMaxScaler().fit(raw)
     Xtr, Ftr_raw, ytr = cycles_to_windows(train_cycles, minmax)
     Xte, Fte_raw, yte = cycles_to_windows(test_cycles, minmax)
