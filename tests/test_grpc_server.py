@@ -25,16 +25,35 @@ BASE_N = len(
     BASE_FEATURES
 )  # GH-54: API payload width (4) — model input is INPUT_FEATURES (6)
 
+# GH-66: values must be physically realistic — the range guard rejects the old
+# rand()∈[0,1) rows (voltage 0.37V < 2.0V floor). Deterministic (seed 42).
+_rng = np.random.RandomState(42)
 VALID_READINGS = [
-    pb.Reading(values=np.random.RandomState(42).rand(BASE_N).tolist())
-    for _ in range(WINDOW_SIZE)
+    pb.Reading(
+        values=[
+            3.5 + 0.6 * _rng.rand(),  # voltage [3.5, 4.1] V — under the 4.15V warning line
+            -2.0 + 4.0 * _rng.rand(),  # current [-2, 2] A
+            20.0 + 10.0 * _rng.rand(),  # temperature [20, 30] °C
+            float(i * 10),  # time (s, cumulative)
+        ]
+    )
+    for i in range(WINDOW_SIZE)
 ]
 
 # GH-56 — 6-col payload: BE sends cycle_count (constant, raw index) + soc_percent
 # (raw 0-100, varies per timestep) as columns 5-6 instead of AI deriving them.
 _rng6 = np.random.RandomState(42)
 VALID_READINGS_6COL = [
-    pb.Reading(values=[*_rng6.rand(BASE_N).tolist(), 42.0, 100.0 - i])
+    pb.Reading(
+        values=[
+            3.5 + 0.6 * _rng6.rand(),
+            -2.0 + 4.0 * _rng6.rand(),
+            20.0 + 10.0 * _rng6.rand(),
+            float(i * 10),
+            42.0,
+            100.0 - i,
+        ]
+    )
     for i in range(WINDOW_SIZE)
 ]
 
@@ -94,6 +113,7 @@ FIXED_PREDICT_RESULT = {
         "window_size": WINDOW_SIZE,
         "input_features": INPUT_FEATURES,
         "inference_ms": 12.3,
+        "n_series": 1,  # GH-65
     },
     "soh_percent": 87.5,
     "classification": "Normal",
@@ -673,3 +693,95 @@ def test_predict_grpc_transport_overhead(grpc_stub, dummy_models):
     )
     assert overhead < 50, f"gRPC transport overhead too high: {overhead:.1f}ms >= 50ms"
     assert grpc_avg < 500, f"gRPC Predict too slow: {grpc_avg:.1f}ms >= 500ms"
+
+
+# ── pack_config pack→cell (GH-65) + range guard (GH-66) ─────────────────
+
+_12V_READINGS = [
+    pb.Reading(values=[r.values[0] * 3, r.values[1], r.values[2], r.values[3]])
+    for r in VALID_READINGS
+]
+
+
+def test_predict_12v_without_pack_config_aborts_with_hint(grpc_stub):
+    with pytest.raises(grpc.RpcError) as exc_info:
+        grpc_stub.Predict(pb.PredictRequest(battery_id="PACK", readings=_12V_READINGS))
+    assert exc_info.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    assert "pack_config" in exc_info.value.details()
+
+
+def test_predict_12v_with_n_series_3_ok_and_traced(servicer):
+    resp = servicer.Predict(
+        pb.PredictRequest(
+            battery_id="PACK",
+            readings=_12V_READINGS,
+            pack_config=pb.PackConfig(n_series=3, chemistry="NMC"),
+        ),
+        None,
+    )
+    assert resp.metadata.n_series == 3
+    assert 0.0 <= resp.soh_percent <= 100.0
+    # per-cell voltage back in the trained range → no OVERVOLTAGE false alarm
+    assert not any("OVERVOLTAGE" in w.code for w in resp.evidence.warnings)
+
+
+def test_predict_pack_config_chemistry_only_defaults_n_series_1(servicer):
+    """proto3: n_series unset (0) inside a set pack_config → treated as 1."""
+    resp = servicer.Predict(
+        pb.PredictRequest(
+            battery_id="B0005",
+            readings=VALID_READINGS,
+            pack_config=pb.PackConfig(chemistry="NMC"),
+        ),
+        None,
+    )
+    assert resp.metadata.n_series == 1
+
+
+def test_predict_out_of_range_parity_with_rest(grpc_stub, rest_client):
+    """GH-66 parity: the same violating payload → REST 422, gRPC INVALID_ARGUMENT,
+    both naming the offending field."""
+    bad_rows = [list(r.values) for r in VALID_READINGS]
+    bad_rows[3][2] = 75.0  # temperature above 60°C ceiling
+    rest_resp = rest_client.post(
+        "/predict/", json={"battery_id": "B0005", "readings": bad_rows}
+    )
+    assert rest_resp.status_code == 422
+    assert "temperature" in str(rest_resp.json())
+    with pytest.raises(grpc.RpcError) as exc_info:
+        grpc_stub.Predict(
+            pb.PredictRequest(
+                battery_id="B0005",
+                readings=[pb.Reading(values=r) for r in bad_rows],
+            )
+        )
+    assert exc_info.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    assert "temperature" in exc_info.value.details()
+
+
+def test_predict_nan_aborts_invalid_argument(grpc_stub):
+    rows = [list(r.values) for r in VALID_READINGS]
+    rows[0][0] = float("nan")
+    with pytest.raises(grpc.RpcError) as exc_info:
+        grpc_stub.Predict(
+            pb.PredictRequest(
+                battery_id="B0005", readings=[pb.Reading(values=r) for r in rows]
+            )
+        )
+    assert exc_info.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    assert "NaN" in exc_info.value.details()
+
+
+def test_prescribe_forwards_pack_config(servicer):
+    with patch(
+        "src.grpc_server.run_prescription", return_value=FIXED_PRESCRIBE_RESULT
+    ) as mock_rx:
+        servicer.Prescribe(
+            pb.PrescribeRequest(
+                battery_id="PACK",
+                readings=_12V_READINGS,
+                pack_config=pb.PackConfig(n_series=3),
+            ),
+            None,
+        )
+    assert mock_rx.call_args.kwargs["n_series"] == 3

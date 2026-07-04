@@ -133,7 +133,11 @@ def _append_derived_features(
     )
 
 
-def run_inference(readings: list[list[float]], cycle_idx: int | None = None) -> dict:
+def run_inference(
+    readings: list[list[float]],
+    cycle_idx: int | None = None,
+    n_series: int = 1,
+) -> dict:
     """
     Full inference pipeline: scale → Mamba SOH → IsolationForest → classify.
 
@@ -145,6 +149,11 @@ def run_inference(readings: list[list[float]], cycle_idx: int | None = None) -> 
         cycle_idx: 0-based discharge-cycle number of this battery, only used when
                    readings has 4 (or 3) columns (default None → cycle_count feature = 0).
                    Ignored when readings already carries 6 columns.
+        n_series:  GH-65: cells in series (pack_config.n_series). Voltage arrives as
+                   pack voltage and is divided per-cell HERE, before the scaler and
+                   before warning thresholds — so a 12V/3S pack is scored on the
+                   ~4V cell distribution the model was trained on. 1 = single cell
+                   (default, legacy behavior unchanged).
 
     Returns:
         dict with soh_percent, classification, confidence, inference_ms,
@@ -154,6 +163,11 @@ def run_inference(readings: list[list[float]], cycle_idx: int | None = None) -> 
     start = time.perf_counter()
 
     raw = np.array(readings, dtype=np.float32)  # (30, F) — keep for warnings + summary
+    if n_series > 1:
+        # GH-65: pack → per-cell voltage. In-place on the raw copy so EVERYTHING
+        # downstream (scaler, anomaly thresholds, feature_summary) sees per-cell
+        # values; current (series pack) and temperature stay as sent.
+        raw[:, BASE_FEATURES.index("voltage")] /= n_series
     x = _align_features(raw)  # (30, F_scaler)
     x_scaled = model_loader.scaler.transform(x)
     x_model = _append_derived_features(x_scaled, raw, cycle_idx)  # (30, 6) — GH-54
@@ -239,6 +253,7 @@ def run_inference(readings: list[list[float]], cycle_idx: int | None = None) -> 
         "window_size": WINDOW_SIZE,
         "input_features": INPUT_FEATURES,
         "inference_ms": elapsed_ms,
+        "n_series": n_series,  # GH-65: trace which pack→cell divisor was applied
     }
 
     return {

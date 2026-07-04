@@ -141,3 +141,47 @@ class TestPredictRouter:
         }
         resp = client.post("/predict/", json=payload)
         assert resp.status_code == 422
+
+
+class TestPackConfigRouter:
+    """GH-65 pack→cell + GH-66 range guard through the REST endpoint."""
+
+    def _pack_12v_payload(self):
+        return {
+            "battery_id": "PACK-12V",
+            "readings": [
+                [11.1 + i * 0.003, 1.5, 25.0, float(i)] for i in range(WINDOW_SIZE)
+            ],
+        }
+
+    def test_12v_without_pack_config_rejected_with_hint(self, client):
+        resp = client.post("/predict/", json=self._pack_12v_payload())
+        assert resp.status_code == 422
+        assert "pack_config" in resp.text
+
+    def test_12v_with_n_series_3_ok_and_traced(self, client):
+        payload = self._pack_12v_payload() | {"pack_config": {"n_series": 3}}
+        resp = client.post("/predict/", json=payload)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["metadata"]["n_series"] == 3
+        # feature_summary reflects per-cell voltage (~3.7V), not pack voltage
+        assert body["feature_summary"]["voltage"]["mean"] < 4.5
+
+    def test_out_of_range_temperature_rejected(self, client):
+        payload = self._pack_12v_payload() | {"pack_config": {"n_series": 3}}
+        payload["readings"][5][2] = 75.0
+        resp = client.post("/predict/", json=payload)
+        assert resp.status_code == 422
+        assert "temperature" in resp.text
+
+    def test_nan_rejected(self, client):
+        payload = self._pack_12v_payload() | {"pack_config": {"n_series": 3}}
+        payload["readings"][0][1] = None  # JSON null → not a float → 422
+        resp = client.post("/predict/", json=payload)
+        assert resp.status_code == 422
+
+    def test_prescribe_accepts_pack_config(self, client):
+        payload = self._pack_12v_payload() | {"pack_config": {"n_series": 3}}
+        resp = client.post("/prescribe/", json=payload)
+        assert resp.status_code == 200

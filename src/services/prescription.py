@@ -122,6 +122,7 @@ def run_prescription(
     readings: list[list[float]],
     battery_id: str,
     enrich: bool = False,
+    n_series: int = 1,
     **context_kwargs,
 ) -> dict:
     """
@@ -131,13 +132,14 @@ def run_prescription(
         readings: sensor window passed through to run_inference.
         battery_id: battery identifier.
         enrich: if True, attempt RAG + LLM enrichment (off the P1 hot-path).
+        n_series: GH-65 pack_config.n_series, passed through to run_inference.
         context_kwargs: age_cycles, last_maintenance_date, ticket_history (reserved).
 
     Returns:
         PrescribeResponse-compatible dict.
     """
     # 1. Inference
-    prediction_result = run_inference(readings)
+    prediction_result = run_inference(readings, n_series=n_series)
     prediction = prediction_result.get("prediction", {})
     risk       = prediction_result.get("risk", {})
     warnings   = prediction_result.get("evidence", {}).get("warnings", [])

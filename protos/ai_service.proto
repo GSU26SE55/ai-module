@@ -53,12 +53,23 @@ message ReadingFields {
   optional double soc_percent = 6;
 }
 
+// GH-65: pack-to-cell normalization for multi-cell packs (e.g. 12V ≈ 3S NMC).
+// voltage_cell = voltage_pack / n_series is applied server-side BEFORE the scaler
+// and BEFORE warning thresholds. chemistry is trace metadata only (accuracy on
+// LiFePO4 curves is GH-67). n_series 0/unset is treated as 1 (proto3 default).
+message PackConfig {
+  int32 n_series = 1;
+  string chemistry = 2;
+}
+
 message PredictRequest {
   string battery_id = 1;
   repeated Reading readings = 2;
   // GH-77: named-field alternative to `readings`. If non-empty, takes
   // precedence over `readings` (mirrors REST's Union-type acceptance).
   repeated ReadingFields reading_objects = 3;
+  // GH-65: omit for single-cell (legacy behavior unchanged).
+  PackConfig pack_config = 4;
 }
 
 message WarningItem {
@@ -108,6 +119,8 @@ message ResponseMetadata {
   int32 window_size = 2;
   int32 input_features = 3;
   double inference_ms = 4;
+  // GH-65: pack→cell divisor applied to voltage (1 = single cell).
+  int32 n_series = 5;
 }
 
 message PredictResponse {
@@ -149,6 +162,8 @@ message PrescribeRequest {
   repeated string ticket_history = 5;
   // If true, also run RAG + LLM enrichment (slower, off the P1 hot-path).
   bool enrich = 6;
+  // GH-65: omit for single-cell (legacy behavior unchanged).
+  PackConfig pack_config = 7;
 }
 
 message RetrievedDoc {
