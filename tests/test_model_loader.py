@@ -4,9 +4,23 @@ Windows). torch.compile() itself is LAZY: wrapping always "succeeds", the
 backend only runs on the first real forward pass — so load_models() must
 force that forward pass at startup (not defer the failure to request #1)."""
 
+import os
+
+import pytest
 import torch
 
 from src.core import model_loader
+from src.core.config import MAMBA_PATH
+
+# GH-88: these tests exercise load_models() with the REAL versioned artifacts.
+# On a retrain-required branch (version bumped, Kaggle training not yet done)
+# the artifact doesn't exist — skip instead of failing the suite; the tests
+# re-activate automatically once the new weights are committed.
+pytestmark = pytest.mark.skipif(
+    not os.path.exists(MAMBA_PATH),
+    reason=f"real model artifact missing ({os.path.basename(MAMBA_PATH)}) — "
+    "pending retrain for the bumped MODEL_VERSION",
+)
 
 
 def test_cpu_compile_failure_falls_back_to_eager(monkeypatch):

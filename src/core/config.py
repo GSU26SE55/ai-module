@@ -1,11 +1,11 @@
 import os
 
 MODEL_VERSION = (
-    "1.5"  # v1.5: GH-58 fix spectral feature per-window (was per-cycle, train/serve
-    # mismatch) — retrain bắt buộc. v1.4 artifact stale, KHÔNG dùng cho production.
+    "1.6"  # v1.6: GH-88 split rebalance (B0047 val→train, lấp vùng 4°C SOH 67-84%
+    # gây bias tại ngưỡng EOL) + optional --balance-bands loss — retrain bắt buộc.
 )
-SCALER_VERSION = "1.2"  # v1.2: feature ablation 6→4 (bỏ current_load/voltage_load) — retrain bắt buộc
-FEATURE_SCALER_VERSION = "1.4"  # v1.4: GH-58 tính per-window (was per-cycle) — retrain bắt buộc
+SCALER_VERSION = "1.3"  # v1.3: GH-88 refit trên train set mới (thêm B0047) — retrain bắt buộc
+FEATURE_SCALER_VERSION = "1.5"  # v1.5: GH-88 refit trên train set mới (thêm B0047) — retrain bắt buộc
 FEATURE_SCALER_VERSION_LONG = (
     "long-2.0"  # long-sequence (8-feature) pipeline — independent of standard
 )
