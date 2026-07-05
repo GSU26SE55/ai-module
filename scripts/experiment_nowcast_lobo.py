@@ -38,6 +38,25 @@ random.seed(SEED); np.random.seed(SEED); torch.manual_seed(SEED)
 torch.cuda.manual_seed_all(SEED)
 
 
+def resolve_device(logger):
+    """cuda nếu GPU được PyTorch build hiện tại hỗ trợ; ngược lại cảnh báo rõ + CPU.
+
+    Kaggle image PyTorch mới chỉ build kernel sm_70+ — chọn accelerator P100 (sm_60)
+    thì is_available() vẫn True nhưng kernel đầu tiên sẽ crash. Đổi sang GPU T4 x2.
+    """
+    if not torch.cuda.is_available():
+        return torch.device("cpu")
+    major, minor = torch.cuda.get_device_capability(0)
+    archs = [int(a.split("_")[1]) for a in torch.cuda.get_arch_list() if a.startswith("sm_")]
+    if archs and major * 10 + minor < min(archs):
+        logger.warning(
+            f"GPU {torch.cuda.get_device_name(0)} (sm_{major}{minor}) khong duoc PyTorch build nay ho tro "
+            f"(min sm_{min(archs)}) — fallback CPU. Tren Kaggle: Settings -> Accelerator -> GPU T4 x2."
+        )
+        return torch.device("cpu")
+    return torch.device("cuda")
+
+
 def load_cycles_safe(data_dir, bid, min_cycles):
     try:
         cyc = load_cycles(data_dir, bid)
@@ -116,7 +135,7 @@ def main():
 
     logger = setup_logger("logs/training")
     logger.info("=== NOWCASTING leave-one-battery-out (GH-13 follow-up) ===")
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = resolve_device(logger)
     logger.info(f"Device: {device}")
 
     if args.pool is not None:

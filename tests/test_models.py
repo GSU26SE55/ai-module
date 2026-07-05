@@ -6,6 +6,7 @@ from src.models.anomaly_detector import (
     classify_anomaly,
     classify_anomaly_status,
     classify_health_stage,
+    classify_health_stage_probabilistic,
     compute_risk_profile,
     estimate_rul,
     generate_warnings,
@@ -226,6 +227,57 @@ class TestClassifyAnomaly:
 
     def test_sensor_anomaly_does_not_affect_failed(self):
         assert classify_anomaly(0.9, 70.0) == "Failed"
+
+
+class TestClassifyHealthStageProbabilistic:
+    """GH-86: stage from the MC Dropout sample distribution, not the mean."""
+
+    def test_clear_majority_healthy(self):
+        result = classify_health_stage_probabilistic([94.0, 95.0, 96.0, 93.5, 95.5])
+        assert result["health_stage"] == "Healthy"
+        assert result["stage_probabilities"]["Healthy"] == 1.0
+        assert result["stage_confidence"] == 1.0
+        assert result["is_borderline"] is False
+
+    def test_borderline_near_eol_threshold(self):
+        # GH-60-like case: samples straddle the 80% EOL threshold
+        samples = [78.5, 79.2, 79.8, 80.3, 80.9, 81.4, 79.5, 80.1, 81.0, 78.9]
+        result = classify_health_stage_probabilistic(samples)
+        assert result["is_borderline"] is True
+        assert result["stage_confidence"] < 0.7
+        probs = result["stage_probabilities"]
+        assert probs["End Of Life"] == 0.5
+        assert probs["Maintenance Required"] == 0.5
+
+    def test_tie_breaks_toward_more_severe_stage(self):
+        # 50/50 split → safety-first: report the more severe stage
+        samples = [79.0, 79.5, 81.0, 81.5]
+        result = classify_health_stage_probabilistic(samples)
+        assert result["health_stage"] == "End Of Life"
+
+    def test_majority_wins_over_mean(self):
+        # Mean is 79.96 (< 80 → point-estimate would say End Of Life), but
+        # 6/10 samples are above the threshold → distribution says Maintenance
+        samples = [70.0, 79.0, 79.6, 80.2, 80.4, 80.6, 80.8, 81.0, 83.0, 85.0]
+        result = classify_health_stage_probabilistic(samples)
+        assert result["health_stage"] == "Maintenance Required"
+        assert result["stage_probabilities"]["End Of Life"] == 0.3
+
+    def test_probabilities_sum_to_one(self):
+        result = classify_health_stage_probabilistic([79.0, 84.0, 88.0, 95.0])
+        assert abs(sum(result["stage_probabilities"].values()) - 1.0) < 1e-9
+
+    def test_samples_clipped_to_valid_range(self):
+        result = classify_health_stage_probabilistic([-5.0, 120.0])
+        probs = result["stage_probabilities"]
+        assert probs["End Of Life"] == 0.5
+        assert probs["Healthy"] == 0.5
+
+    def test_empty_samples_raise(self):
+        import pytest
+
+        with pytest.raises(ValueError):
+            classify_health_stage_probabilistic([])
 
 
 class TestRiskProfile:

@@ -53,6 +53,49 @@ def classify_health_stage(soh: float) -> str:
     return "Healthy"
 
 
+# GH-86: reject-option threshold — below this, no stage holds a clear majority
+# of the MC Dropout samples (the estimate sits in a gray zone between two hard
+# thresholds), so the stage is flagged as borderline.
+BORDERLINE_CONFIDENCE = 0.7
+
+# Severe → mild; index order doubles as the tie-break preference (safety-first:
+# when two stages hold the same share of samples, report the more severe one).
+_STAGE_ORDER = ["End Of Life", "Maintenance Required", "Degrading", "Healthy"]
+
+
+def classify_health_stage_probabilistic(mc_preds: list[float]) -> dict:
+    """GH-86: decide health_stage from the MC Dropout sample distribution.
+
+    Each MC sample approximates a draw from the Bayesian posterior over SOH
+    (Gal & Ghahramani, ICML 2016), so the share of samples falling in each
+    stage bin is that stage's probability — deciding by argmax over those
+    shares is robust near the hard thresholds (80/85/90) where the point-
+    estimate mean flips stages on ~2% regression error.
+
+    Thresholds themselves stay in classify_health_stage() — single source.
+
+    Returns dict:
+        health_stage        — argmax stage (ties break toward more severe)
+        stage_probabilities — {stage: share of MC samples}, sums to 1.0
+        stage_confidence    — probability of the chosen stage
+        is_borderline       — True when stage_confidence < BORDERLINE_CONFIDENCE
+    """
+    if not mc_preds:
+        raise ValueError("mc_preds must contain at least one MC Dropout sample")
+    probs = dict.fromkeys(_STAGE_ORDER, 0.0)
+    for s in mc_preds:
+        probs[classify_health_stage(min(100.0, max(0.0, float(s))))] += 1
+    probs = {stage: round(count / len(mc_preds), 3) for stage, count in probs.items()}
+    stage = max(_STAGE_ORDER, key=lambda k: (probs[k], -_STAGE_ORDER.index(k)))
+    confidence = probs[stage]
+    return {
+        "health_stage": stage,
+        "stage_probabilities": probs,
+        "stage_confidence": confidence,
+        "is_borderline": confidence < BORDERLINE_CONFIDENCE,
+    }
+
+
 def classify_anomaly_status(score: float) -> str:
     """Classify IsolationForest score separately from SOH health state."""
     if score <= -0.3:

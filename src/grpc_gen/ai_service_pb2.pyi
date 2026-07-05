@@ -69,7 +69,14 @@ class FeatureStat(_message.Message):
     def __init__(self, mean: _Optional[float] = ..., min: _Optional[float] = ..., max: _Optional[float] = ...) -> None: ...
 
 class PredictionInfo(_message.Message):
-    __slots__ = ("soh_percent", "soh_confidence", "soh_std", "rul_cycles_estimate", "degradation_rate_per_cycle", "soh_trend", "cycles_to_maintenance", "soh_trajectory", "health_stage")
+    __slots__ = ("soh_percent", "soh_confidence", "soh_std", "rul_cycles_estimate", "degradation_rate_per_cycle", "soh_trend", "cycles_to_maintenance", "soh_trajectory", "health_stage", "stage_probabilities", "stage_confidence", "is_borderline")
+    class StageProbabilitiesEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: float
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[float] = ...) -> None: ...
     SOH_PERCENT_FIELD_NUMBER: _ClassVar[int]
     SOH_CONFIDENCE_FIELD_NUMBER: _ClassVar[int]
     SOH_STD_FIELD_NUMBER: _ClassVar[int]
@@ -79,6 +86,9 @@ class PredictionInfo(_message.Message):
     CYCLES_TO_MAINTENANCE_FIELD_NUMBER: _ClassVar[int]
     SOH_TRAJECTORY_FIELD_NUMBER: _ClassVar[int]
     HEALTH_STAGE_FIELD_NUMBER: _ClassVar[int]
+    STAGE_PROBABILITIES_FIELD_NUMBER: _ClassVar[int]
+    STAGE_CONFIDENCE_FIELD_NUMBER: _ClassVar[int]
+    IS_BORDERLINE_FIELD_NUMBER: _ClassVar[int]
     soh_percent: float
     soh_confidence: float
     soh_std: float
@@ -88,7 +98,10 @@ class PredictionInfo(_message.Message):
     cycles_to_maintenance: int
     soh_trajectory: _containers.RepeatedScalarFieldContainer[float]
     health_stage: str
-    def __init__(self, soh_percent: _Optional[float] = ..., soh_confidence: _Optional[float] = ..., soh_std: _Optional[float] = ..., rul_cycles_estimate: _Optional[int] = ..., degradation_rate_per_cycle: _Optional[float] = ..., soh_trend: _Optional[str] = ..., cycles_to_maintenance: _Optional[int] = ..., soh_trajectory: _Optional[_Iterable[float]] = ..., health_stage: _Optional[str] = ...) -> None: ...
+    stage_probabilities: _containers.ScalarMap[str, float]
+    stage_confidence: float
+    is_borderline: bool
+    def __init__(self, soh_percent: _Optional[float] = ..., soh_confidence: _Optional[float] = ..., soh_std: _Optional[float] = ..., rul_cycles_estimate: _Optional[int] = ..., degradation_rate_per_cycle: _Optional[float] = ..., soh_trend: _Optional[str] = ..., cycles_to_maintenance: _Optional[int] = ..., soh_trajectory: _Optional[_Iterable[float]] = ..., health_stage: _Optional[str] = ..., stage_probabilities: _Optional[_Mapping[str, float]] = ..., stage_confidence: _Optional[float] = ..., is_borderline: _Optional[bool] = ...) -> None: ...
 
 class AnomalyInfo(_message.Message):
     __slots__ = ("anomaly_score", "anomaly_status", "anomaly_confidence")

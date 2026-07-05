@@ -26,7 +26,7 @@ from src.features.extractor import (
 from src.models.anomaly_detector import (
     classify_anomaly,
     classify_anomaly_status,
-    classify_health_stage,
+    classify_health_stage_probabilistic,
     compute_degradation_metrics,
     compute_risk_profile,
     generate_warnings,
@@ -203,13 +203,17 @@ def run_inference(
     soh_std = float(np.std(mc_preds))
     # confidence: std=0% → 1.0, std=5% → 0.0 (linear scale)
     soh_confidence = round(float(max(0.0, min(1.0, 1.0 - soh_std / 5.0))), 3)
+    # GH-86: threshold decisions use the median (robust to MC outliers with
+    # n=10); soh_percent stays the mean so reported numbers don't change.
+    soh_median = float(max(0.0, min(100.0, float(np.median(mc_preds)))))
 
     # IsolationForest trained on spectral features (57 dims) — use same features at inference
     score = float(model_loader.iso_model.decision_function(feat_scaled)[0])
-    classification = classify_anomaly(score, soh)
+    classification = classify_anomaly(score, soh_median)
     anomaly_confidence = round(min(1.0, max(0.0, abs(score))), 3)
     # soh_confidence already computed above via MC Dropout
-    health_stage = classify_health_stage(soh)
+    stage_info = classify_health_stage_probabilistic(mc_preds)
+    health_stage = stage_info["health_stage"]
     anomaly_status = classify_anomaly_status(score)
 
     # Degradation metrics — battery-specific rate from multi-cycle window
@@ -238,6 +242,11 @@ def run_inference(
         "cycles_to_maintenance": degradation["cycles_to_maintenance"],
         "soh_trajectory": degradation["soh_trajectory"],
         "health_stage": health_stage,
+        # GH-86: MC-distribution staging — probability per stage, confidence of
+        # the chosen stage, and a borderline flag for the gray zone near 80/85/90
+        "stage_probabilities": stage_info["stage_probabilities"],
+        "stage_confidence": stage_info["stage_confidence"],
+        "is_borderline": stage_info["is_borderline"],
     }
     anomaly = {
         "anomaly_score": round(score, 4),

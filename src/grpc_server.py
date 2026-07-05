@@ -86,6 +86,9 @@ def _to_predict_response(
             cycles_to_maintenance=prediction["cycles_to_maintenance"],
             soh_trajectory=prediction["soh_trajectory"],
             health_stage=prediction["health_stage"],
+            stage_probabilities=prediction["stage_probabilities"],
+            stage_confidence=prediction["stage_confidence"],
+            is_borderline=prediction["is_borderline"],
         ),
         anomaly=ai_service_pb2.AnomalyInfo(
             anomaly_score=anomaly["anomaly_score"],
