@@ -94,6 +94,11 @@ message PredictionInfo {
   int32 cycles_to_maintenance = 7;
   repeated double soh_trajectory = 8;
   string health_stage = 9;
+  // GH-86: MC-distribution staging — probability per stage, confidence of the
+  // chosen stage, and a borderline flag for the gray zone near 80/85/90.
+  map<string, double> stage_probabilities = 10;
+  double stage_confidence = 11;
+  bool is_borderline = 12;
 }
 
 message AnomalyInfo {

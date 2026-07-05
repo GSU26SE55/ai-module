@@ -190,6 +190,10 @@ class PredictionInfo(BaseModel):
     cycles_to_maintenance: int
     soh_trajectory: list[float]
     health_stage: str
+    # GH-86: MC-distribution staging. Defaults keep older cached payloads valid.
+    stage_probabilities: dict[str, float] = {}  # {stage: share of MC samples}
+    stage_confidence: float = 1.0  # probability of the chosen health_stage
+    is_borderline: bool = False  # True when no stage holds a clear majority (<0.7)
 
 
 class AnomalyInfo(BaseModel):

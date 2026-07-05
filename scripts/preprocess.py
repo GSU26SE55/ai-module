@@ -59,13 +59,18 @@ SEED = 42
 NOMINAL_CAPACITY = 2.0
 MIN_SOH = 10.0  # filter failed/incomplete cycles (capacity ≈ 0 at extreme temps)
 
-# 23 train / 2 val / 1 test — NASA cleaned_dataset
-# Val/Test are 4°C (B0046/47/48). The original 15-battery train set had NO 4°C
+# 24 train / 1 val / 1 test — NASA cleaned_dataset
+# Val/Test are 4°C (B0046 / B0048). The original 15-battery train set had NO 4°C
 # cells, so the model had to extrapolate across a temperature domain it never saw
 # — the main cross-battery generalization gap. The 4°C additions below (B0041/45/53
 # /54/55/56) close that gap; B0033/B0034 add the longest degradation curves in the
 # dataset (~197 cycles → highest L=4096 window yield). Different battery ID = different
 # physical cell, so 4°C siblings of the val/test cells are valid train data (no leakage).
+# GH-88: B0047 moved val → train. The six 4°C train cells only span SOH 0–67.2%,
+# while val/test demand predictions up to ~83–86% — the "4°C + high-SOH" region was
+# absent from train, causing systematic underprediction right at the EOL 80% threshold
+# (v1.5: true 82.9% → pred 71–79). B0047 (SOH 0–83.7%) fills that region; B0048 stays
+# fully held out, so the test protocol remains honest. See docs/adr (GH-88).
 # B0025-B0032: 24°C / 43°C, 28-40 cycles, limited degradation but adds temperature diversity
 # B0042-B0044: 22°C, ~65 good cycles after filter, full degradation curve
 # Skipped: B0036 (SOH spikes to 122% — noisy capacity), B0049-B0052 (too short/corrupt)
@@ -93,8 +98,9 @@ TRAIN_IDS = [
     "B0054",
     "B0055",
     "B0056",  # 4°C, 102 cycles each (SOH 37-67) — matches B0048 band
+    "B0047",  # 4°C, SOH 0-83.7% — GH-88: fills the missing 4°C high-SOH region
 ]
-VAL_IDS = ["B0046", "B0047"]  # 4°C, 72 cycles each — held out
+VAL_IDS = ["B0046"]  # 4°C, 72 cycles, SOH 0-86.4% — held out
 TEST_IDS = ["B0048"]  # 4°C, 72 cycles — held out entirely
 
 random.seed(SEED)

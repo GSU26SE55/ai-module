@@ -98,6 +98,25 @@ class TestInferencePipeline:
         result = run_inference(make_dummy_readings())
         assert isinstance(result["soh_percent"], float)
 
+    def test_stage_probabilities_consistent(self):
+        """GH-86 — health_stage must be the argmax of stage_probabilities,
+        stage_confidence its probability, and is_borderline the <0.7 flag."""
+        from src.services.inference import run_inference
+
+        result = run_inference(make_dummy_readings())
+        prediction = result["prediction"]
+        probs = prediction["stage_probabilities"]
+        assert set(probs) == {
+            "End Of Life",
+            "Maintenance Required",
+            "Degrading",
+            "Healthy",
+        }
+        assert abs(sum(probs.values()) - 1.0) < 1e-6
+        assert probs[prediction["health_stage"]] == max(probs.values())
+        assert prediction["stage_confidence"] == probs[prediction["health_stage"]]
+        assert prediction["is_borderline"] == (prediction["stage_confidence"] < 0.7)
+
     def test_confidence_in_range(self):
         from src.services.inference import run_inference
 

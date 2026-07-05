@@ -34,6 +34,7 @@ from torch.utils.data import DataLoader, TensorDataset
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.core.config import (
+    BASE_FEATURES,
     COSINE_T0,
     D_MODEL,
     D_STATE,
@@ -160,7 +161,37 @@ def evaluate(
     mae = torch.mean(torch.abs(pred - y)).item()
     rmse = torch.sqrt(torch.mean((pred - y) ** 2)).item()
     loss = torch.mean(((pred / 100.0) - (y / 100.0)) ** 2).item()
-    return {"mae": round(mae, 4), "rmse": round(rmse, 4), "loss": loss}
+    return {"mae": round(mae, 4), "rmse": round(rmse, 4), "loss": loss, "pred": pred}
+
+
+def _balance_band_weights(
+    X: torch.Tensor,
+    y: torch.Tensor,
+    n_soh_bins: int = 10,
+    n_temp_bins: int = 3,
+    max_weight: float = 5.0,
+) -> torch.Tensor:
+    """GH-88: per-sample loss weights ∝ inverse frequency of the (temp, SOH) bin.
+
+    The train set is heavily imbalanced across the temperature × SOH grid (e.g.
+    "4°C + SOH 80-84%" only entered train with B0047 and is ~4% of windows while
+    being exactly the region the 4°C test battery needs). Inverse-frequency
+    weighting makes each occupied bin contribute equally to the loss instead of
+    letting the dense 24°C mid-SOH mass dominate.
+
+    Bins: scaled per-window mean temperature (X is already MinMax-scaled [0,1])
+    × SOH percent. Weights are computed so their mean is exactly 1.0 (same loss
+    scale as unweighted MSE), then clipped at max_weight so a near-empty bin
+    cannot dominate a batch.
+    """
+    temp_mean = X[:, :, BASE_FEATURES.index("temperature")].mean(dim=1)
+    temp_bin = torch.clamp((temp_mean * n_temp_bins).long(), 0, n_temp_bins - 1)
+    soh_bin = torch.clamp((y / 100.0 * n_soh_bins).long(), 0, n_soh_bins - 1)
+    flat = temp_bin * n_soh_bins + soh_bin
+    counts = torch.bincount(flat, minlength=n_temp_bins * n_soh_bins).float()
+    occupied = int((counts > 0).sum().item())
+    weights = len(y) / (occupied * counts[flat])
+    return torch.clamp(weights, max=max_weight)
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +224,9 @@ def _setup_device_amp(logger: logging.Logger):
     return device, use_amp, amp_scaler, _amp_ctx
 
 
-def train(data_dir: str, epochs: int, log_dir: str) -> None:
+def train(
+    data_dir: str, epochs: int, log_dir: str, balance_bands: bool = False
+) -> None:
     logger = setup_logger(log_dir)
 
     logger.info("Loading data...")
@@ -221,10 +254,21 @@ def train(data_dir: str, epochs: int, log_dir: str) -> None:
     # may consume PyTorch random state, causing different weight initialization
     device, use_amp, amp_scaler, _amp_ctx = _setup_device_amp(logger)
 
+    # GH-88: per-sample weights — ones when disabled so the single loss path
+    # below is numerically identical to plain MSELoss.
+    if balance_bands:
+        w_train = _balance_band_weights(X_train, y_train)
+        logger.info(
+            f"Balance-band weights ON (GH-88): min={w_train.min():.3f} "
+            f"max={w_train.max():.3f} mean={w_train.mean():.3f}"
+        )
+    else:
+        w_train = torch.ones(len(X_train))
+
     loader_gen = torch.Generator()
     loader_gen.manual_seed(SEED)
     train_loader = DataLoader(
-        TensorDataset(X_train, X_feat_train, y_train),
+        TensorDataset(X_train, X_feat_train, y_train, w_train),
         batch_size=BATCH_SIZE,
         shuffle=True,
         pin_memory=use_amp,
@@ -245,7 +289,11 @@ def train(data_dir: str, epochs: int, log_dir: str) -> None:
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode="min", factor=0.5, patience=5, min_lr=1e-6
     )
-    criterion = nn.MSELoss()
+
+    # Weighted MSE — with w=1 (balance_bands off) this equals nn.MSELoss().
+    def criterion(pred, target, w):
+        return (w * (pred - target) ** 2).mean()
+
     GRAD_CLIP = 1.0
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info(f"MambaSOHPredictor — {n_params:,} trainable params")
@@ -266,11 +314,11 @@ def train(data_dir: str, epochs: int, log_dir: str) -> None:
     for epoch in range(1, epochs + 1):
         model.train()
         train_loss = 0.0
-        for X_batch, X_feat_batch, y_batch in train_loader:
+        for X_batch, X_feat_batch, y_batch, w_batch in train_loader:
             optimizer.zero_grad(set_to_none=True)
             with _amp_ctx():
                 pred = model(X_batch.to(device), X_feat_batch.to(device))
-                loss = criterion(pred, (y_batch / 100.0).to(device))
+                loss = criterion(pred, (y_batch / 100.0).to(device), w_batch.to(device))
             amp_scaler.scale(loss).backward()
             amp_scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
@@ -314,6 +362,21 @@ def train(data_dir: str, epochs: int, log_dir: str) -> None:
     logger.info(f"Test MAE : {test_metrics['mae']:.4f}%  (target < 2.0%)")
     logger.info(f"Test RMSE: {test_metrics['rmse']:.4f}%  (target < 3.0%)")
 
+    # GH-88: per-band MAE — expose bias by SOH region (the v1.5 failure mode was
+    # concentrated in the 75-85% band of the 4°C test battery).
+    logger.info("Per-band test MAE:")
+    test_pred = test_metrics["pred"]
+    for lo in range(50, 100, 10):
+        hi = lo + 10
+        mask = (y_test >= lo) & (y_test < hi)
+        if mask.any():
+            band_mae = torch.mean(torch.abs(test_pred[mask] - y_test[mask])).item()
+            band_bias = torch.mean(test_pred[mask] - y_test[mask]).item()
+            logger.info(
+                f"  SOH {lo:>2}-{hi:<3}: n={int(mask.sum()):>4}  "
+                f"MAE={band_mae:.3f}%  bias={band_bias:+.3f}%"
+            )
+
     if test_metrics["mae"] < 2.0 and test_metrics["rmse"] < 3.0:
         logger.info("Target metrics ACHIEVED (MAE < 2%, RMSE < 3%)")
     else:
@@ -334,6 +397,7 @@ def train(data_dir: str, epochs: int, log_dir: str) -> None:
             "d_state": D_STATE,
             "test_mae": test_metrics["mae"],
             "test_rmse": test_metrics["rmse"],
+            "balance_bands": balance_bands,  # GH-88 ablation traceability
         },
         MAMBA_PATH,
     )
@@ -1411,6 +1475,13 @@ def main() -> None:
         "try 16 to ablate). Global D_STATE (window=30 + RUL) stays 16.",
     )
     parser.add_argument(
+        "--balance-bands",
+        action="store_true",
+        help="GH-88: weight samples by inverse (temperature x SOH-band) frequency "
+        "in the standard window-30 path, so rare regions (e.g. 4C high-SOH) "
+        "are not drowned out by the dense 24C mid-SOH mass",
+    )
+    parser.add_argument(
         "--warmup-stages",
         type=_parse_warmup_stages,
         default=None,
@@ -1482,7 +1553,12 @@ def main() -> None:
             stages=args.warmup_stages,
         )
     else:
-        train(args.data_dir or "data/processed", args.epochs, args.log_dir)
+        train(
+            args.data_dir or "data/processed",
+            args.epochs,
+            args.log_dir,
+            balance_bands=args.balance_bands,
+        )
 
 
 if __name__ == "__main__":

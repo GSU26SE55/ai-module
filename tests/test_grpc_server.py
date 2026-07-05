@@ -92,6 +92,15 @@ FIXED_PREDICT_RESULT = {
         "cycles_to_maintenance": 17,
         "soh_trajectory": [87.5, 87.35, 87.2, 87.05, 86.9],
         "health_stage": "mid-life",
+        # GH-86: MC-distribution staging
+        "stage_probabilities": {
+            "End Of Life": 0.0,
+            "Maintenance Required": 0.1,
+            "Degrading": 0.9,
+            "Healthy": 0.0,
+        },
+        "stage_confidence": 0.9,
+        "is_borderline": False,
     },
     "anomaly": {
         "anomaly_score": -0.05,
@@ -491,6 +500,9 @@ def test_predict_parity_with_rest(servicer, rest_client):
             rpc_value = getattr(rpc_block, key)
             if isinstance(value, list) and not isinstance(value, str):
                 rpc_value = list(rpc_value)
+            elif isinstance(value, dict):
+                # proto map fields (GH-86 stage_probabilities) → plain dict
+                rpc_value = dict(rpc_value)
             assert rpc_value == value, f"{field}.{key}"
     # warnings + feature_summary (flat and nested)
     for rpc_w, rest_w in zip(rpc.warnings, rest["warnings"], strict=True):
