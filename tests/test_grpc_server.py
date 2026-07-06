@@ -123,6 +123,8 @@ FIXED_PREDICT_RESULT = {
         "input_features": INPUT_FEATURES,
         "inference_ms": 12.3,
         "n_series": 1,  # GH-65
+        "temperature_domain_distance": 1.0,  # GH-91
+        "is_temperature_ood": False,  # GH-91
     },
     "soh_percent": 87.5,
     "classification": "Normal",
@@ -735,6 +737,26 @@ def test_predict_12v_with_n_series_3_ok_and_traced(servicer):
     assert 0.0 <= resp.soh_percent <= 100.0
     # per-cell voltage back in the trained range → no OVERVOLTAGE false alarm
     assert not any("OVERVOLTAGE" in w.code for w in resp.evidence.warnings)
+
+
+# ── temperature domain distance / OOD flag (GH-91) ──────────────────────
+
+_TEMP_OOD_READINGS = [
+    pb.Reading(values=[r.values[0], r.values[1], 15.0, r.values[3]])
+    for r in VALID_READINGS
+]
+
+
+def test_predict_temperature_ood_flagged_via_grpc(servicer):
+    """15°C — issue #91's motivating example: 9°C from nearest cluster (24°C),
+    beyond TEMPERATURE_OOD_THRESHOLD (5°C) — must be flagged on the production
+    (gRPC) transport."""
+    resp = servicer.Predict(
+        pb.PredictRequest(battery_id="B0005", readings=_TEMP_OOD_READINGS), None
+    )
+    assert resp.metadata.is_temperature_ood is True
+    assert resp.metadata.temperature_domain_distance == 9.0
+    assert any(w.code == "TEMP_OOD" for w in resp.evidence.warnings)
 
 
 def test_predict_pack_config_chemistry_only_defaults_n_series_1(servicer):

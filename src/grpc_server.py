@@ -110,6 +110,8 @@ def _to_predict_response(
             input_features=metadata["input_features"],
             inference_ms=metadata["inference_ms"],
             n_series=metadata["n_series"],
+            temperature_domain_distance=metadata["temperature_domain_distance"],
+            is_temperature_ood=metadata["is_temperature_ood"],
         ),
         # Flat backward-compat fields — identical to the REST payload
         soh_percent=result["soh_percent"],

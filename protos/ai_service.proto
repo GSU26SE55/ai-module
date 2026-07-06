@@ -126,6 +126,10 @@ message ResponseMetadata {
   double inference_ms = 4;
   // GH-65: pack→cell divisor applied to voltage (1 = single cell).
   int32 n_series = 5;
+  // GH-91: distance (°C) to nearest NASA training chamber setpoint (4/24/44°C)
+  // and whether it exceeds the OOD threshold (extrapolation risk).
+  double temperature_domain_distance = 6;
+  bool is_temperature_ood = 7;
 }
 
 message PredictResponse {

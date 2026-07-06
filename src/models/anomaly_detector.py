@@ -1,5 +1,7 @@
 import numpy as np
 
+from src.core.config import TEMPERATURE_OOD_THRESHOLD, TEMPERATURE_TRAIN_CLUSTERS
+
 # ── Thresholds ────────────────────────────────────────────────────────────────
 EOL_SOH = 80.0           # end-of-life threshold (NASA 18650 convention)
 DEGRADATION_RATE = 0.15  # % SOH lost per cycle (NASA B0005-B0007 average)
@@ -266,6 +268,19 @@ def get_recommended_action(classification: str, soh: float) -> str:
     return "MONITOR"
 
 
+def temperature_domain_distance(temps: np.ndarray) -> float:
+    """GH-91: worst-case distance (°C) from any reading in the window to the
+    nearest NASA training chamber setpoint (4/24/44°C). The model never saw
+    temperatures between/beyond these 3 points, so a large distance means the
+    prediction is extrapolating even though the value passed the GH-66 flat
+    range guard. Uses max (not mean) so one anomalous reading in the window
+    isn't averaged away."""
+    distances = [
+        min(abs(float(t) - c) for c in TEMPERATURE_TRAIN_CLUSTERS) for t in temps
+    ]
+    return float(max(distances))
+
+
 def generate_warnings(raw: np.ndarray, soh: float, classification: str) -> list[dict]:
     """
     Rule-based threshold checks on raw (unscaled) sensor readings.
@@ -383,6 +398,21 @@ def generate_warnings(raw: np.ndarray, soh: float, classification: str) -> list[
                 "code": "TEMP_ELEVATED",
                 "severity": "warning",
                 "message": f"Peak temperature {t_max:.1f}°C is elevated (>{TEMP_WARNING}°C).",
+            })
+
+        # GH-91: distinct from the safety thresholds above — flags when the
+        # reading is far from every NASA training chamber setpoint, i.e. the
+        # model is extrapolating, regardless of whether the temperature itself
+        # is safe.
+        domain_dist = temperature_domain_distance(raw[:, 2])
+        if domain_dist > TEMPERATURE_OOD_THRESHOLD:
+            warnings.append({
+                "code": "TEMP_OOD",
+                "severity": "warning",
+                "message": (
+                    f"Temperature {domain_dist:.1f}°C from nearest training "
+                    "cluster (4/24/44°C) — prediction may be extrapolated."
+                ),
             })
 
     # Sort: critical first, then warning

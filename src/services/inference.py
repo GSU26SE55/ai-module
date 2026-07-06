@@ -16,6 +16,7 @@ from src.core.config import (
     INPUT_FEATURES,
     MODEL_VERSION,
     NOMINAL_CAPACITY_AH,
+    TEMPERATURE_OOD_THRESHOLD,
     WINDOW_SIZE,
 )
 from src.features.extractor import (
@@ -30,6 +31,7 @@ from src.models.anomaly_detector import (
     compute_degradation_metrics,
     compute_risk_profile,
     generate_warnings,
+    temperature_domain_distance,
 )
 
 _FEATURE_NAMES = FEATURES  # single source of truth: src/core/config.py
@@ -222,6 +224,10 @@ def run_inference(
     degradation = compute_degradation_metrics(raw, soh)
     warnings = generate_warnings(raw, soh, classification)
     feature_summary = _compute_feature_summary(raw)
+    # GH-91: distance from the window's temperature to the nearest NASA
+    # training chamber setpoint (4/24/44°C) — also drives the TEMP_OOD
+    # warning inside generate_warnings() above (same helper, same threshold).
+    temp_domain_dist = temperature_domain_distance(raw[:, 2])
     risk = compute_risk_profile(
         health_stage=health_stage,
         anomaly_status=anomaly_status,
@@ -263,6 +269,8 @@ def run_inference(
         "input_features": INPUT_FEATURES,
         "inference_ms": elapsed_ms,
         "n_series": n_series,  # GH-65: trace which pack→cell divisor was applied
+        "temperature_domain_distance": round(temp_domain_dist, 2),  # GH-91
+        "is_temperature_ood": temp_domain_dist > TEMPERATURE_OOD_THRESHOLD,  # GH-91
     }
 
     return {
