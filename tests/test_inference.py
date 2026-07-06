@@ -176,6 +176,25 @@ class TestInferencePipeline:
         assert "warnings" in result["evidence"]
         assert "model_version" in result["metadata"]
 
+    def test_temperature_ood_flag_false_at_training_cluster(self):
+        from src.services.inference import run_inference
+
+        readings = [[3.7 + i * 0.001, 1.5, 24.0, float(i)] for i in range(WINDOW_SIZE)]
+        result = run_inference(readings)
+        assert result["metadata"]["is_temperature_ood"] is False
+        assert result["metadata"]["temperature_domain_distance"] == 0.0
+        assert "TEMP_OOD" not in [w["code"] for w in result["evidence"]["warnings"]]
+
+    def test_temperature_ood_flag_true_between_clusters(self):
+        from src.services.inference import run_inference
+
+        # 15°C: motivating example from issue #91 — 9°C from nearest cluster (24°C)
+        readings = [[3.7 + i * 0.001, 1.5, 15.0, float(i)] for i in range(WINDOW_SIZE)]
+        result = run_inference(readings)
+        assert result["metadata"]["is_temperature_ood"] is True
+        assert result["metadata"]["temperature_domain_distance"] == 9.0
+        assert "TEMP_OOD" in [w["code"] for w in result["evidence"]["warnings"]]
+
     def test_rul_is_non_negative_int(self):
         from src.services.inference import run_inference
 

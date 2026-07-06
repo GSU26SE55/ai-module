@@ -30,6 +30,13 @@ VOLTAGE_CELL_RANGE = (2.0, 4.5)  # V per-cell — check SAU khi chia pack_config
 CURRENT_RANGE = (-5.0, 5.0)  # A
 TEMPERATURE_RANGE = (-10.0, 60.0)  # °C
 SOC_RANGE = (0.0, 100.0)  # %
+
+# GH-91: model was only ever trained at 3 discrete NASA chamber setpoints —
+# a value inside TEMPERATURE_RANGE but far from all 3 (e.g. 15°C) still passes
+# the range guard above yet is silent extrapolation. Flag it instead of letting
+# it look in-distribution.
+TEMPERATURE_TRAIN_CLUSTERS = (4.0, 24.0, 44.0)  # °C — NASA chamber setpoints
+TEMPERATURE_OOD_THRESHOLD = 5.0  # °C — max allowed distance to nearest cluster
 INPUT_FEATURES = 6  # model input dim = 4 base (BASE_FEATURES, API payload) + 2 derived (GH-54: cycle_count, soc_percent)
 CYCLE_COUNT_NORM = 200.0  # GH-54: chia cycle_idx cho hằng số này (cycle dài nhất quan sát ~197, B0033/34); KHÔNG clip >1
 NOMINAL_CAPACITY_AH = (

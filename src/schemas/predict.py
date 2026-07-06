@@ -222,6 +222,11 @@ class ResponseMetadata(BaseModel):
     input_features: int
     inference_ms: float
     n_series: int = 1  # GH-65: pack→cell divisor applied to voltage (1 = single cell)
+    # GH-91: distance (°C) from the window's temperature to the nearest NASA
+    # training chamber setpoint (4/24/44°C); is_temperature_ood flags when it
+    # exceeds TEMPERATURE_OOD_THRESHOLD, i.e. the prediction is extrapolating.
+    temperature_domain_distance: float = 0.0
+    is_temperature_ood: bool = False
 
 
 class PredictResponse(BaseModel):

@@ -11,6 +11,7 @@ from src.models.anomaly_detector import (
     estimate_rul,
     generate_warnings,
     get_recommended_action,
+    temperature_domain_distance,
 )
 from src.models.soh_predictor import MambaBlock, MambaSOHPredictor
 
@@ -381,3 +382,51 @@ class TestGenerateWarnings:
         warning_idx  = [i for i, s in enumerate(severities) if s == "warning"]
         if critical_idx and warning_idx:
             assert max(critical_idx) < min(warning_idx)
+
+
+class TestTemperatureDomainDistance:
+    """GH-91: distance to nearest NASA training chamber setpoint (4/24/44°C)."""
+
+    def test_at_cluster_is_zero(self):
+        temps = np.full(30, 24.0, dtype=np.float32)
+        assert temperature_domain_distance(temps) == 0.0
+
+    def test_at_threshold_boundary(self):
+        # 9°C: min(|9-4|, |9-24|, |9-44|) = 5 — exactly at TEMPERATURE_OOD_THRESHOLD
+        temps = np.full(30, 9.0, dtype=np.float32)
+        assert temperature_domain_distance(temps) == 5.0
+
+    def test_between_clusters_matches_issue_example(self):
+        # 15°C: min(11, 9, 29) = 9 — the motivating example from issue #91
+        temps = np.full(30, 15.0, dtype=np.float32)
+        assert temperature_domain_distance(temps) == 9.0
+
+    def test_beyond_outer_cluster(self):
+        # 60°C (TEMPERATURE_RANGE upper bound): min(56, 36, 16) = 16
+        temps = np.full(30, 60.0, dtype=np.float32)
+        assert temperature_domain_distance(temps) == 16.0
+
+    def test_uses_max_not_mean_across_window(self):
+        # One reading far from any cluster (60°C, distance 16) among readings
+        # at a cluster (24°C, distance 0) — max must catch the outlier.
+        temps = np.full(30, 24.0, dtype=np.float32)
+        temps[0] = 60.0
+        assert temperature_domain_distance(temps) == 16.0
+
+
+class TestTempOodWarning:
+    def _raw(self, temperature, n=30):
+        return np.full((n, 3), [3.8, -1.5, temperature], dtype=np.float32)
+
+    def test_no_flag_at_cluster(self):
+        codes = [w["code"] for w in generate_warnings(self._raw(24.0), soh=95.0, classification="Normal")]
+        assert "TEMP_OOD" not in codes
+
+    def test_flag_between_clusters(self):
+        codes = [w["code"] for w in generate_warnings(self._raw(15.0), soh=95.0, classification="Normal")]
+        assert "TEMP_OOD" in codes
+
+    def test_no_flag_at_threshold_boundary(self):
+        # 9°C: distance == 5.0 == threshold, uses `>` so NOT flagged
+        codes = [w["code"] for w in generate_warnings(self._raw(9.0), soh=95.0, classification="Normal")]
+        assert "TEMP_OOD" not in codes
