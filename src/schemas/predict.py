@@ -185,10 +185,7 @@ class PredictionInfo(BaseModel):
     soh_confidence: float  # MC Dropout uncertainty [0,1]: 1=confident, 0=uncertain
     soh_std: float  # MC Dropout std in % SOH — raw uncertainty
     rul_cycles_estimate: int
-    degradation_rate_per_cycle: float
-    soh_trend: str
     cycles_to_maintenance: int
-    soh_trajectory: list[float]
     health_stage: str
     # GH-86: MC-distribution staging. Defaults keep older cached payloads valid.
     stage_probabilities: dict[str, float] = {}  # {stage: share of MC samples}
@@ -248,19 +245,8 @@ class PredictResponse(BaseModel):
     """Remaining useful life in cycles until SOH=80% (EOL).
     Battery-specific when window spans ≥2 cycles; falls back to NASA average."""
 
-    degradation_rate_per_cycle: float
-    """Observed %SOH lost per charge-discharge cycle.
-    Computed from voltage fade trend across multi-cycle window.
-    Falls back to NASA population average (0.15%) for short windows."""
-
-    soh_trend: str
-    """Degradation velocity: 'accelerating' | 'stable' | 'slowing'."""
-
     cycles_to_maintenance: int
     """Estimated cycles until SOH crosses 85% maintenance threshold. 0 if already below."""
-
-    soh_trajectory: list[float]
-    """Predicted SOH for next 5 cycles based on observed degradation rate."""
 
     # ── Anomaly Detection ─────────────────────────────────────────────────
     anomaly_score: float

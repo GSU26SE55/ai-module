@@ -125,7 +125,6 @@ Predict SOH and battery health classification from 30 timesteps of sensor data.
   "classification": "Degrading",
   "confidence": 0.82,
   "rul_cycles_estimate": 30,
-  "degradation_rate_per_cycle": 0.15,
   "anomaly_score": -0.12,
   "recommended_action": "SCHEDULE_MAINTENANCE",
   "warnings": [{"code": "SOH_LOW", "severity": "warning", "message": "SOH below 90%"}],

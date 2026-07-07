@@ -158,8 +158,7 @@ Sensor readings (30 timesteps × 6 features)
          │
          ▼
 Response: {soh_percent, classification, confidence,
-           rul_cycles_estimate, degradation_rate_per_cycle,
-           soh_trend, cycles_to_maintenance, soh_trajectory,
+           rul_cycles_estimate, cycles_to_maintenance,
            anomaly_score, recommended_action, warnings,
            feature_summary, risk, ...}
 Latency : < 100ms (P1 SLA requirement)
@@ -612,10 +611,7 @@ Dự đoán SOH và phân loại trạng thái pin từ 30 timestep sensor data.
     "soh_percent": 84.5,
     "health_stage": "Degrading",
     "rul_cycles_estimate": 30,
-    "degradation_rate_per_cycle": 0.15,
-    "soh_trend": "stable",
-    "cycles_to_maintenance": 0,
-    "soh_trajectory": [84.35, 84.20, 84.05, 83.90, 83.75]
+    "cycles_to_maintenance": 0
   },
 
   "anomaly": {
@@ -655,10 +651,7 @@ Dự đoán SOH và phân loại trạng thái pin từ 30 timestep sensor data.
   "inference_ms": 87.4,
 
   "rul_cycles_estimate": 30,
-  "degradation_rate_per_cycle": 0.15,
-  "soh_trend": "stable",
   "cycles_to_maintenance": 0,
-  "soh_trajectory": [84.35, 84.20, 84.05, 83.90, 83.75],
   "anomaly_score": -0.12,
   "recommended_action": "SCHEDULE_MAINTENANCE",
   "warnings": [...],

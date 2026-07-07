@@ -184,7 +184,6 @@ def test_health_response_round_trip():
 PARITY_CASES = [
     (WarningItem, pb.WarningItem),
     (FeatureStat, pb.FeatureStat),
-    (PredictionInfo, pb.PredictionInfo),
     (AnomalyInfo, pb.AnomalyInfo),
     (RiskInfo, pb.RiskInfo),
     (ResponseMetadata, pb.ResponseMetadata),
@@ -192,6 +191,17 @@ PARITY_CASES = [
     (PrescribeRequest, pb.PrescribeRequest),
     (PrescribeResponse, pb.PrescribeResponse),
 ]
+
+# Removed from REST (unused: prescription's ticket decision and BE's own AI
+# integration plan only read soh_percent/risk/priority/action_code — not these
+# forecast fields). Kept in proto per the "never remove/renumber" wire-compat
+# rule in ai.md, still populated over gRPC — so PredictionInfo/PredictResponse
+# are exempt from the exact-match set below.
+_REST_REMOVED_FORECAST_FIELDS = {
+    "degradation_rate_per_cycle",
+    "soh_trend",
+    "soh_trajectory",
+}
 
 
 @pytest.mark.parametrize(
@@ -211,6 +221,12 @@ def test_predict_request_fields():
 
 
 def test_predict_response_covers_all_pydantic_fields():
-    assert proto_field_names(pb.PredictResponse) == pydantic_field_names(
-        PredictResponse
-    )
+    assert proto_field_names(
+        pb.PredictResponse
+    ) - _REST_REMOVED_FORECAST_FIELDS == pydantic_field_names(PredictResponse)
+
+
+def test_prediction_info_fields():
+    assert proto_field_names(
+        pb.PredictionInfo
+    ) - _REST_REMOVED_FORECAST_FIELDS == pydantic_field_names(PredictionInfo)

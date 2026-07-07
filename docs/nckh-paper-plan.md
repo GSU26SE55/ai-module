@@ -12,13 +12,13 @@
 | Scope | **Mamba SOH prediction + IsolationForest anomaly detection** (RAG/prescription → future work). Scope mở rộng theo title user chốt — kéo theo nghĩa vụ evaluation anomaly (F1 > 0.80). |
 | Language | English (abstract song ngữ EN + VI) |
 | Venue | NCKH sinh viên / hội nghị cấp trường — 6–8 trang |
-| Headline result | Long-seq L=4096: **MAE 1.63% / RMSE 2.09%** trên pin 4°C held-out |
+| Headline result | Long-seq L=4096: **MAE 1.52% / RMSE 1.97%** trên pin 4°C held-out (checkpoint v2.2 `test_mae=1.5232/test_rmse=1.9708` — user chốt 2026-07-07, thay số 1.63/2.09 của run cũ) |
 | Citation format | IEEE |
 | Authors | Team GSU26SE55, FPT University |
 
 ## Thesis Statement (1 câu)
 
-> A patch-based Mamba state-space model with FiLM conditioning on cycle-level spectral features predicts lithium-ion battery SOH from full-cycle raw telemetry (L=4096) with MAE 1.63% under a strict cross-battery, cross-temperature (4°C held-out) evaluation protocol — while a compact 30-step variant sustains <100 ms CPU inference for real-time deployment.
+> A patch-based Mamba state-space model with FiLM conditioning on cycle-level spectral features predicts lithium-ion battery SOH from full-cycle raw telemetry (L=4096) with MAE 1.52% under a strict cross-battery, cross-temperature (4°C held-out) evaluation protocol — while a compact 30-step variant sustains <100 ms CPU inference for real-time deployment.
 
 ## Contribution Claims (3 — dùng làm bullet cuối Introduction)
 
@@ -55,7 +55,7 @@
 - **Table 2 — LOBO robustness**: mean±std MAE across folds. ❗ *cần chạy: `experiment_nowcast_lobo.py`*.
 - **Table 3 — Ablation**: d_state 16↔32 (GH-34), features 6↔4 (GH-25), attention pooling on/off (GH-37), FiLM on/off — lấy từ log các GH đã làm + chạy bù ô thiếu.
 - **Table 4 — Latency**: window-30 CPU <100ms (benchmark script có sẵn), long model GPU/CPU.
-- **Table 5 — Anomaly detection** (bắt buộc vì title): Precision/Recall/F1 (target F1 > 0.80). ❗ *cần thiết kế ground truth trước: đề xuất label cycle có SOH < 80% (EOL) hoặc thuộc vùng suy thoái nhanh là anomalous, rồi đánh giá IsolationForest trên val/test — phải mô tả rõ định nghĩa label trong bài để không bị hỏi "anomaly ground truth từ đâu ra?"*.
+- **Table 5 — Anomaly detection** (bắt buộc vì title): ✅ ĐÃ CHẠY (GH-70, `logs/nckh/anomaly/table5.md`). Kết quả: rate-based label (fade rate > train p90) F1=0.53 val / 0.34 test (tuned); EOL label suy biến (97.9% positive). **Quyết định 2026-07-07: BỎ claim "F1 > 0.80", báo cáo honest negative + framing tầng cảnh báo sớm (recall 1.00, precision 0.21).** Định nghĩa label mô tả rõ trong §3.5 để không bị hỏi "ground truth từ đâu ra".
 - **Figures**: (F1) kiến trúc pipeline; (F2) predicted vs true SOH curve trên B0048; (F3) ablation bar chart. Vẽ bằng matplotlib theo chuẩn publication.
 - **Finding quan trọng nhất (1 câu)**: model long-seq generalize sang pin + nhiệt độ chưa thấy với MAE 1.63%, vượt target 2%.
 
@@ -167,5 +167,6 @@ Viết xong matrix thì Section 2 gần như tự viết: mỗi mạch 1 đoạn
 
 - `[INSIGHT: thesis_statement]` — như trên.
 - `[INSIGHT: contribution_claim]` — 3 claims: architecture / protocol / deployability (nguồn: gap statement user phác trong docs/agent-review-brief.md §11 + lựa chọn scope của user).
-- `[INSIGHT: headline]` — long-seq MAE 1.63%, user chọn.
+- `[INSIGHT: headline]` — long-seq MAE 1.52% (checkpoint v2.2, user chốt 2026-07-07; thay 1.63% của run cũ).
+- `[INSIGHT: decisions_2026-07-07]` — user tự duyệt không qua GVHD: (1) headline 1.52/1.97; (2) LOBO báo cáo đầy đủ mean 3.91±3.27 / median 2.22 + phân tích failure mode (16 folds, window-30); (3) GIỮ "Anomaly Detection" trong title nhưng BỎ claim "F1 > 0.80" toàn bài — kết quả thật F1=0.34 test (rate label, tuned), framing tầng cảnh báo sớm recall 1.00/precision 0.21; (4) format IEEE 2 cột 6–8 trang LaTeX IEEEtran. Số liệu: `logs/nckh/lobo_results/`, `logs/nckh/anomaly/`, draft §4: `docs/nckh/section4-experiments-vi.md`.
 - Open question carried forward: tên gọi chính thức của model trong bài (đề xuất cần user đặt: "SolarMamba"? "SpectraMamba"?).

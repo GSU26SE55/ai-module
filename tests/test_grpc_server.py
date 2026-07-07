@@ -482,14 +482,14 @@ def test_predict_parity_with_rest(servicer, rest_client):
         "confidence",
         "inference_ms",
         "rul_cycles_estimate",
-        "degradation_rate_per_cycle",
-        "soh_trend",
         "cycles_to_maintenance",
         "anomaly_score",
         "recommended_action",
     ):
         assert getattr(rpc, field) == rest[field], field
-    assert list(rpc.soh_trajectory) == rest["soh_trajectory"]
+    # degradation_rate_per_cycle/soh_trend/soh_trajectory: proto-only now (kept
+    # for wire compat, no longer in the REST schema — unused by any consumer),
+    # so no REST-side value to compare against here.
     # nested blocks
     for field, rest_block in (
         ("prediction", rest["prediction"]),
