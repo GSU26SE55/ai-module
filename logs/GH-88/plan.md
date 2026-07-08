@@ -68,8 +68,10 @@ không công bằng; chuyển 1/2 pin val sang train, test vẫn held-out 100%" 
 - [x] B2: A2 `--balance-bands` + per-band MAE report trong train.py + 5 unit tests (pass);
       full suite 274 passed / 2 skipped (test_model_loader chờ artifact v1.6 — skipif có chủ ý)
 - [x] B3: `notebooks/kaggle_train_v16.ipynb` — 2 run A1/A2, chọn theo val MAE, đóng gói zip
-- [ ] B4: user train Kaggle (T4 x2), đem kết quả về
-- [ ] B5: ablation.md + verify 16 windows 82.9% + benchmark + coverage ≥85%
+- [x] B4: user train Kaggle (T4 x2), đem kết quả về — merged dev qua PR #93 (2026-07-07)
+- [x] B5: ablation.md (`logs/GH-88/ablation.md`) + verify 16 windows 82.9% + coverage ≥85% —
+      MAE 1.34%/RMSE 1.84% đạt target chính (<1.5%), stretch <1% và bias vùng 80-90% chưa
+      hết hẳn nhưng ghi nhận là known limitation (n=16, không train thêm)
 - [ ] B6: ADR + cập nhật rules table (sau GVHD chốt) → review → test → ship
 
 ## Success criteria
