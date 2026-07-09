@@ -212,6 +212,9 @@ message PrescribeResponse {
   double inference_ms = 16;
   double rag_ms = 17;
   double llm_ms = 18;
+
+  // Which provider generated the prescription: "deepseek" / "gemini" / "anthropic" / "none".
+  string llm_provider = 19;
 }
 
 // ── Health ─────────────────────────────────────────────────────────────

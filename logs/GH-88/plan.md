@@ -72,7 +72,9 @@ không công bằng; chuyển 1/2 pin val sang train, test vẫn held-out 100%" 
 - [x] B5: ablation.md (`logs/GH-88/ablation.md`) + verify 16 windows 82.9% + coverage ≥85% —
       MAE 1.34%/RMSE 1.84% đạt target chính (<1.5%), stretch <1% và bias vùng 80-90% chưa
       hết hẳn nhưng ghi nhận là known limitation (n=16, không train thêm)
-- [ ] B6: ADR + cập nhật rules table (sau GVHD chốt) → review → test → ship
+- [x] B6a: ADR (`docs/adr/0002-split-rebalance-b0047.md`) + rules table (`ai.md`, `CLAUDE.md`) cập nhật —
+      user tự chốt split change 2026-07-08 (không qua GVHD, theo quyết định chung của bài NCKH)
+- [ ] B6b: `/kltn-reviewcode` → `/kltn-test` → `/kltn-ship` → `/kltn-complete` (đóng issue #88)
 
 ## Success criteria
 | Tiêu chí | Verify |

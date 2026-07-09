@@ -225,7 +225,13 @@ def _setup_device_amp(logger: logging.Logger):
 
 
 def train(
-    data_dir: str, epochs: int, log_dir: str, balance_bands: bool = False
+    data_dir: str,
+    epochs: int,
+    log_dir: str,
+    balance_bands: bool = False,
+    jitter: float = 0.0,
+    swa: bool = False,
+    swa_start_frac: float = 0.75,
 ) -> None:
     logger = setup_logger(log_dir)
 
@@ -305,9 +311,18 @@ def train(
     patience_counter = 0
     best_state = None
 
+    # GH-88 A3: SWA needs the tail epochs (from swa_start on) to actually run before
+    # early-stopping can fire, otherwise the average has too few points to help.
+    swa_start = max(1, int(round(epochs * swa_start_frac))) if swa else 0
+    effective_patience = max(PATIENCE, epochs - swa_start + 5) if swa else PATIENCE
+    swa_state = None
+    swa_n = 0
+
     logger.info("Starting training...")
     logger.info(
         f"{'Epoch':>6}  {'TrainLoss':>10}  {'ValLoss':>10}  {'ValMAE%':>8}  {'ValRMSE%':>9}"
+        + (f" | jitter={jitter}" if jitter > 0.0 else "")
+        + (f" | SWA from epoch {swa_start}" if swa else "")
     )
     logger.info("-" * 55)
 
@@ -316,8 +331,11 @@ def train(
         train_loss = 0.0
         for X_batch, X_feat_batch, y_batch, w_batch in train_loader:
             optimizer.zero_grad(set_to_none=True)
+            X_batch = X_batch.to(device)
+            if jitter > 0.0:
+                X_batch = X_batch + jitter * torch.randn_like(X_batch)
             with _amp_ctx():
-                pred = model(X_batch.to(device), X_feat_batch.to(device))
+                pred = model(X_batch, X_feat_batch.to(device))
                 loss = criterion(pred, (y_batch / 100.0).to(device), w_batch.to(device))
             amp_scaler.scale(loss).backward()
             amp_scaler.unscale_(optimizer)
@@ -352,11 +370,42 @@ def train(
         else:
             patience_counter += 1
 
-        if patience_counter >= PATIENCE:
-            logger.info(f"Early stopping at epoch {epoch} (patience={PATIENCE})")
+        # SWA: fold this epoch's weights into the running tail average (Izmailov 2018)
+        if swa and epoch >= swa_start:
+            cur = model.state_dict()
+            if swa_state is None:
+                swa_state = {k: v.detach().float().clone() for k, v in cur.items()}
+                swa_n = 1
+            else:
+                for k, v in cur.items():
+                    if torch.is_floating_point(v):
+                        swa_state[k].mul_(swa_n / (swa_n + 1)).add_(
+                            v.detach().float() / (swa_n + 1)
+                        )
+                swa_n += 1
+
+        if patience_counter >= effective_patience:
+            logger.info(f"Early stopping at epoch {epoch} (patience={effective_patience})")
             break
 
     model.load_state_dict(best_state)
+    final_weights = "best-val-checkpoint"
+
+    # SWA selection: compare averaged weights vs best single checkpoint on VAL only
+    # (never test — that would leak). Keep whichever wins.
+    if swa and swa_state is not None and swa_n > 0:
+        model.load_state_dict(swa_state)
+        swa_val = evaluate(model, X_val, X_feat_val, y_val, device)
+        logger.info(
+            f"SWA: averaged {swa_n} epochs | SWA val_loss={swa_val['loss']:.6f} "
+            f"vs best-ckpt val_loss={best_val_loss:.6f}"
+        )
+        if swa_val["loss"] <= best_val_loss:
+            final_weights = f"SWA(avg={swa_n})"
+        else:
+            model.load_state_dict(best_state)  # SWA worse on val -> revert
+    logger.info(f"Final weights: {final_weights}")
+
     test_metrics = evaluate(model, X_test, X_feat_test, y_test, device)
     logger.info("-" * 55)
     logger.info(f"Test MAE : {test_metrics['mae']:.4f}%  (target < 2.0%)")
@@ -398,6 +447,8 @@ def train(
             "test_mae": test_metrics["mae"],
             "test_rmse": test_metrics["rmse"],
             "balance_bands": balance_bands,  # GH-88 ablation traceability
+            "jitter": jitter,  # GH-88 A3 traceability
+            "swa": final_weights.startswith("SWA"),
         },
         MAMBA_PATH,
     )
@@ -1443,15 +1494,17 @@ def main() -> None:
     parser.add_argument(
         "--swa",
         action="store_true",
-        help="Stochastic Weight Averaging: average weights over the final stage's "
-        "tail epochs (Izmailov 2018). Kept only if it beats the best checkpoint on val. "
-        "Needs the final stage to run long (use --cosine-t0 == --final-epochs so it doesn't early-stop).",
+        help="Stochastic Weight Averaging: average weights over the tail epochs "
+        "(Izmailov 2018). Kept only if it beats the best checkpoint on val. "
+        "--long path: needs the final stage to run long (--cosine-t0 == --final-epochs so it "
+        "doesn't early-stop). Default (window=30) path: patience is auto-relaxed so the tail runs.",
     )
     parser.add_argument(
         "--swa-start-frac",
         type=float,
         default=0.75,
-        help="Start SWA averaging at this fraction of --final-epochs (default 0.75 = last 25%%)",
+        help="Start SWA averaging at this fraction of total epochs "
+        "(--final-epochs for --long, --epochs otherwise; default 0.75 = last 25%%)",
     )
     parser.add_argument(
         "--attention-heads",
@@ -1558,6 +1611,9 @@ def main() -> None:
             args.epochs,
             args.log_dir,
             balance_bands=args.balance_bands,
+            jitter=args.jitter,
+            swa=args.swa,
+            swa_start_frac=args.swa_start_frac,
         )
 
 

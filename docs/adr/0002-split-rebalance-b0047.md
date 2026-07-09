@@ -1,6 +1,6 @@
 # ADR 0002 — Split rebalance: B0047 val → train (GH-88, model v1.6)
 
-**Ngày:** 2026-07-05 · **Trạng thái:** Accepted (pending GVHD sign-off cho số liệu paper) · **Issue:** #88
+**Ngày:** 2026-07-05 · **Trạng thái:** Accepted — user tự chốt 2026-07-08 (không qua GVHD) · **Issue:** #88
 
 ## Bối cảnh
 
@@ -37,11 +37,14 @@ only) vs A2 (split + balance-bands) đo riêng, chọn model theo **val MAE** (k
 
 ## Hệ quả
 
-- **NCKH:** đổi protocol thí nghiệm → Table 1/2 của paper phải dùng split mới thống nhất; PHẢI chốt
-  với GVHD trước khi đưa số vào paper và **trước khi chạy LOBO (GH-68)** để không chạy lại.
-  Justification cho hội đồng: "train thiếu hoàn toàn vùng temperature×SOH mà test yêu cầu → điểm số
-  đo được phản ánh extrapolation gap chứ không phải năng lực model; rebalance giữ test 100% held-out."
-- Bảng split trong `.claude/rules/tech/ai.md` + `CLAUDE.md` cập nhật sau khi GVHD chốt.
+- **NCKH:** đổi protocol thí nghiệm → Table 1/2 của paper dùng split mới thống nhất (24/1/1).
+  User tự chốt quyết định này 2026-07-08 (theo quyết định chung: tự duyệt mọi thứ, không qua GVHD
+  — deadline nộp 20/7). Justification: "train thiếu hoàn toàn vùng temperature×SOH mà test yêu cầu →
+  điểm số đo được phản ánh extrapolation gap chứ không phải năng lực model; rebalance giữ test 100%
+  held-out." LOBO (GH-68, `scripts/experiment_nowcast_lobo.py`) không bị ảnh hưởng — fold list của
+  script này lấy trực tiếp từ `metadata.csv` (`available_batteries`/`batteries_at_temp`), không đọc
+  `TRAIN_IDS`/`VAL_IDS` của `preprocess.py`, nên đổi split ở đây không đòi hỏi chạy lại LOBO.
+- Bảng split trong `.claude/rules/tech/ai.md` + `CLAUDE.md` đã cập nhật (2026-07-08).
 - Val chỉ còn 1 pin (768 windows) — chấp nhận được: cùng domain 4°C, đủ lớn cho early stopping;
   trade-off đã cân nhắc so với việc mất hẳn coverage vùng 80% trong train.
 - Artifacts v1.6 (model + scaler + feature_scaler + isolation_forest) commit cùng 1 commit sau khi

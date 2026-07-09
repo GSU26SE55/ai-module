@@ -40,6 +40,8 @@ class PrescribeResponse(BaseModel):
 
     # True when LLM+RAG enrichment ran successfully; False = rule-based fallback.
     enriched: bool = False
+    # Which provider generated the prescription: "deepseek" / "gemini" / "anthropic" / "none".
+    llm_provider: str = "none"
 
     # Retrieved evidence (empty unless enriched)
     maintenance_docs: list[RetrievedDoc] = []

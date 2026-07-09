@@ -72,13 +72,14 @@ def _enrich(prediction: dict, risk: dict, warnings: list[dict], rule_out: dict) 
     response. On any failure, returns the rule-based fields with enriched=False
     (docs may still be attached if retrieval succeeded).
     """
-    from src.services import _llm_client
+    from src.services.llm import chain
 
     result = {
         "prescription":   rule_out["prescription"],
         "action_steps":   rule_out["action_steps"],
         "ppe_required":   rule_out["ppe_required"],
         "enriched":       False,
+        "llm_provider":   "none",
         "maintenance_docs": [],
         "safety_docs":      [],
         "rag_ms":         0.0,
@@ -98,20 +99,21 @@ def _enrich(prediction: dict, risk: dict, warnings: list[dict], rule_out: dict) 
     result["maintenance_docs"] = maint_docs
     result["safety_docs"] = safety_docs
 
-    # 2. LLM (timed). Skip if no API key; fall back on any error.
-    if not _llm_client.is_available():
-        logger.info("ANTHROPIC_API_KEY not set — returning rule-based prescription.")
+    # 2. LLM (timed). Skip if no provider in the chain has a key configured.
+    if not chain.is_available():
+        logger.info("No LLM provider key configured — returning rule-based prescription.")
         return result
 
     t_llm = time.perf_counter()
     try:
         context = _build_maintenance_query(prediction, risk)
-        llm_out = _llm_client.generate_prescription_llm(context, maint_docs, safety_docs)
+        llm_out = chain.generate_prescription(context, maint_docs, safety_docs)
         result["prescription"] = llm_out["prescription"]
         result["action_steps"] = llm_out["action_steps"]
         # Union with rule PPE so safety-critical PPE is never dropped by the LLM.
         result["ppe_required"] = _dedup(rule_out["ppe_required"] + llm_out["ppe_required"])
         result["enriched"] = True
+        result["llm_provider"] = llm_out.get("provider", "none")
     except Exception as exc:
         logger.warning("LLM enrichment failed, using rule-based prescription: %s", exc)
     result["llm_ms"] = round((time.perf_counter() - t_llm) * 1000, 2)
@@ -157,6 +159,7 @@ def run_prescription(
             "action_steps":   rule_out["action_steps"],
             "ppe_required":   rule_out["ppe_required"],
             "enriched":       False,
+            "llm_provider":   "none",
             "maintenance_docs": [],
             "safety_docs":      [],
             "rag_ms":         0.0,
@@ -186,6 +189,7 @@ def run_prescription(
         "ppe_required":          enriched["ppe_required"],
         "sop_references":        rule_out["sop_references"],
         "enriched":              enriched["enriched"],
+        "llm_provider":          enriched["llm_provider"],
 
         "maintenance_docs": enriched["maintenance_docs"],
         "safety_docs":      enriched["safety_docs"],

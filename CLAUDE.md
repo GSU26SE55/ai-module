@@ -13,7 +13,7 @@
 | Input features | 3 — voltage, current, temperature |
 | Normalization | MinMaxScaler [0, 1] — fit trên train, lưu `models/weights/scaler.pkl` |
 | SOH target | `capacity_current / 2.0 × 100` (NASA nominal = 2.0 Ah) |
-| Train/Val/Test | 23 / 2 / 1 pin — chia theo **battery ID** (1 pin = 1 split). Val/Test = 4°C (B0046/47/48); train PHẢI có pin 4°C. Source: `scripts/preprocess.py` |
+| Train/Val/Test | 24 / 1 / 1 pin — chia theo **battery ID** (1 pin = 1 split). Val=B0046, Test=B0048 (4°C); B0047 chuyển vào train từ GH-88 (2026-07-08) để phủ vùng SOH cao 4°C. Train PHẢI có pin 4°C. Source: `scripts/preprocess.py` |
 | **Random seed** | **42 — BẮT BUỘC mọi script (train, preprocess)** |
 
 **Target metrics:** MAE < 2% SOH · RMSE < 3% · Anomaly F1 > 0.80

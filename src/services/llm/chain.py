@@ -1,0 +1,86 @@
+"""
+LLM provider fallback chain — orchestrates DeepSeek -> Gemini -> (optional Anthropic).
+
+Called by src.services.prescription._enrich() on enrich=true. Each provider
+raises RuntimeError on failure; this module tries the next tier in order.
+Bounded total wall-clock budget (~25s) so a slow/hung provider can't block an
+event-driven call indefinitely — see docs/adr/0003-llm-provider-chain.md.
+
+Config (env):
+  LLM_PROVIDER_CHAIN — comma-separated provider names, default "deepseek,gemini".
+                        "anthropic" can be added, e.g. "deepseek,gemini,anthropic".
+"""
+import logging
+import os
+import time
+
+from src.services.llm.anthropic_provider import AnthropicProvider
+from src.services.llm.deepseek_provider import DeepSeekProvider
+from src.services.llm.gemini_provider import GeminiProvider
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_CHAIN = "deepseek,gemini"
+TOTAL_BUDGET_S = 25.0
+
+_PROVIDERS = {
+    "deepseek": DeepSeekProvider,
+    "gemini": GeminiProvider,
+    "anthropic": AnthropicProvider,
+}
+
+
+def _chain_order() -> list[str]:
+    raw = os.getenv("LLM_PROVIDER_CHAIN", DEFAULT_CHAIN)
+    return [name.strip().lower() for name in raw.split(",") if name.strip()]
+
+
+def is_available() -> bool:
+    """True if at least one provider in the configured chain has a key set."""
+    return any(
+        _PROVIDERS[name]().is_available()
+        for name in _chain_order()
+        if name in _PROVIDERS
+    )
+
+
+def generate_prescription(
+    context: str,
+    maintenance_docs: list[dict],
+    safety_docs: list[dict],
+) -> dict:
+    """
+    Try each provider in LLM_PROVIDER_CHAIN order. Returns the first successful
+    result with an added "provider" key. Raises RuntimeError if every provider
+    is unavailable or fails — caller (prescription.py::_enrich) falls back to
+    the rule-based prescription, exactly as it did for the single-provider path.
+    """
+    start = time.perf_counter()
+    errors: list[str] = []
+
+    for name in _chain_order():
+        provider_cls = _PROVIDERS.get(name)
+        if provider_cls is None:
+            logger.warning("Unknown LLM provider %r in LLM_PROVIDER_CHAIN — skipping.", name)
+            continue
+
+        if time.perf_counter() - start > TOTAL_BUDGET_S:
+            errors.append(f"{name}: skipped, total enrich budget ({TOTAL_BUDGET_S}s) exceeded")
+            break
+
+        provider = provider_cls()
+        if not provider.is_available():
+            continue
+
+        try:
+            out = provider.generate_prescription(context, maintenance_docs, safety_docs)
+            out["provider"] = name
+            return out
+        except Exception as exc:  # provider's own RuntimeError, or anything unexpected
+            logger.warning("LLM provider %r failed: %s", name, exc)
+            errors.append(f"{name}: {exc}")
+
+    raise RuntimeError(
+        "All LLM providers unavailable or failed: "
+        + ("; ".join(errors) if errors else "no provider configured")
+    )

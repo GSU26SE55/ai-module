@@ -24,9 +24,9 @@ Quy trình tổng thể chia làm 6 phase. Mỗi phase có 1 role "owner" chính
 |---|-------|-------|-------|
 | ① | Setup & Configuration | Tạo account, tạo Battery Type (LFP/NMC…), cấu hình ThresholdConfig per Type, set ngưỡng cảnh báo, định nghĩa SLA rules P1/P2/P3 + Staff tier, quản lý Battery Asset (serial, warranty, owner) | ADMIN |
 | ② | Monitoring & Detection | Customer theo dõi pin real-time. System auto-check ngưỡng, chạy Dependency Check (pin hỏng ảnh hưởng pin khác?), sinh cảnh báo và tính priority tự động khi có ảnh hưởng | CUSTOMER + SYSTEM |
-| ③ | Ticket Creation | Customer tạo ticket thủ công (+ ảnh/video), HOẶC system auto-tạo từ alert critical có ảnh hưởng | CUSTOMER / SYSTEM |
-| ④ | Triage & Assignment | Manager xem xét priority tự động + ảnh/thông số Customer → điều chỉnh nếu cần → assign Staff đúng tầng. SLA timer bắt đầu | MANAGER |
-| ⑤ | Resolution | Staff xử lý theo băng chuyền: cập nhật status, tra Wiki, ghi log, tạo/cập nhật Wiki, liên hệ customer, mark Resolved hoặc escalate chủ động tại 2/3 SLA | STAFF |
+| ③ | Ticket Creation | Customer tạo ticket thủ công (+ ảnh/video), HOẶC system auto-tạo từ alert critical có ảnh hưởng. System đồng thời gọi AI `/prescribe` (async, không chặn) để enrich ticket bằng `action_steps` + `escalation_conditions` | CUSTOMER / SYSTEM |
+| ④ | Triage & Assignment | System auto-assign Staff theo tầng (P1→Tier1/P2→Tier2/P3→Tier3) + workload thấp nhất ngay khi tạo ticket — SLA timer bắt đầu ngay. Manager xem xét ảnh/thông số Customer → override priority/staff nếu cần (ghi lý do bắt buộc) | SYSTEM + MANAGER |
+| ⑤ | Resolution | Staff xử lý theo băng chuyền: cập nhật status, tra Wiki + action_steps do AI prescribe gợi ý, ghi log, tạo/cập nhật Wiki, liên hệ customer, mark Resolved hoặc escalate chủ động tại 2/3 SLA. Action có `human_verification_required=true` phải chờ Manager duyệt trước khi thực thi | STAFF |
 | ⑥ | Verification & Closure | Manager review maintenance log + kiểm tra Wiki → approve. Customer đánh giá (rate/reopen). Ticket chính thức Closed | MANAGER + CUSTOMER |
 
 ---
@@ -75,7 +75,9 @@ flowchart TB
         S3b[Tạo Alert + tính Priority<br/>P1/P2/P3 tự động<br/>dựa trên classification<br/>+ mức độ ảnh hưởng]
         S7{Alert trùng<br/>trong cửa sổ thời gian?}
         S8[Merge vào ticket/alert cũ]
-        S4[Start SLA timer<br/>khi ticket assigned]
+        S3c[Auto-assign Staff theo tầng<br/>P1→Tier1 · P2→Tier2 · P3→Tier3<br/>+ workload thấp nhất trong tầng]
+        S3d[Async gọi AI /prescribe<br/>enrich ticket: action_steps<br/>+ escalation_conditions]
+        S4[Start SLA timer<br/>ngay khi auto-assign]
         S9[Pause/Resume SLA<br/>khi chờ Customer/Parts]
         S5{SLA 2/3 hoặc breach?}
         S6[Cảnh báo Manager<br/>+ Staff]
@@ -85,18 +87,19 @@ flowchart TB
         SD -->|Có ảnh hưởng| S3b --> S7
         S7 -->|Có| S8
         S7 -->|Không| C2
+        S7 -->|Không| S3c
         S2 -->|Không| S1
-        S4 --> S9 --> S5
+        S3c --> S3d
+        S3c --> S4 --> S9 --> S5
         S5 -->|Có| S6
     end
 
     subgraph MANAGER["🔵 MANAGER LANE — Web App"]
         direction LR
-        M1[Nhận ticket vào queue<br/>kèm priority đã tính sẵn]
-        M2[Xem xét priority<br/>dựa trên ảnh + thông số<br/>Customer cung cấp]
-        M2b{Điều chỉnh<br/>priority?}
-        M2c[Giữ nguyên hoặc<br/>điều chỉnh P1/P2/P3]
-        M3[Assign Staff theo tầng<br/>P1→Tier1 · P2→Tier2 · P3→Tier3]
+        M1[Nhận ticket vào queue<br/>đã auto-assign staff<br/>+ priority tính sẵn]
+        M2[Xem xét priority + staff<br/>dựa trên ảnh + thông số<br/>Customer cung cấp]
+        M2b{Cần override<br/>priority/staff?}
+        M2c[Override priority<br/>và/hoặc reassign staff khác<br/>ghi lý do bắt buộc]
         M4{Staff mark<br/>Resolved?}
         M5[Review + kiểm tra Wiki<br/>& Approve]
         M6[Reject<br/>gửi lại Staff]
@@ -104,8 +107,8 @@ flowchart TB
         M8[Reassign tầng Staff<br/>cao hơn]
         M9[Xem activity timeline<br/>và SLA history]
         M1 --> M2 --> M2b
-        M2b -->|Cần chỉnh| M2c --> M3
-        M2b -->|Giữ nguyên| M3
+        M2b -->|Cần override| M2c --> M4
+        M2b -->|Giữ nguyên| M4
         M4 -->|Yes| M9 --> M5
         M4 -->|Staff escalate / breach| M7
         M7 -->|Yes| M8
@@ -116,12 +119,17 @@ flowchart TB
         T1[Nhận notification<br/>ticket mới]
         T2[Update status<br/>In Progress]
         T3[Comment với Customer<br/>nếu cần thông tin]
-        T8[Dùng Knowledge Base<br/>solution template]
+        T8[Dùng Knowledge Base<br/>+ AI action_steps (prescribe)<br/>solution template]
+        T8b{Action cần<br/>human_verification_required?}
+        T8c[Chờ Manager duyệt<br/>action trước khi thực thi]
         T4[Ghi Maintenance Log<br/>+ tạo/cập nhật Wiki]
         T5{Xử lý được<br/>trong SLA còn lại?}
         T6[Mark Resolved]
         T7[Request Escalation<br/>tại 2/3 SLA]
-        T1 --> T2 --> T3 --> T8 --> T4 --> T5
+        T1 --> T2 --> T3 --> T8 --> T8b
+        T8b -->|Có| T8c --> T4
+        T8b -->|Không| T4
+        T4 --> T5
         T5 -->|Được| T6
         T5 -->|Không / đến 2/3 SLA| T7
     end
@@ -129,9 +137,10 @@ flowchart TB
     Start --> A1
     A4 -.setup xong.-> C1
     A4 -.-> S1
-    C3 --> M1
-    M3 --> T1
-    M3 --> S4
+    C3 --> S3c
+    S3c --> M1
+    S3c --> T1
+    S3d --> T8
     T6 --> M4
     T7 --> M7
     M5 --> C4
@@ -153,6 +162,7 @@ sequenceDiagram
     actor Customer as 🟣 Customer
     participant Mobile as 📱 Mobile App
     participant Backend as ⚙️ Backend API
+    participant AI as 🤖 AI Module
     participant DB as 🗄️ DB (TimescaleDB)
     actor Manager as 🔵 Manager
     actor Staff as 🟢 Staff
@@ -177,7 +187,7 @@ sequenceDiagram
     Backend->>Notif: push alert nếu vượt ngưỡng
     Notif-->>Customer: 🔔 cảnh báo
 
-    Note over Customer,Manager: Phase 3–4 — Create & Assign
+    Note over Customer,Manager: Phase 3–4 — Create & Auto-Assign
     Backend->>Backend: Dependency check — pin hỏng có ảnh hưởng pin khác?
     alt Không ảnh hưởng → không tạo ticket
         Backend->>DB: ghi log anomaly, bỏ qua
@@ -186,23 +196,37 @@ sequenceDiagram
         Customer->>Mobile: Tạo ticket thủ công (hoặc system auto-create)
         Mobile->>Backend: POST /tickets (assetId, category, description, files, priority_suggested)
         Backend->>DB: lưu ticket (status=OPEN, priority=auto-calculated)
+        Backend->>Backend: auto-assign Staff theo tầng<br/>(P1→Tier1/P2→Tier2/P3→Tier3) + workload thấp nhất
+        Backend->>DB: update status=ASSIGNED + start SLA timer
         Backend->>DB: ghi Activity Timeline
-        Backend->>Notif: notify Manager
-        Notif-->>Manager: ticket mới + priority gợi ý
+        Backend->>Notif: notify Staff + Manager (FYI)
+        Notif-->>Staff: ticket được giao
+        Notif-->>Manager: ticket mới + staff đã assign + priority gợi ý
+
+        par Async — không chặn assign/SLA
+            Backend->>AI: POST /prescribe (readings, battery_id)
+            AI-->>Backend: action_steps + escalation_conditions<br/>+ human_verification_required
+            Backend->>DB: enrich ticket (action_steps, escalation_conditions)
+            alt human_verification_required = true
+                Backend->>Notif: notify Manager — action cần duyệt<br/>trước khi Staff thực thi
+            end
+        end
     end
 
-    Manager->>Backend: GET /tickets?status=NEW
+    Manager->>Backend: GET /tickets?status=ASSIGNED
     Manager->>Backend: GET /tickets/{id} — xem ảnh + thông số Customer cung cấp
-    Manager->>Backend: PUT /tickets/{id}/assign (staffId, priority_confirmed)
-    Note right of Manager: Manager chỉ xem xét điều chỉnh priority<br/>dựa trên ảnh/thông số Customer — không tự định priority từ đầu
-    Backend->>DB: update priority + start SLA timer
-    Backend->>DB: ghi Activity Timeline
-    Backend->>Notif: notify Staff
-    Notif-->>Staff: ticket được giao
+    opt Manager cần override
+        Manager->>Backend: PUT /tickets/{id}/override (staffId mới, priority_override, reason)
+        Note right of Manager: Manager chỉ override priority/staff SAU KHI<br/>System đã auto-assign — không tự assign từ đầu
+        Backend->>DB: update priority/staff + ghi Activity Timeline
+        Backend->>Notif: notify Staff mới (nếu reassign)
+    end
 
     Note over Staff,Customer: Phase 5 — Resolution
     Staff->>Backend: PUT /tickets/{id}/status=IN_PROGRESS
+    Staff->>Backend: GET /tickets/{id} — bao gồm action_steps<br/>đã enrich từ AI /prescribe (nếu đã có)
     Staff->>Backend: GET /knowledge-base?category={category}
+    Note right of Staff: action_steps có human_verification_required=true<br/>→ Staff KHÔNG tự thực thi, chờ Manager duyệt trước
     Staff->>Backend: POST /tickets/{id}/comments
     Backend->>Notif: notify Customer
     Notif-->>Customer: reply từ Staff
@@ -247,7 +271,7 @@ stateDiagram-v2
     [*] --> OPEN : System auto-create từ alert<br/>(priority đã tính sẵn, bỏ qua NEW)
 
     NEW --> OPEN : Manager tiếp nhận<br/>(thêm vào queue)
-    OPEN --> ASSIGNED : Manager xem xét priority<br/>+ assign Staff<br/>→ start SLA timer
+    OPEN --> ASSIGNED : System auto-assign Staff<br/>theo tầng + workload thấp nhất<br/>→ start SLA timer ngay<br/>(Manager override sau nếu cần)
 
     ASSIGNED --> IN_PROGRESS : Staff nhận & bắt đầu
     IN_PROGRESS --> IN_PROGRESS : Staff ghi log,<br/>comment Customer
@@ -424,14 +448,14 @@ flowchart TD
 
 ## 7. Manager — Chi tiết Flow
 
-Manager là "điều phối viên" — hoạt động liên tục trong Phase 4 (Triage) và Phase 6 (Verify). Priority đã được System tính tự động — Manager xem xét ảnh/thông số Customer để xác nhận hoặc điều chỉnh, sau đó assign Staff đúng tầng. Approve phải kiểm tra Wiki.
+Manager là "điều phối viên" — hoạt động liên tục trong Phase 4 (Triage) và Phase 6 (Verify). Priority và Staff assignment đã được System tự động xử lý (auto-assign theo tầng + workload) — Manager xem xét ảnh/thông số Customer để xác nhận hoặc override sau khi đã auto-assign. Approve phải kiểm tra Wiki.
 
 | | |
 |---|---|
-| **Entry** | Login Web App khi có ticket mới hoặc kiểm tra định kỳ |
-| **Task chính** | Xem xét priority tự động → Điều chỉnh nếu cần → Assign Staff theo tầng → Review Wiki + Approve resolution |
+| **Entry** | Login Web App khi có ticket mới (đã auto-assign) hoặc kiểm tra định kỳ |
+| **Task chính** | Xem xét priority + staff đã auto-assign → Override nếu cần → Review Wiki + Approve resolution |
 | **Căn cứ xem xét** | Thông số sensor của cục pin đó · Ảnh/video Customer gửi · Dependency report từ System |
-| **Giới hạn** | Không tự đặt priority từ đầu — chỉ điều chỉnh từ priority đã tính · Không xử lý ticket trực tiếp |
+| **Giới hạn** | Không tự assign Staff từ đầu — chỉ override sau khi System đã auto-assign · Không tự đặt priority từ đầu — chỉ điều chỉnh từ priority đã tính · Không xử lý ticket trực tiếp |
 
 ```mermaid
 flowchart TD
@@ -447,23 +471,12 @@ flowchart TD
 
     Pick --> Review1[Xem thông số sensor<br/>của cục pin đó<br/>V · I · T · SOC · SOH<br/>chart lịch sử bất thường]
     Review1 --> Review2[Xem ảnh / video<br/>Customer đã đính kèm<br/>+ mô tả sự cố]
-    Review2 --> Review3[Xem Dependency report<br/>pin hỏng ảnh hưởng<br/>bao nhiêu pin khác?]
+    Review2 --> Review3[Xem Dependency report<br/>pin hỏng ảnh hưởng<br/>bao nhiêu pin khác?<br/>+ Staff System đã auto-assign]
 
-    Review3 --> PriorityCheck{Priority tự động<br/>có phù hợp không?}
-    PriorityCheck -->|Phù hợp| Assign
-    PriorityCheck -->|Cần điều chỉnh| AdjPriority[Điều chỉnh priority<br/>+ ghi lý do bắt buộc<br/>vào Activity Timeline]
-    AdjPriority --> Assign
-
-    Assign[Assign Staff theo tầng SLA] --> AC0[P1 → Staff Tier 1<br/>tổng thể hệ thống<br/>P2 → Staff Tier 2<br/>chuyên theo module<br/>P3 → Staff Tier 3<br/>chuyên sâu lĩnh vực]
-    AC0 --> AC1{Staff tầng phù hợp<br/>còn capacity?}
-    AC1 -->|Không| AC2[Xem workload<br/>toàn bộ Staff cùng tầng]
-    AC2 --> AC3[Chọn Staff load thấp nhất<br/>trong tầng phù hợp]
-    AC1 -->|Có| AC4[Xem skill match<br/>với loại pin / module]
-    AC3 --> AC5[Confirm assign]
-    AC4 --> AC5
-    AC5 --> Notify[System: start SLA timer<br/>+ push notify Staff]
-
-    Notify --> Wait{Chờ Staff xử lý}
+    Review3 --> PriorityCheck{Priority + Staff<br/>auto-assign có phù hợp?}
+    PriorityCheck -->|Phù hợp| Wait{Chờ Staff xử lý}
+    PriorityCheck -->|Cần override| Override[Override priority<br/>và/hoặc reassign staff khác<br/>+ ghi lý do bắt buộc<br/>vào Activity Timeline]
+    Override --> Wait
 
     Wait -->|Staff mark RESOLVED| Verify[Review Maintenance Log<br/>+ Wiki đã tạo chưa?]
     Wait -->|Staff escalate chủ động<br/>tại 2/3 SLA| Escalate
@@ -480,8 +493,8 @@ flowchart TD
     ED1 -->|Tier 1 — P1 chưa resolve| ED6[🚨 Critical incident<br/>Notify Admin + toàn team]
     ED1 -->|Tier 2 — P2| ED5[Reassign Staff Tier 1<br/>nâng xử lý tổng thể]
     ED1 -->|Tier 3 — P3| ED4[Reassign Staff Tier 2<br/>chuyên module phù hợp]
-    ED4 --> Notify
-    ED5 --> Notify
+    ED4 --> EscNotify[Push notify Staff mới]
+    ED5 --> EscNotify
 
     Approve --> End{Customer rate?}
     End -->|Rate good| Closed[CLOSED]
@@ -667,9 +680,10 @@ flowchart TD
 | BR-07 | Reopen ≥ 2 lần → System auto-cảnh báo Manager để review hoặc escalate senior |
 | BR-08 | Mọi thay đổi quan trọng (assign, status, priority, pause SLA, approve, reject, reopen) phải lưu actor + timestamp + reason |
 | BR-09 | ThresholdConfig gắn theo Battery Type — thay đổi ngưỡng ảnh hưởng toàn bộ asset cùng loại, Admin phải xác nhận trước khi save |
-| BR-10 | Manager assign Staff đúng tầng: P1→Tier 1, P2→Tier 2, P3→Tier 3. Escalate = chuyển lên tầng cao hơn |
+| BR-10 | System auto-assign Staff đúng tầng ngay khi ticket vào OPEN: P1→Tier 1, P2→Tier 2, P3→Tier 3 + workload thấp nhất trong tầng. Manager có thể override (ghi lý do bắt buộc). Escalate = Manager chuyển lên tầng cao hơn |
 | BR-11 | Wiki là quy trình mềm (không enforce cứng). Nếu lỗi đã có Wiki → Staff link ticket vào Wiki sẵn có; nếu chưa có → khuyến khích tạo Wiki mới. Manager có thể reject nếu thiếu hướng dẫn, không bắt buộc mỗi ticket phải tạo Wiki mới |
 | BR-12 | Tầng nào nhận ticket thì tầng đó đóng. System auto-trigger ESCALATED tại 2/3 SLA nếu chưa RESOLVED. Sau escalate, Staff cũ bị block hoàn toàn — Staff mới (tầng trên) chịu trách nhiệm đóng ticket. Không có ngoại lệ |
+| BR-13 | Ngay sau khi tạo ticket, System gọi async AI `/prescribe` để enrich ticket bằng `action_steps` + `escalation_conditions` — không chặn auto-assign/SLA timer. Nếu `human_verification_required=true` → Staff KHÔNG được tự thực thi action đó, phải chờ Manager duyệt trước |
 
 ### Priority & SLA
 
@@ -679,7 +693,7 @@ flowchart TD
 | P2 High | 24h | Suy giảm hiệu năng rõ rệt, lỗi sạc/xả | Tier 2 (theo module) | Manager reassign Tier 1 (priority giữ P2) |
 | P3 Normal | 72h | Bất thường nhẹ, câu hỏi vận hành | Tier 3 (chuyên sâu) | Escalate xử lý theo chuẩn P2 — Manager reassign senior |
 
-> **Priority do System tính tự động** từ classification + dependency. Manager **xem xét và có thể điều chỉnh 1 lần** khi triage (OPEN → ASSIGNED) — phải ghi lý do vào Activity Timeline. Sau đó **không thay đổi** trong toàn bộ vòng đời ticket. Breach SLA → escalate thêm *nhân lực/cấp bậc*, không phải đổi deadline hay priority. Giữ priority cố định đảm bảo audit trail chính xác và SLA report không bị skew.
+> **Priority và Staff assignment do System tính/gán tự động** (OPEN → ASSIGNED) từ classification + dependency + tier/workload — Manager không cần thao tác để ticket được assign. Manager **xem xét và có thể override 1 lần** sau khi auto-assign — phải ghi lý do vào Activity Timeline. Sau đó priority **không thay đổi** trong toàn bộ vòng đời ticket. Breach SLA → escalate thêm *nhân lực/cấp bậc*, không phải đổi deadline hay priority. Giữ priority cố định đảm bảo audit trail chính xác và SLA report không bị skew.
 
 ### Entity bổ sung nên có trong SRS
 

@@ -18,19 +18,21 @@
 | Input features | 3 | voltage, current, temperature |
 | Normalization | MinMaxScaler [0, 1] | Fit trên train set, lưu scaler.pkl để dùng lại |
 | SOH target | capacity_current / capacity_nominal × 100 | NASA: nominal = 2.0 Ah |
-| Train / Val / Test | 70 / 15 / 15 | Chia theo battery ID, không theo timestep — xem bảng bên dưới |
+| Train / Val / Test | 24 / 1 / 1 | Chia theo battery ID, không theo timestep — xem bảng bên dưới |
 | Random seed | 42 | Bắt buộc mọi script (train, preprocess) |
 
 **Train/Val/Test split — NASA Ames (chia theo battery ID, KHÔNG theo timestep):**
 
 | Split | Battery IDs | Số pin |
 |-------|-------------|--------|
-| Train | B0005/06/07/18, B0025–B0032, B0033, B0034, B0042–B0044, B0041, B0045, B0053, B0054, B0055, B0056 | 23 |
-| Val   | B0046, B0047 (4°C) | 2 |
+| Train | B0005/06/07/18, B0025–B0032, B0033, B0034, B0042–B0044, B0041, B0045, B0053, B0054, B0055, B0056, **B0047** | 24 |
+| Val   | B0046 (4°C) | 1 |
 | Test  | B0048 (4°C) — held out hoàn toàn | 1 |
 
+> **GH-88 (2026-07-08):** B0047 chuyển từ Val sang Train — train 4°C cũ (B0041/45/53–56) chỉ phủ SOH 0–67.2%, thiếu hẳn vùng 67–86% mà val/test cần → model ngoại suy lệch xuống đúng ngưỡng EOL 80%. Chi tiết: `docs/adr/0002-split-rebalance-b0047.md`.
+> **Phạm vi:** split 24/1/1 này áp dụng cho pipeline production window=30 (`soh_mamba_v1.6.pth` trở đi). Model headline bài báo NCKH (`soh_mamba_long_v2.2.pth`, LOBO) train **trước** khi đổi split (commit split-rebalance `899aa45` ngày 2026-07-05, checkpoint v2.2 đã có từ 2026-07-03) nên vẫn dùng split cũ 23/2/1 (B0047 ở val) — số liệu đó không đổi, xem `docs/nckh-paper-plan.md` §3.1.
 > Chia HẲN theo battery ID (1 pin chỉ thuộc 1 split) — đo đúng cross-battery generalization, không phải chia timestep trong 1 pin.
-> **Bắt buộc có pin 4°C trong train** (B0041/45/53/54/55/56): val/test đều 4°C, nếu train thiếu domain 4°C model phải extrapolate → generalization gap lớn.
+> **Bắt buộc có pin 4°C trong train** (B0041/45/53/54/55/56/B0047): val/test đều 4°C, nếu train thiếu domain 4°C model phải extrapolate → generalization gap lớn.
 > Nguồn duy nhất của split: `scripts/preprocess.py` (`TRAIN_IDS`/`VAL_IDS`/`TEST_IDS`). Sửa ở đó, không hardcode nơi khác.
 > Bỏ qua: B0036 (SOH spike 122% — nhiễu), B0049–B0052 (quá ngắn/corrupt), B0038–B0040 (dự phòng).
 

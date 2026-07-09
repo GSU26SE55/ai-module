@@ -238,7 +238,7 @@ class RetrievedDoc(_message.Message):
     def __init__(self, title: _Optional[str] = ..., content: _Optional[str] = ..., source: _Optional[str] = ..., relevance_score: _Optional[float] = ...) -> None: ...
 
 class PrescribeResponse(_message.Message):
-    __slots__ = ("battery_id", "soh_percent", "risk_level", "priority", "action_code", "prescription", "action_steps", "escalation_conditions", "ppe_required", "sop_references", "enriched", "maintenance_docs", "safety_docs", "human_verification_required", "safety_warnings", "inference_ms", "rag_ms", "llm_ms")
+    __slots__ = ("battery_id", "soh_percent", "risk_level", "priority", "action_code", "prescription", "action_steps", "escalation_conditions", "ppe_required", "sop_references", "enriched", "maintenance_docs", "safety_docs", "human_verification_required", "safety_warnings", "inference_ms", "rag_ms", "llm_ms", "llm_provider")
     BATTERY_ID_FIELD_NUMBER: _ClassVar[int]
     SOH_PERCENT_FIELD_NUMBER: _ClassVar[int]
     RISK_LEVEL_FIELD_NUMBER: _ClassVar[int]
@@ -257,6 +257,7 @@ class PrescribeResponse(_message.Message):
     INFERENCE_MS_FIELD_NUMBER: _ClassVar[int]
     RAG_MS_FIELD_NUMBER: _ClassVar[int]
     LLM_MS_FIELD_NUMBER: _ClassVar[int]
+    LLM_PROVIDER_FIELD_NUMBER: _ClassVar[int]
     battery_id: str
     soh_percent: float
     risk_level: str
@@ -275,7 +276,8 @@ class PrescribeResponse(_message.Message):
     inference_ms: float
     rag_ms: float
     llm_ms: float
-    def __init__(self, battery_id: _Optional[str] = ..., soh_percent: _Optional[float] = ..., risk_level: _Optional[str] = ..., priority: _Optional[str] = ..., action_code: _Optional[str] = ..., prescription: _Optional[str] = ..., action_steps: _Optional[_Iterable[str]] = ..., escalation_conditions: _Optional[_Iterable[str]] = ..., ppe_required: _Optional[_Iterable[str]] = ..., sop_references: _Optional[_Iterable[str]] = ..., enriched: _Optional[bool] = ..., maintenance_docs: _Optional[_Iterable[_Union[RetrievedDoc, _Mapping]]] = ..., safety_docs: _Optional[_Iterable[_Union[RetrievedDoc, _Mapping]]] = ..., human_verification_required: _Optional[bool] = ..., safety_warnings: _Optional[_Iterable[str]] = ..., inference_ms: _Optional[float] = ..., rag_ms: _Optional[float] = ..., llm_ms: _Optional[float] = ...) -> None: ...
+    llm_provider: str
+    def __init__(self, battery_id: _Optional[str] = ..., soh_percent: _Optional[float] = ..., risk_level: _Optional[str] = ..., priority: _Optional[str] = ..., action_code: _Optional[str] = ..., prescription: _Optional[str] = ..., action_steps: _Optional[_Iterable[str]] = ..., escalation_conditions: _Optional[_Iterable[str]] = ..., ppe_required: _Optional[_Iterable[str]] = ..., sop_references: _Optional[_Iterable[str]] = ..., enriched: _Optional[bool] = ..., maintenance_docs: _Optional[_Iterable[_Union[RetrievedDoc, _Mapping]]] = ..., safety_docs: _Optional[_Iterable[_Union[RetrievedDoc, _Mapping]]] = ..., human_verification_required: _Optional[bool] = ..., safety_warnings: _Optional[_Iterable[str]] = ..., inference_ms: _Optional[float] = ..., rag_ms: _Optional[float] = ..., llm_ms: _Optional[float] = ..., llm_provider: _Optional[str] = ...) -> None: ...
 
 class HealthRequest(_message.Message):
     __slots__ = ()

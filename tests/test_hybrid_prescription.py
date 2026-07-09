@@ -3,13 +3,13 @@
 Matches the current API:
   - rule_prescription.build_rule_prescription(prediction, risk, warnings)
   - prescription._enrich / run_prescription(enrich=...)
-  - _llm_client.is_available / generate_prescription_llm
+  - src.services.llm.chain.is_available / generate_prescription (GH-79 provider chain)
 """
 import os
 from unittest import mock
 
 from src.services.rule_prescription import build_rule_prescription
-from src.services import _llm_client
+from src.services.llm import chain
 from src.services.prescription import _enrich, _dedup
 
 
@@ -60,14 +60,15 @@ class TestDedup:
 class TestLlmClient:
     def test_is_available_reflects_api_key(self):
         with mock.patch.dict(os.environ, {}, clear=True):
-            assert _llm_client.is_available() is False
-        with mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test"}, clear=True):
-            assert _llm_client.is_available() is True
+            assert chain.is_available() is False
+        # DEEPSEEK_API_KEY — default LLM_PROVIDER_CHAIN is "deepseek,gemini" (GH-79).
+        with mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "sk-test"}, clear=True):
+            assert chain.is_available() is True
 
     def test_generate_raises_without_key(self):
         with mock.patch.dict(os.environ, {}, clear=True):
             try:
-                _llm_client.generate_prescription_llm("ctx", [], [])
+                chain.generate_prescription("ctx", [], [])
                 assert False, "expected RuntimeError when no API key"
             except RuntimeError:
                 pass
@@ -100,26 +101,29 @@ class TestEnrichFallback:
             "prescription": "LLM TEXT",
             "action_steps": ["llm step"],
             "ppe_required": ["face shield"],
+            "provider": "deepseek",
         }
-        with mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test"}, clear=True), \
-                mock.patch.object(_llm_client, "is_available", return_value=True), \
-                mock.patch.object(_llm_client, "generate_prescription_llm", return_value=llm_out):
+        with mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "sk-test"}, clear=True), \
+                mock.patch.object(chain, "is_available", return_value=True), \
+                mock.patch.object(chain, "generate_prescription", return_value=llm_out):
             out = _enrich(
                 {"soh_percent": 90.0}, {"action_code": "SCHEDULE_MAINTENANCE"}, [], self._RULE
             )
         assert out["enriched"] is True
         assert out["prescription"] == "LLM TEXT"
+        assert out["llm_provider"] == "deepseek"
         # rule PPE must never be dropped — union with LLM PPE
         assert "gloves" in out["ppe_required"]
         assert "face shield" in out["ppe_required"]
 
     def test_enrich_falls_back_when_llm_raises(self):
-        with mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-test"}, clear=True), \
-                mock.patch.object(_llm_client, "is_available", return_value=True), \
-                mock.patch.object(_llm_client, "generate_prescription_llm",
+        with mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "sk-test"}, clear=True), \
+                mock.patch.object(chain, "is_available", return_value=True), \
+                mock.patch.object(chain, "generate_prescription",
                                   side_effect=RuntimeError("API down")):
             out = _enrich(
                 {"soh_percent": 90.0}, {"action_code": "SCHEDULE_MAINTENANCE"}, [], self._RULE
             )
         assert out["enriched"] is False
         assert out["prescription"] == "RULE TEXT"
+        assert out["llm_provider"] == "none"

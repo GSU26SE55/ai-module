@@ -125,6 +125,7 @@ class TestPrescriptionPipeline:
                 )
                 mock_ret.assert_not_called()  # rule path must NOT touch RAG
         assert out["enriched"] is False
+        assert out["llm_provider"] == "none"
         assert out["maintenance_docs"] == []
         assert out["rag_ms"] == 0.0 and out["llm_ms"] == 0.0
         assert out["action_code"] == "REPLACE_IMMEDIATELY"
@@ -151,15 +152,16 @@ class TestPrescriptionPipeline:
             "prescription": "LLM-generated plan",
             "action_steps": ["step a"],
             "ppe_required": ["Face shield"],
+            "provider": "deepseek",
         }
         with (
             patch.object(
                 prescription, "run_inference", return_value=fake_inference_result()
             ),
             patch.object(prescription, "_get_retriever", return_value=FakeRetriever()),
-            patch("src.services._llm_client.is_available", return_value=True),
+            patch("src.services.llm.chain.is_available", return_value=True),
             patch(
-                "src.services._llm_client.generate_prescription_llm",
+                "src.services.llm.chain.generate_prescription",
                 return_value=llm_out,
             ),
         ):
@@ -171,6 +173,7 @@ class TestPrescriptionPipeline:
         assert out["action_steps"] == ["step a"]
         assert "Face shield" in out["ppe_required"]
         assert len(out["maintenance_docs"]) == 1
+        assert out["llm_provider"] == "deepseek"
 
     def test_enrich_falls_back_when_llm_errors(self):
         from src.services import prescription
@@ -187,9 +190,9 @@ class TestPrescriptionPipeline:
                 prescription, "run_inference", return_value=fake_inference_result()
             ),
             patch.object(prescription, "_get_retriever", return_value=FakeRetriever()),
-            patch("src.services._llm_client.is_available", return_value=True),
+            patch("src.services.llm.chain.is_available", return_value=True),
             patch(
-                "src.services._llm_client.generate_prescription_llm",
+                "src.services.llm.chain.generate_prescription",
                 side_effect=RuntimeError("API down"),
             ),
         ):
@@ -199,6 +202,7 @@ class TestPrescriptionPipeline:
         assert out["enriched"] is False  # fell back
         assert "end-of-life" in out["prescription"].lower()  # rule text kept
         assert out["human_verification_required"] is True
+        assert out["llm_provider"] == "none"
 
     def test_enrich_skipped_without_api_key(self):
         from src.services import prescription
@@ -215,12 +219,13 @@ class TestPrescriptionPipeline:
                 prescription, "run_inference", return_value=fake_inference_result()
             ),
             patch.object(prescription, "_get_retriever", return_value=FakeRetriever()),
-            patch("src.services._llm_client.is_available", return_value=False),
+            patch("src.services.llm.chain.is_available", return_value=False),
         ):
             out = prescription.run_prescription(
                 make_dummy_readings(), "B0005", enrich=True
             )
         assert out["enriched"] is False
+        assert out["llm_provider"] == "none"
 
 
 # ── Latency: rule path must stay on the P1 <100ms hot-path ───────────────────
