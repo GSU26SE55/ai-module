@@ -114,3 +114,11 @@ RAW_FEATURES = [
 ]
 
 SEED = 42
+
+# GH-95: causal degradation-rate anomaly rule (src/services/battery_history.py).
+# RATE_THRESHOLD = train p90 of the locally smoothed per-cycle SOH fade rate —
+# SAME methodology/percentile as GH-70's GVHD-approved rate-based label
+# (scripts/eval_anomaly.py), recomputed on the current split (post GH-88) via
+# scripts/compute_rate_threshold.py: RATE_THRESHOLD = 0.5016 %SOH/cycle, seed 42.
+RATE_THRESHOLD = 0.5016  # %SOH/cycle
+CAUSAL_RATE_K = 2  # cycles back to compare against — best AUC (0.80-0.84) in GH-95 sweep {2,3,5,8}

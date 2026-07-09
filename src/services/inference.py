@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 from src.core import model_loader
 from src.core.config import (
     BASE_FEATURES,
+    CAUSAL_RATE_K,
     CYCLE_COUNT_NORM,
     FEATURES,
     INPUT_FEATURES,
@@ -33,6 +34,7 @@ from src.models.anomaly_detector import (
     generate_warnings,
     temperature_domain_distance,
 )
+from src.services import battery_history
 
 _FEATURE_NAMES = FEATURES  # single source of truth: src/core/config.py
 
@@ -77,6 +79,18 @@ def _compute_feature_summary(raw: np.ndarray) -> dict:
     return summary
 
 
+def _raw_cycle_count(raw: np.ndarray, cycle_idx: int | None) -> float | None:
+    """GH-56/GH-95: the battery's cycle number for this window, or None if unknown.
+
+    Same source of truth _append_derived_features() uses internally for
+    cycle_count_norm — factored out so GH-95's battery_history (which needs
+    the raw, un-normalized count) doesn't duplicate this branch.
+    """
+    if raw.shape[1] >= len(BASE_FEATURES) + 2:
+        return float(raw[0, len(BASE_FEATURES)])
+    return float(cycle_idx) if cycle_idx is not None else None
+
+
 def _append_derived_features(
     x_scaled: np.ndarray, raw: np.ndarray, cycle_idx: int | None
 ) -> np.ndarray:
@@ -101,18 +115,17 @@ def _append_derived_features(
             f"model expects {model_dim} features (incl. derived soc_percent) but the "
             f"payload has only {raw.shape[1]} columns — the 'time' column is required."
         )
+    raw_cycle_count = _raw_cycle_count(raw, cycle_idx)
     if raw.shape[1] >= len(BASE_FEATURES) + 2:
         # GH-56: BE sends cycle_count (constant across the window) + soc_percent
         # (per-timestep) directly as columns 5-6 — no server-side derivation needed.
-        raw_cycle_count = float(raw[0, len(BASE_FEATURES)])
         cycle_count_norm = raw_cycle_count / CYCLE_COUNT_NORM
         soc_norm = raw[:, len(BASE_FEATURES) + 1] / 100.0
     else:
         current = raw[:, BASE_FEATURES.index("current")]
         time_col = raw[:, BASE_FEATURES.index("time")]
         soc_norm = compute_soc_percent(current, time_col, NOMINAL_CAPACITY_AH) / 100.0
-        raw_cycle_count = cycle_idx
-        cycle_count_norm = 0.0 if cycle_idx is None else cycle_idx / CYCLE_COUNT_NORM
+        cycle_count_norm = 0.0 if raw_cycle_count is None else raw_cycle_count / CYCLE_COUNT_NORM
 
     # GH-59: CYCLE_COUNT_NORM=200 is fit to NASA's observed max (~197 cycles) — a
     # real battery outliving that goes out of the range the model was trained on
@@ -139,23 +152,29 @@ def run_inference(
     readings: list[list[float]],
     cycle_idx: int | None = None,
     n_series: int = 1,
+    battery_id: str | None = None,
 ) -> dict:
     """
     Full inference pipeline: scale → Mamba SOH → IsolationForest → classify.
 
     Args:
-        readings:  (30, 6) preferred — BE sends cycle_count + soc_percent directly
-                   as columns 5-6 (GH-56); (30, 4) or legacy (30, 3) also accepted,
-                   in which case the 2 derived columns are computed server-side
-                   (GH-54: window-local Coulomb counting + cycle_idx below).
-        cycle_idx: 0-based discharge-cycle number of this battery, only used when
-                   readings has 4 (or 3) columns (default None → cycle_count feature = 0).
-                   Ignored when readings already carries 6 columns.
-        n_series:  GH-65: cells in series (pack_config.n_series). Voltage arrives as
-                   pack voltage and is divided per-cell HERE, before the scaler and
-                   before warning thresholds — so a 12V/3S pack is scored on the
-                   ~4V cell distribution the model was trained on. 1 = single cell
-                   (default, legacy behavior unchanged).
+        readings:   (30, 6) preferred — BE sends cycle_count + soc_percent directly
+                    as columns 5-6 (GH-56); (30, 4) or legacy (30, 3) also accepted,
+                    in which case the 2 derived columns are computed server-side
+                    (GH-54: window-local Coulomb counting + cycle_idx below).
+        cycle_idx:  0-based discharge-cycle number of this battery, only used when
+                    readings has 4 (or 3) columns (default None → cycle_count feature = 0).
+                    Ignored when readings already carries 6 columns.
+        n_series:   GH-65: cells in series (pack_config.n_series). Voltage arrives as
+                    pack voltage and is divided per-cell HERE, before the scaler and
+                    before warning thresholds — so a 12V/3S pack is scored on the
+                    ~4V cell distribution the model was trained on. 1 = single cell
+                    (default, legacy behavior unchanged).
+        battery_id: GH-95 — key into src/services/battery_history.py's per-battery
+                    SOH history, used to compute a causal degradation rate (this
+                    battery vs. its own last CAUSAL_RATE_K recorded cycles). None/
+                    missing → causal_rate is None, classify_anomaly() behaves exactly
+                    as before GH-95.
 
     Returns:
         dict with soh_percent, classification, confidence, inference_ms,
@@ -211,7 +230,15 @@ def run_inference(
 
     # IsolationForest trained on spectral features (57 dims) — use same features at inference
     score = float(model_loader.iso_model.decision_function(feat_scaled)[0])
-    classification = classify_anomaly(score, soh_median)
+    # GH-95: causal_rate compares soh_median to this battery's OWN recent history —
+    # computed BEFORE record() below, so it only ever sees cycles strictly before
+    # this request (causal, not the offline label's centered/future-peeking window).
+    raw_cycle_count = _raw_cycle_count(raw, cycle_idx)
+    rate = battery_history.causal_rate(
+        battery_id, raw_cycle_count, soh_median, CAUSAL_RATE_K
+    )
+    classification = classify_anomaly(score, soh_median, causal_rate=rate)
+    battery_history.record(battery_id, raw_cycle_count, soh_median)
     anomaly_confidence = round(min(1.0, max(0.0, abs(score))), 3)
     # soh_confidence already computed above via MC Dropout
     stage_info = classify_health_stage_probabilistic(mc_preds)

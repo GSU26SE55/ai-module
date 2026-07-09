@@ -1,6 +1,6 @@
 import numpy as np
 
-from src.core.config import TEMPERATURE_OOD_THRESHOLD, TEMPERATURE_TRAIN_CLUSTERS
+from src.core.config import RATE_THRESHOLD, TEMPERATURE_OOD_THRESHOLD, TEMPERATURE_TRAIN_CLUSTERS
 
 # ── Thresholds ────────────────────────────────────────────────────────────────
 EOL_SOH = 80.0           # end-of-life threshold (NASA 18650 convention)
@@ -23,7 +23,10 @@ CURRENT_WARNING       = -2.0   # A (negative = discharge; 1C for 2Ah cell)
 CURRENT_CRITICAL      = -3.0   # A (1.5C)
 
 
-def classify_anomaly(score: float, soh: float) -> str:
+_ANOMALY_TIERS = ["Normal", "Degrading", "Failed"]
+
+
+def classify_anomaly(score: float, soh: float, causal_rate: float | None = None) -> str:
     """
     SOH is the primary driver. IsolationForest score can only downgrade
     Normal → Degrading when a sudden sensor anomaly is detected.
@@ -34,14 +37,30 @@ def classify_anomaly(score: float, soh: float) -> str:
        < 80%: Failed — below EOL threshold
 
     score: IsolationForest decision_function (negative = more anomalous)
+
+    causal_rate: GH-95 — %SOH lost per cycle vs. this battery's own recent
+        history (src/services/battery_history.py), or None when unavailable
+        (cold start / missing battery_id / missing cycle info — behaves
+        exactly as before GH-95). A 57-dim static window can't see this signal
+        (GH-70/GH-95: supervised AUC ~0.5 on any single-window feature set) —
+        it needs the battery's own trend, not this window's shape. When it
+        exceeds RATE_THRESHOLD (train p90, same definition as GH-70's
+        rate-based label), escalate the SOH/score-based tier by one step
+        (Normal→Degrading, Degrading→Failed) rather than overriding it —
+        RATE_THRESHOLD alone under-performs SOH/score on non-degrading windows.
     """
     if soh < EOL_SOH:
-        return "Failed"
+        base = "Failed"
     elif soh < 90.0:
-        return "Degrading"
+        base = "Degrading"
     else:
         # SOH healthy — IsolationForest can flag sudden sensor anomalies
-        return "Degrading" if score < -0.1 else "Normal"
+        base = "Degrading" if score < -0.1 else "Normal"
+
+    if causal_rate is not None and causal_rate > RATE_THRESHOLD:
+        idx = min(_ANOMALY_TIERS.index(base) + 1, len(_ANOMALY_TIERS) - 1)
+        return _ANOMALY_TIERS[idx]
+    return base
 
 
 def classify_health_stage(soh: float) -> str:

@@ -1,87 +1,148 @@
-# Plan — GH-95: Optimize production anomaly F1 — add degradation-rate features to IsolationForest
+# Plan — GH-95: Optimize production anomaly F1 — causal degradation-rate rule (per-battery state)
 
 ## Metadata
-- **Status:** PLANNING | **Role:** AI | **Ngày:** 2026-07-09
+- **Status:** REVIEWING | **Role:** AI | **Ngày:** 2026-07-09
 - **Issue:** #95 — https://github.com/GSU26SE55/ai-module/issues/95
 - **Sprint:** Sprint 4 (due 2026-07-11)
 
-## Mục tiêu
-`isolation_forest_v1.6.pkl` production hiện không đạt target F1 > 0.80 (`ai.md`) vì score chỉ nhìn 57-dim spectral feature (tĩnh, per-window), không thấy được chế độ suy thoái theo thời gian (F1 tuned 0.34–0.52 trên nhãn rate-based, xem GH-70). Thêm 1 feature "degradation residual" — lệch giữa SOH dự đoán và SOH kỳ vọng theo population fade curve tại cycle hiện tại — vào input fit IsolationForest, để bắt được tín hiệu "suy thoái nhanh hơn bình thường" mà không cần lịch sử đa-cycle.
+## ⚠️ REVISION — approach v2 (thay thế hoàn toàn plan v1)
 
-## ⚠️ Phát hiện kỹ thuật quan trọng (đã verify trên code)
-- `/predict` là **stateless, single-window** (30 timestep ≈ 1 cycle) — không có lịch sử SOH nhiều cycle của cùng 1 pin trong 1 request.
-- `compute_degradation_metrics()` (`src/models/anomaly_detector.py:185`) xác nhận: với window=30, rolling-slope luôn fallback về hằng số population `DEGRADATION_RATE=0.15%/cycle` — không phân biệt được giữa các request, không dùng làm feature IsolationForest được.
-- **Quyết định (đã confirm với user):** dùng residual = `soh_predicted − (100 − DEGRADATION_RATE × cycle_count)` — chỉ cần `soh_predicted` (đã có từ Mamba MC Dropout) + `cycle_count` (đã có sẵn trong payload từ GH-56, cột 5) → **không đổi BE contract, không cần state per-battery**.
-- **Ràng buộc kiến trúc quan trọng:** `feat_scaled` (57-dim) hiện dùng chung cho **cả Mamba's FiLM branch (`x_feat_tensor`) lẫn IsolationForest** (`src/services/inference.py:180-213`). Residual feature **chỉ được thêm vào input của IsolationForest**, KHÔNG được đổi `feat_scaled` đưa vào Mamba (tránh phải retrain Mamba — ngoài scope, GH-95 chỉ optimize anomaly detection).
+Plan v1 (feed "degradation residual" — soh_predicted vs population fade curve — vào
+IsolationForest) đã bị **loại bỏ sau khi đo thực nghiệm**, không phải bị bỏ giữa chừng:
+
+1. Refit IsolationForest với residual feature (58-dim): F1 val 0.4512, test 0.3003 —
+   **không đổi** so baseline 57-dim (0.4533/0.2972). Trong nhiễu thống kê.
+2. Để loại trừ "chưa đúng feature" khỏi "thông tin không tồn tại": train **supervised**
+   classifier (LogisticRegression + RandomForest, biết nhãn thật) trên chính 57-dim +
+   58-dim. Kết quả: **AUC chỉ 0.49–0.58** (random = 0.5) — kể cả với thông tin tối đa
+   (supervised) cũng không tách được nhãn. Kết luận: residual-từ-population không mang
+   tín hiệu thật, không phải do chọn sai model/threshold.
+3. Test tiếp **causal rate** (so sánh SOH hiện tại với SOH k cycle *trước đó* của
+   CHÍNH pin đó — cần state, khác population residual không cần state):
+   AUC nhảy lên **0.80–0.84** (k=2), F1 threshold đơn giản đạt **0.605 val / 0.535 test**.
+4. Nhưng feed causal rate vào IsolationForest (58-dim) **vẫn không cải thiện** —
+   57 chiều spectral (đa số nhiễu với nhãn này) lấn át tín hiệu causal rate trong
+   cơ chế contamination-splitting của IsolationForest.
+5. **Rule trực tiếp trên causal rate** (không qua IsolationForest): F1 **0.605 val /
+   0.535 test** — kết quả tốt nhất tìm được, dùng làm approach chính thức.
+
+**Kết luận kỹ thuật:** nhãn rate-based (suy thoái nhanh) không thể suy ra từ 1 window
+tĩnh (residual-population hay bất kỳ feature tĩnh nào khác) — đây là information
+constraint, không phải feature-engineering problem. Chỉ có cách duy nhất mang lại tín
+hiệu thật: so sánh pin với chính lịch sử gần nhất của nó → **bắt buộc cần state
+per-battery**, điều mà plan v1 đã loại khỏi scope. User đã xác nhận đổi hướng sau khi
+xem bằng chứng thực nghiệm (không phải đoán).
+
+## Mục tiêu
+Thêm 1 rule classification mới dựa trên **causal degradation rate** (so với lịch sử
+gần nhất của chính battery đó, lưu trong AI module) — kết hợp với `classify_anomaly()`
+hiện có (IsolationForest 57-dim giữ nguyên, KHÔNG đổi). F1 cải thiện từ baseline
+0.30–0.45 lên ~0.53–0.61 — **chưa đạt 0.80**, báo cáo trung thực, đây là cải thiện có
+căn cứ thực nghiệm, không phải cách duy nhất/đảm bảo đạt target cứng của `ai.md`.
 
 ## Scope
 **Trong scope:**
-- Hàm tính residual (dùng chung train-fit + production inference) trong `src/features/extractor.py`
-- Script fit lại IsolationForest **local, không cần Kaggle** (giống tiền lệ GH-70's `eval_anomaly.py` — sklearn fit vài giây trên CPU; Mamba KHÔNG train lại, chỉ forward-pass lấy `soh_predicted` trên train set)
-- Đổi format artifact `isolation_forest*.pkl` từ bare sklearn object → dict bundle `{model, version, residual_mean, residual_std}` (theo đúng pattern `scaler.pkl`/checkpoint đã có) + thêm version assertion khi load (hiện `iso_model` là artifact DUY NHẤT không có version check — GH-95 khắc phục luôn gap này vì bắt buộc phải đổi format)
-- Tách `ISO_FOREST_VERSION` khỏi `MODEL_VERSION` trong `config.py` — vì lần này chỉ đổi IsolationForest, Mamba không đổi, bump chung `MODEL_VERSION` sẽ sai ngữ nghĩa (invalidate Mamba checkpoint đang đúng)
-- Cập nhật `run_inference()` để tính residual + nối vào `feat_scaled` **chỉ cho** input của `iso_model.decision_function()`
-- Cập nhật `scripts/train.py` (IsolationForest section) để lần retrain Kaggle tiếp theo cũng fit đúng theo feature space mới (đồng bộ, không lệch giữa 2 nơi fit)
-- Evaluate lại bằng nhãn rate-based của GH-70 (`scripts/eval_anomaly.py`'s `collect_split`/`expand_to_windows`/`rate_labels` — import lại, không viết lại logic)
-- Unit test cho hàm residual + test integration `/predict` với artifact format mới
-- Commit artifact `.pkl` mới vào Git (bắt buộc theo `ai.md`)
+- Module state per-battery: `src/services/battery_history.py` — in-memory, thread-safe,
+  bounded, keyed bằng `battery_id` (đã có sẵn trong request, KHÔNG đổi BE contract)
+- Hàm causal rate: so SOH hiện tại với SOH k=2 cycle trước (best AUC theo thực nghiệm)
+  của cùng battery
+- `RATE_THRESHOLD` config constant — train p90 của local fade rate, **cùng phương
+  pháp/threshold với GH-70** (đã GVHD duyệt), tính lại trên split hiện tại (post GH-88)
+- Mở rộng `classify_anomaly()` — thêm tham số `causal_rate: float | None`, escalate
+  1 tier khi rate vượt ngưỡng, giữ nguyên hành vi cũ khi `causal_rate=None` (cold start /
+  thiếu cycle_count / thiếu battery_id)
+- Thread `battery_id` + `raw_cycle_count` vào `run_inference()`, record lịch sử SAU khi
+  tính rate (rate dùng lịch sử TRƯỚC điểm hiện tại — đúng nghĩa causal)
+- Update REST router + gRPC servicer truyền `battery_id` xuống `run_inference()`
+- Unit test cho `battery_history.py` (cold start, thread-safety, eviction/bounded)
+  + integration test `/predict` gọi liên tiếp cùng battery_id → classification escalate
+- Latency re-benchmark (state lookup O(1)/O(k), kỳ vọng không đổi đáng kể — verify)
+- Document rõ giới hạn: in-memory = mất state khi restart, KHÔNG an toàn nếu chạy nhiều
+  replica (single-instance deployment giả định — đúng với scope capstone)
 
 **Ngoài scope:**
-- Không retrain/đổi kiến trúc Mamba, không đổi `feat_scaled` đưa vào Mamba, không đổi `MODEL_VERSION`
-- Không đổi BE request contract (`cycle_count` đã có sẵn từ GH-56)
-- Không thêm state per-battery trong AI module (đã loại ở vòng hỏi trước)
-- Không sửa `.claude/rules/tech/ai.md` — chỉ note lại thay đổi versioning trong PR description, để user tự cập nhật rule file nếu đồng ý
-- Không đảm bảo F1 > 0.80 tuyệt đối — nếu sau khi thêm feature vẫn không đạt, báo cáo trung thực (đúng tinh thần GH-70), không cố tune quá tay để "đẹp số"
-- Rerun `logs/nckh/anomaly/table5.md` cho paper — việc đó thuộc GH-70, không đụng ở đây
+- Không đổi IsolationForest (giữ nguyên `isolation_forest_v1.6.pkl`, 57-dim, không
+  version bump — approach v1's `ISO_FOREST_VERSION` decoupling đã bị revert vì không
+  còn cần thiết)
+- Không đổi Mamba, không đổi BE contract
+- Không thêm persistent storage (Redis/DB) cho state — in-memory đủ cho scope capstone,
+  ghi rõ limitation thay vì over-engineer
+- Không đảm bảo đạt F1 > 0.80 — báo cáo trung thực số đạt được (0.53–0.61)
+- Không sửa `.claude/rules/tech/ai.md` — note trong PR, user tự cập nhật nếu đồng ý
 
 ## Files
 | File | Action | Ghi chú |
 |------|--------|---------|
-| `src/features/extractor.py` | modify | thêm `compute_degradation_residual(soh_pred, raw_cycle_count) -> float`, dùng `DEGRADATION_RATE` từ `src.models.anomaly_detector` |
-| `src/core/config.py` | modify | thêm `ISO_FOREST_VERSION`, đổi `ISO_FOREST_PATH` dùng version riêng thay vì `MODEL_VERSION` |
-| `src/core/model_loader.py` | modify | load `iso_model` như dict bundle, thêm version assert (giống pattern scaler/Mamba) |
-| `src/services/inference.py` | modify | tính residual, scale bằng `residual_mean/std` từ bundle, nối vào input `decision_function()` (KHÔNG đổi `x_feat_tensor` cho Mamba) |
-| `scripts/refit_isolation_forest.py` | create | fit local: load Mamba v1.6 (forward-pass only) + reconstruct cycle_count qua `load_cycles`/`collect_split` (import từ `eval_anomaly.py`) → tính residual → fit IsolationForest 58-dim → eval P/R/F1 bằng rate-based label (import `rate_labels` từ `eval_anomaly.py`) → save bundle |
-| `scripts/train.py` | modify | IsolationForest section: dùng cùng hàm residual + format bundle mới, để Kaggle retrain tiếp theo nhất quán |
-| `models/weights/isolation_forest_v{ISO_FOREST_VERSION}.pkl` | create (output) | artifact mới, commit vào Git |
-| `tests/test_inference.py` | modify | update test cho artifact bundle format mới (feature: 58-dim vào iso, 57-dim vào Mamba không đổi) |
-| `tests/test_extractor.py` hoặc file test mới | modify/create | unit test `compute_degradation_residual()` — cycle_count=None, cycle_count=0, cycle_count lớn, residual âm/dương |
+| `src/services/battery_history.py` | create | in-memory store: `record(battery_id, cycle, soh)`, `causal_rate(battery_id, k=2) -> float \| None`. RLock, `deque(maxlen=8)` per battery |
+| `src/core/config.py` | modify | thêm `RATE_THRESHOLD` (train p90 local fade rate, cite GH-70 methodology) + `CAUSAL_RATE_K = 2` |
+| `src/models/anomaly_detector.py` | modify | `classify_anomaly()` thêm param `causal_rate: float \| None = None`, escalate 1 tier nếu vượt `RATE_THRESHOLD` |
+| `src/services/inference.py` | modify | `run_inference()` thêm `battery_id` param; gọi `battery_history.causal_rate()` TRƯỚC, dùng trong `classify_anomaly()`, rồi `battery_history.record()` SAU |
+| `src/routers/predict.py` | modify | truyền `request.battery_id` xuống `run_inference()` |
+| `src/grpc_server.py` | modify | truyền `battery_id` xuống `run_inference()` (cả `Predict` và `PredictStream`) |
+| `scripts/compute_rate_threshold.py` | create | script nhỏ tính `RATE_THRESHOLD` từ train set hiện tại (tái dùng `eval_anomaly.py`'s `local_fade_rate`/`smooth_soh`/`RATE_PERCENTILE`), in giá trị để dán vào `config.py` — không phải artifact, chỉ để reproducible |
+| `tests/test_battery_history.py` | create | unit test: cold start (None), causal_rate đúng công thức, bounded history (eviction), thread-safety cơ bản |
+| `tests/test_anomaly_detector.py` hoặc file liên quan | modify | test `classify_anomaly()` với `causal_rate` các case: None (giữ nguyên hành vi cũ), vượt ngưỡng (escalate), dưới ngưỡng (không đổi) |
+| `tests/test_inference.py` | modify | test `run_inference()` với `battery_id` — gọi liên tiếp cùng battery, verify causal_rate được dùng đúng (record sau khi tính rate) |
 
 ## Approach
-1. `compute_degradation_residual(soh_pred, raw_cycle_count)`: nếu `raw_cycle_count is None` → return `0.0` (giống pattern `cycle_count_norm=0.0` hiện có khi thiếu cycle info); ngược lại `expected = 100.0 - DEGRADATION_RATE * raw_cycle_count`, return `soh_pred - expected`.
-2. `scripts/refit_isolation_forest.py`: forward-pass Mamba (eval mode, single pass — không MC Dropout, không cần train) lấy `soh_pred` cho từng window train/val/test; dùng `collect_split`+`expand_to_windows` (import từ `eval_anomaly.py`) để có `raw_cycle_count` mỗi window; tính residual; z-score bằng mean/std **của train** (không leak val/test); nối `[feat_scaled(57), residual_scaled(1)]` = 58-dim; fit `IsolationForest(contamination=0.1, n_estimators=100, random_state=42)` trên train 58-dim; eval P/R/F1 val/test bằng `rate_labels` (đúng nhãn GH-70 đã GVHD duyệt); in kết quả so sánh trước/sau.
-3. `run_inference()`: sau khi có `soh_median`/`raw_cycle_count` (đã tính sẵn trong hàm), gọi `compute_degradation_residual`, scale bằng `residual_mean/std` load từ bundle, `iso_features = np.concatenate([feat_scaled, [[residual_scaled]]], axis=1)`, `score = model_loader.iso_model["model"].decision_function(iso_features)[0]`.
-4. `model_loader.py`: `iso_artifact = joblib.load(ISO_FOREST_PATH)`; assert `iso_artifact["version"] == ISO_FOREST_VERSION`; lưu `iso_model = iso_artifact` (dict) thay vì bare object.
-5. Nếu F1 vẫn < 0.80 sau khi thử: báo cáo số đạt được, không tự ý đổi thêm hyperparameter/feature ngoài approach đã chốt — escalate cho user quyết định bước tiếp theo (đúng nguyên tắc GH-70).
+1. `battery_history.py`: `_history: dict[str, deque[tuple[float, float]]]` (cycle, soh),
+   `maxlen=8`, `RLock` bảo vệ (giống pattern `_MC_LOCK` đã có trong `inference.py`).
+   `causal_rate(battery_id, k=2)`: lấy điểm hiện tại mới nhất đã ghi và điểm cách đó tối
+   đa k bước (hoặc điểm cũ nhất nếu chưa đủ k) → `-(soh_now - soh_then) / (cycle_now -
+   cycle_then)`. Return `None` nếu chưa có lịch sử, `dc <= 0`, hoặc thiếu battery_id.
+2. `run_inference(readings, cycle_idx, n_series, battery_id)`:
+   - Sau khi có `raw_cycle_count` + `soh_median`: gọi
+     `rate = battery_history.causal_rate(battery_id)` (dùng lịch sử TRƯỚC điểm này)
+   - `classification = classify_anomaly(score, soh_median, causal_rate=rate)`
+   - Cuối hàm: `battery_history.record(battery_id, raw_cycle_count, soh_median)`
+3. `classify_anomaly(score, soh, causal_rate=None)`: giữ nguyên logic gốc tính `base`;
+   nếu `causal_rate is not None and causal_rate > RATE_THRESHOLD`: escalate 1 tier
+   (Normal→Degrading, Degrading→Failed, Failed giữ nguyên).
+4. `RATE_THRESHOLD`: chạy `scripts/compute_rate_threshold.py` 1 lần, lấy số thật trên
+   split hiện tại (đo được ở bước khảo sát: ~0.50 %SOH/cycle), hardcode vào `config.py`
+   kèm comment nguồn gốc (train p90, seed 42, cùng phương pháp GH-70).
 
 ## Edge Cases
-- `raw_cycle_count is None` (payload cũ 3/4-cột, không có cycle info) → residual = 0.0 → coi như "đúng kỳ vọng trung bình", không phạt/thưởng anomaly score
-- `raw_cycle_count` ngoài range `[0, CYCLE_COUNT_NORM]` (đã có warning/clip sẵn ở `_append_derived_features`) → dùng giá trị đã clip cho residual để nhất quán
-- Latency: thêm 1 scalar feature — benchmark lại `scripts/benchmark_grpc.py --real-weights` để confirm vẫn <100ms (kỳ vọng không đổi đáng kể, nhưng phải verify không giả định)
-- Artifact cũ (`isolation_forest_v1.6.pkl`, bare object không version) vẫn còn trên `models/weights/` sau khi đổi tên file mới theo `ISO_FOREST_VERSION` — không xoá, giữ để rollback nếu cần
+- `battery_id` thiếu/rỗng, `raw_cycle_count is None` → `causal_rate=None` → hành vi y hệt
+  trước khi có GH-95 (không escalate, không lỗi)
+- Request đầu tiên của 1 battery (cold start) → không đủ lịch sử → `None`
+- `cycle_now <= cycle_then` (retry, out-of-order, duplicate) → `None` thay vì chia 0/âm
+- Nhiều battery đồng thời → dict riêng theo `battery_id`, không đụng nhau
+- **Giới hạn đã biết (ghi rõ trong docstring + PR):** in-memory, single-process — mất
+  state khi restart server; KHÔNG đúng nếu deploy nhiều replica load-balanced (mỗi
+  replica có state riêng, causal_rate sẽ sai/thiếu tuỳ replica nào nhận request). Chấp
+  nhận được ở quy mô capstone (single container), ghi rõ để không ai hiểu nhầm là an
+  toàn cho scale lớn hơn.
 
 ## Acceptance Criteria
-- [ ] `compute_degradation_residual()` có unit test đủ edge case (None, 0, giá trị lớn, âm/dương)
-- [ ] `scripts/refit_isolation_forest.py` chạy local < 1 phút, seed 42, in được F1 val/test trước/sau so sánh
-- [ ] F1 cải thiện rõ rệt so với baseline 0.34 (test)/0.525 (val) — nếu đạt ≥ 0.80: ghi rõ đạt target `ai.md`; nếu không đạt: báo cáo trung thực số đạt được + không tự tune quá tay
-- [ ] `/predict` (REST + gRPC) vẫn trả kết quả đúng shape, không lỗi với artifact bundle mới
-- [ ] Latency benchmark lại — vẫn < 100ms (`scripts/benchmark_grpc.py --real-weights`)
-- [ ] Mamba's `x_feat_tensor` không đổi (vẫn 57-dim) — verify bằng test rằng SOH prediction không đổi so với trước khi thêm residual feature
-- [ ] `isolation_forest_v{ISO_FOREST_VERSION}.pkl` commit vào Git
-- [ ] `pytest tests/ --cov=src` ≥ 85%, PASS
+- [ ] `battery_history.py` unit test đủ edge case (cold start, eviction, thread-safety)
+- [ ] `classify_anomaly()` test: None giữ nguyên hành vi cũ, vượt ngưỡng escalate đúng 1 tier
+- [ ] F1 đo lại trên val/test (rate-based label GH-70) — báo cáo trung thực số đạt được
+  (kỳ vọng ~0.53–0.61, không phải 0.80) trong PR description
+- [ ] `/predict` REST + gRPC vẫn đúng shape, gọi liên tiếp cùng `battery_id` → classification
+  phản ứng đúng với rate tăng đột biến (integration test)
+- [ ] Latency vẫn <100ms (`scripts/benchmark_grpc.py --real-weights`) — verify không giả định
+- [ ] IsolationForest/Mamba không đổi — verify SOH prediction không đổi so với trước GH-95
+- [ ] `pytest tests/ --cov=src` ≥85% PASS
+- [ ] PR description nêu rõ giới hạn in-memory/single-instance
 
 ## Steps (AI)
-- [ ] Bước 1: Viết `compute_degradation_residual()` trong `src/features/extractor.py` + unit test
-- [ ] Bước 2: Đổi `config.py` (`ISO_FOREST_VERSION`) + `model_loader.py` (bundle format + version assert)
-- [ ] Bước 3: Viết `scripts/refit_isolation_forest.py` — fit + eval local, so sánh F1 trước/sau
-- [ ] Bước 4: Chạy script, xem kết quả F1 — nếu có vấn đề bất ngờ (residual không tách được nhãn) → dừng, báo cáo lại trước khi tiếp tục
-- [ ] Bước 5: Cập nhật `run_inference()` dùng artifact + residual mới
-- [ ] Bước 6: Đồng bộ `scripts/train.py` IsolationForest section (Kaggle retrain sau này nhất quán)
-- [ ] Bước 7: Update `tests/test_inference.py` + benchmark latency lại
-- [ ] Bước 8: `pytest tests/ --cov=src` full suite PASS ≥ 85%
+- [x] Bước 1: `scripts/compute_rate_threshold.py` — RATE_THRESHOLD = 0.5016 %SOH/cycle (train p90, seed 42) — 2026-07-09
+- [x] Bước 2: `src/services/battery_history.py` + unit test (13/13 pass) — 2026-07-09
+- [x] Bước 3: `config.py` (`RATE_THRESHOLD=0.5016`, `CAUSAL_RATE_K=2`) + `classify_anomaly()` mở rộng + test (12/12 pass) — 2026-07-09
+- [x] Bước 4: `run_inference()` thread `battery_id` + gọi battery_history đúng thứ tự (rate trước, record sau); refactor `_raw_cycle_count()` helper dùng chung; 31/31 test cũ vẫn pass — 2026-07-09
+- [x] Bước 5: Router REST (`predict.py`), gRPC (`grpc_server.py::_predict_one`, dùng chung cho `Predict`+`PredictStream`), `prescription.py` truyền `battery_id`; 56/56 test cũ pass — 2026-07-09
+- [x] Bước 6: Integration test escalation trong `test_inference.py` — bắt được bug thiết kế thật lúc viết test (`causal_rate()` ban đầu chỉ so 2 điểm lịch sử cũ, không dùng SOH request hiện tại) → sửa signature `causal_rate(battery_id, current_cycle, current_soh, k)`; full suite 343/343 pass — 2026-07-09
+- [x] Bước 7: `benchmark_grpc.py --real-weights` — Predict avg 57.6ms/p95 73.4ms (trước GH-95: 60.6/77.5) — PASS, state lookup không ảnh hưởng latency — 2026-07-09
+- [x] Bước 8: `pytest tests/ --cov=src` — 343/343 PASS, coverage 90% (≥85% target) — 2026-07-09
 
 ## Câu hỏi đã giải đáp
-1. **Tách issue riêng hay dùng chung GH-70?** → Tạo issue mới (GH-95) — GH-70 giữ scope paper/Table 5, GH-95 scope production.
-2. **Cách tính degradation-rate feature khi inference stateless single-window?** → Residual từ population fade curve (`soh_predicted − expected_soh_tại_cycle`), dùng `cycle_count` đã có sẵn trong payload (GH-56) — không đổi BE contract, không cần state per-battery.
-3. **`feat_scaled` dùng chung cho Mamba + IsolationForest — có đổi cả 2 không?** → Không. Chỉ IsolationForest nhận thêm residual feature (58-dim); Mamba giữ nguyên 57-dim, tránh phải retrain Mamba.
-4. **Versioning artifact mới?** → Tách `ISO_FOREST_VERSION` khỏi `MODEL_VERSION` (quyết định tự đưa ra, sẽ nêu rõ khi approve plan) vì Mamba không đổi trong task này, bump chung version sẽ sai ngữ nghĩa.
+1. **Tách issue riêng hay dùng chung GH-70?** → Issue mới (GH-95) — GH-70 giữ scope paper.
+2. **[Plan v1, đã bỏ] Cách tính degradation-rate khi stateless?** → Residual population —
+   đã chứng minh thực nghiệm KHÔNG hoạt động (AUC ~0.5, kể cả supervised).
+3. **[Plan v2] Hướng tiếp theo sau khi residual thất bại?** → User xác nhận: thêm state
+   per-battery — đây là hướng DUY NHẤT có bằng chứng thực nghiệm hoạt động (AUC 0.80+).
+4. **F1 mục tiêu?** → Không đạt 0.80 tuyệt đối với approach này (0.53–0.61) — user đồng ý
+   tiếp tục, báo cáo trung thực, không cố tune ép số.
+5. **In-memory state có đủ không, hay cần Redis/DB?** → In-memory đủ cho scope capstone
+   (đã tự quyết định theo Simplicity First, ghi rõ giới hạn single-instance trong PR).

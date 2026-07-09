@@ -80,6 +80,68 @@ class TestInferencePipeline:
             f"Missing keys: {REQUIRED_KEYS - result.keys()}"
         )
 
+    def test_causal_rate_escalates_classification(self):
+        """GH-95: seeding a much-higher historical SOH forces causal_rate above
+        RATE_THRESHOLD, which must escalate Normal -> Degrading. Uses a
+        constant-output stub for soh_model/iso_model instead of the random
+        untrained dummy_model — that one's output can land anywhere (e.g.
+        clipped to 0.0 -> already "Failed", no room to demonstrate escalation)."""
+        import torch
+
+        from src.services import battery_history
+        from src.services.inference import run_inference
+
+        class ConstantSOHModel(torch.nn.Module):
+            """Ignores input, always predicts soh=92% (comfortably 'Normal')."""
+
+            def __init__(self):
+                super().__init__()
+                self.input_features = INPUT_FEATURES
+
+            def forward(self, x, x_feat):
+                return torch.full((x.shape[0],), 0.92)
+
+        class ConstantIso:
+            """Always reports a healthy score — classification driven by soh/rate only."""
+
+            def decision_function(self, X):
+                return np.full(len(X), 0.5)
+
+        battery_id = "TEST-GH95-ESCALATE"
+        battery_history._history.clear()
+
+        from sklearn.preprocessing import MinMaxScaler, StandardScaler
+
+        scaler = MinMaxScaler()
+        scaler.fit(np.random.rand(50, BASE_N))
+        feat_scaler = StandardScaler()
+        feat_scaler.fit(np.random.rand(50, SPECTRAL_FEAT_DIM))
+
+        with patch("src.services.inference.model_loader") as mock_loader:
+            mock_loader.scaler = scaler
+            mock_loader.feature_scaler = feat_scaler
+            mock_loader.soh_model = ConstantSOHModel()
+            mock_loader.iso_model = ConstantIso()
+
+            baseline = run_inference(
+                make_dummy_readings(), cycle_idx=5, battery_id=None
+            )
+            assert baseline["classification"] == "Normal"
+
+            # Seed history far above the constant 92% prediction — guarantees
+            # causal_rate > RATE_THRESHOLD.
+            battery_history.record(battery_id, 0.0, 100.0)
+            escalated = run_inference(
+                make_dummy_readings(), cycle_idx=5, battery_id=battery_id
+            )
+            assert escalated["classification"] == "Degrading"
+
+    def test_no_battery_id_behaves_as_before_gh95(self):
+        from src.services.inference import run_inference
+
+        result = run_inference(make_dummy_readings(), battery_id=None)
+        assert result["classification"] in {"Normal", "Degrading", "Failed"}
+
     def test_classification_is_valid(self):
         from src.services.inference import run_inference
 

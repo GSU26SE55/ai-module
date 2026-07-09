@@ -210,7 +210,9 @@ class AiServiceServicer(ai_service_pb2_grpc.AiServiceServicer):
         parsed = _validate(PredictRequest, payload, context)
         n_series = parsed.pack_config.n_series if parsed.pack_config else 1
         try:
-            result = run_inference(parsed.readings, n_series=n_series)
+            result = run_inference(
+                parsed.readings, n_series=n_series, battery_id=parsed.battery_id
+            )
         except Exception as exc:
             logger.exception("Predict failed")
             context.abort(grpc.StatusCode.INTERNAL, f"inference failed: {exc}")

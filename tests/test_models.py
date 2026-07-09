@@ -230,6 +230,49 @@ class TestClassifyAnomaly:
         assert classify_anomaly(0.9, 70.0) == "Failed"
 
 
+class TestClassifyAnomalyCausalRate:
+    """GH-95: causal_rate escalates the base tier by one step when it exceeds
+    RATE_THRESHOLD; None (cold start / missing battery_id) preserves pre-GH-95
+    behavior exactly."""
+
+    def test_none_preserves_prior_behavior(self):
+        assert classify_anomaly(0.1, 95.0, causal_rate=None) == "Normal"
+        assert classify_anomaly(0.5, 85.0, causal_rate=None) == "Degrading"
+        assert classify_anomaly(0.5, 70.0, causal_rate=None) == "Failed"
+
+    def test_below_threshold_does_not_escalate(self):
+        from src.core.config import RATE_THRESHOLD
+
+        assert classify_anomaly(0.1, 95.0, causal_rate=RATE_THRESHOLD - 0.01) == "Normal"
+
+    def test_above_threshold_escalates_normal_to_degrading(self):
+        from src.core.config import RATE_THRESHOLD
+
+        assert (
+            classify_anomaly(0.1, 95.0, causal_rate=RATE_THRESHOLD + 0.5) == "Degrading"
+        )
+
+    def test_above_threshold_escalates_degrading_to_failed(self):
+        from src.core.config import RATE_THRESHOLD
+
+        assert (
+            classify_anomaly(0.5, 85.0, causal_rate=RATE_THRESHOLD + 0.5) == "Failed"
+        )
+
+    def test_above_threshold_failed_stays_failed(self):
+        from src.core.config import RATE_THRESHOLD
+
+        assert (
+            classify_anomaly(0.5, 70.0, causal_rate=RATE_THRESHOLD + 0.5) == "Failed"
+        )
+
+    def test_exactly_at_threshold_does_not_escalate(self):
+        from src.core.config import RATE_THRESHOLD
+
+        # strict '>' — boundary itself is not anomalous
+        assert classify_anomaly(0.1, 95.0, causal_rate=RATE_THRESHOLD) == "Normal"
+
+
 class TestClassifyHealthStageProbabilistic:
     """GH-86: stage from the MC Dropout sample distribution, not the mean."""
 

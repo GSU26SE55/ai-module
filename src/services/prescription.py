@@ -141,7 +141,9 @@ def run_prescription(
         PrescribeResponse-compatible dict.
     """
     # 1. Inference
-    prediction_result = run_inference(readings, n_series=n_series)
+    prediction_result = run_inference(
+        readings, n_series=n_series, battery_id=battery_id
+    )
     prediction = prediction_result.get("prediction", {})
     risk       = prediction_result.get("risk", {})
     warnings   = prediction_result.get("evidence", {}).get("warnings", [])
