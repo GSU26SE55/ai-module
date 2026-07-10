@@ -84,3 +84,42 @@ def generate_prescription(
         "All LLM providers unavailable or failed: "
         + ("; ".join(errors) if errors else "no provider configured")
     )
+
+
+def judge_safety(context: str, action_steps: list[str]) -> dict:
+    """
+    GH-81 LLM-as-judge: try each provider in LLM_PROVIDER_CHAIN order and
+    return the first successful verdict {"safe": bool, "reason": str,
+    "provider": name}. Raises RuntimeError when every provider is
+    unavailable or fails — the caller (orchestrator._run_judge) treats that
+    as a pass so judge unavailability never blocks a rule-validated response.
+    """
+    start = time.perf_counter()
+    errors: list[str] = []
+
+    for name in _chain_order():
+        provider_cls = _PROVIDERS.get(name)
+        if provider_cls is None:
+            logger.warning("Unknown LLM provider %r in LLM_PROVIDER_CHAIN — skipping.", name)
+            continue
+
+        if time.perf_counter() - start > TOTAL_BUDGET_S:
+            errors.append(f"{name}: skipped, total judge budget ({TOTAL_BUDGET_S}s) exceeded")
+            break
+
+        provider = provider_cls()
+        if not provider.is_available():
+            continue
+
+        try:
+            out = provider.judge_safety(context, action_steps)
+            out["provider"] = name
+            return out
+        except Exception as exc:  # provider's own RuntimeError, or anything unexpected
+            logger.warning("LLM judge provider %r failed: %s", name, exc)
+            errors.append(f"{name}: {exc}")
+
+    raise RuntimeError(
+        "All LLM judge providers unavailable or failed: "
+        + ("; ".join(errors) if errors else "no provider configured")
+    )

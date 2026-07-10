@@ -50,6 +50,10 @@ class PrescribeResponse(BaseModel):
     # Safety gate
     human_verification_required: bool = True
     safety_warnings: list[str] = []
+    # GH-81: True when the LLM output was blocked by output validation
+    # (forbidden action / unsafe judge verdict) — the returned prescription is
+    # the rule-based fallback and human verification is always required.
+    blocked: bool = False
 
     inference_ms: float
     rag_ms: float = 0.0

@@ -167,6 +167,7 @@ def _to_prescribe_response(result: dict) -> ai_service_pb2.PrescribeResponse:
         rag_ms=result["rag_ms"],
         llm_ms=result["llm_ms"],
         llm_provider=result["llm_provider"],
+        blocked=result.get("blocked", False),
     )
 
 

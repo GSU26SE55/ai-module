@@ -28,7 +28,7 @@ yêu cầu công nghiệp: MAE < 2%, RMSE < 3%.
 
 Toàn bộ mô hình được huấn luyện trên GPU Kaggle, triển khai bằng PyTorch
 thuần không phụ thuộc CUDA kernel chuyên dụng. Benchmark độ trễ suy luận
-thực hiện trên CPU `[ghi rõ model CPU máy đo — ⬜ TODO(#72)]`. Mọi thí nghiệm
+thực hiện trên CPU Intel Core i7-14650HX. Mọi thí nghiệm
 dùng random seed 42; giao thức chia dữ liệu cross-battery như mô tả tại §3.1.
 
 ## 4.2 Kết quả chính (Table 1)
@@ -128,9 +128,9 @@ thay đổi, giữ nguyên mọi điều kiện còn lại.
 | Variant | MAE (%) | Δ MAE |
 |---------|--------:|------:|
 | Full model (v2.2) | 1.52 | — |
-| Attention pooling → mean pooling | [x.xx] ⬜ TODO(#71, flag `--pooling mean`) | [+x.xx] |
-| d_state 32 → 16 | [x.xx] ⬜ TODO(#71, sửa LONG_D_STATE) | [+x.xx] |
-| Bỏ EOL-weighted loss | [x.xx] ⬜ TODO(#71, bỏ `--weighted-loss`) | [+x.xx] |
+| Attention pooling → last token | [x.xx] ⬜ TODO(#71, notebook VARIANT=pooling_last) | [+x.xx] |
+| d_state 32 → 16 | [x.xx] ⬜ TODO(#71, VARIANT=d_state16) | [+x.xx] |
+| Bỏ EOL-weighted loss | [x.xx] ⬜ TODO(#71, VARIANT=no_weighted_loss) | [+x.xx] |
 
 > Ghi chú thực thi: 3 variant trên chạy được ngay bằng flag/config có sẵn
 > (3 run Kaggle × 3–5h). Ablation FiLM và kênh IC đòi hỏi sửa code — nếu
