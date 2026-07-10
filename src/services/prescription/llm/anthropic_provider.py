@@ -13,6 +13,10 @@ Config (env):
 import os
 
 from src.services.prescription.llm.base import (
+    JUDGE_SCHEMA,
+    JUDGE_SYSTEM_PROMPT,
+    JUDGE_TOOL_DESCRIPTION,
+    JUDGE_TOOL_NAME,
     MAX_RETRIES,
     RESPONSE_SCHEMA,
     SYSTEM_PROMPT,
@@ -20,6 +24,7 @@ from src.services.prescription.llm.base import (
     TOOL_DESCRIPTION,
     TOOL_NAME,
     LLMProvider,
+    build_judge_content,
     build_user_content,
 )
 
@@ -87,5 +92,51 @@ class AnthropicProvider(LLMProvider):
                     "action_steps": list(out.get("action_steps", [])),
                     "ppe_required": list(out.get("ppe_required", [])),
                 }
+
+        raise RuntimeError("LLM response contained no tool_use block.")
+
+    def judge_safety(self, context: str, action_steps: list[str]) -> dict:
+        """
+        GH-81 LLM-as-judge via Claude forced tool-use.
+
+        Returns dict with keys: safe (bool), reason (str).
+        Raises RuntimeError on missing key / API error / malformed output.
+        """
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise RuntimeError("ANTHROPIC_API_KEY not set — cannot use Anthropic provider.")
+
+        try:
+            import anthropic
+        except ImportError as exc:  # pragma: no cover - dependency guard
+            raise RuntimeError("anthropic SDK not installed.") from exc
+
+        tool = {
+            "name": JUDGE_TOOL_NAME,
+            "description": JUDGE_TOOL_DESCRIPTION,
+            "input_schema": JUDGE_SCHEMA,
+        }
+
+        client = anthropic.Anthropic(api_key=api_key, timeout=TIMEOUT_S, max_retries=MAX_RETRIES)
+        try:
+            resp = client.messages.create(
+                model=os.getenv("ANTHROPIC_MODEL", DEFAULT_MODEL),
+                max_tokens=MAX_TOKENS,
+                system=JUDGE_SYSTEM_PROMPT,
+                tools=[tool],
+                tool_choice={"type": "tool", "name": JUDGE_TOOL_NAME},
+                messages=[
+                    {"role": "user", "content": build_judge_content(context, action_steps)}
+                ],
+            )
+        except Exception as exc:  # anthropic.APIError, timeouts, etc.
+            raise RuntimeError(f"Anthropic API call failed: {exc}") from exc
+
+        for block in resp.content:
+            if getattr(block, "type", None) == "tool_use":
+                out = block.input
+                if not isinstance(out, dict) or "safe" not in out:
+                    raise RuntimeError("LLM returned malformed tool output.")
+                return {"safe": bool(out["safe"]), "reason": str(out.get("reason", ""))}
 
         raise RuntimeError("LLM response contained no tool_use block.")

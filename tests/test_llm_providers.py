@@ -409,3 +409,187 @@ class TestChainFallback:
         assert chain.is_available() is False
         with pytest.raises(RuntimeError, match="All LLM providers"):
             chain.generate_prescription("ctx", [], [])
+
+
+# ── LLM-as-judge (GH-81) — same fake SDKs, no network ──────────────────────
+def test_anthropic_judge_success(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    resp = _AnthropicResp(
+        [_AnthropicBlock("tool_use", {"safe": False, "reason": "no LOTO step"})]
+    )
+    _install_fake_anthropic(monkeypatch, response=resp)
+    out = AnthropicProvider().judge_safety("ctx", ["step 1"])
+    assert out == {"safe": False, "reason": "no LOTO step"}
+
+
+def test_anthropic_judge_raises_without_key(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
+        AnthropicProvider().judge_safety("ctx", ["step 1"])
+
+
+def test_anthropic_judge_raises_on_api_error(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    _install_fake_anthropic(monkeypatch, raise_exc=Exception("503"))
+    with pytest.raises(RuntimeError, match="Anthropic API call failed"):
+        AnthropicProvider().judge_safety("ctx", ["step 1"])
+
+
+def test_anthropic_judge_raises_on_malformed(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    resp = _AnthropicResp([_AnthropicBlock("tool_use", {"foo": 1})])
+    _install_fake_anthropic(monkeypatch, response=resp)
+    with pytest.raises(RuntimeError, match="malformed"):
+        AnthropicProvider().judge_safety("ctx", ["step 1"])
+
+
+def test_anthropic_judge_raises_on_no_tool_use(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    resp = _AnthropicResp([_AnthropicBlock("text", None)])
+    _install_fake_anthropic(monkeypatch, response=resp)
+    with pytest.raises(RuntimeError, match="no tool_use"):
+        AnthropicProvider().judge_safety("ctx", ["step 1"])
+
+
+def test_deepseek_judge_success(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    resp = _fake_chat_response('{"safe": true, "reason": "steps follow SOP"}')
+    _install_fake_openai(monkeypatch, response=resp)
+    out = DeepSeekProvider().judge_safety("ctx", ["step 1"])
+    assert out == {"safe": True, "reason": "steps follow SOP"}
+
+
+def test_deepseek_judge_raises_without_key(monkeypatch):
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="DEEPSEEK_API_KEY"):
+        DeepSeekProvider().judge_safety("ctx", ["step 1"])
+
+
+def test_deepseek_judge_raises_on_api_error(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    _install_fake_openai(monkeypatch, raise_exc=Exception("503"))
+    with pytest.raises(RuntimeError, match="DeepSeek API call failed"):
+        DeepSeekProvider().judge_safety("ctx", ["step 1"])
+
+
+def test_deepseek_judge_raises_on_no_tool_call(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    message = types.SimpleNamespace(tool_calls=None)
+    choice = types.SimpleNamespace(message=message)
+    resp = types.SimpleNamespace(choices=[choice])
+    _install_fake_openai(monkeypatch, response=resp)
+    with pytest.raises(RuntimeError, match="no tool call"):
+        DeepSeekProvider().judge_safety("ctx", ["step 1"])
+
+
+def test_deepseek_judge_raises_on_malformed(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    resp = _fake_chat_response('{"foo": 1}')
+    _install_fake_openai(monkeypatch, response=resp)
+    with pytest.raises(RuntimeError, match="malformed"):
+        DeepSeekProvider().judge_safety("ctx", ["step 1"])
+
+
+def test_deepseek_judge_raises_on_bad_json(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    resp = _fake_chat_response("not-json")
+    _install_fake_openai(monkeypatch, response=resp)
+    with pytest.raises(RuntimeError, match="malformed"):
+        DeepSeekProvider().judge_safety("ctx", ["step 1"])
+
+
+def test_gemini_judge_success(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "key-test")
+    resp = types.SimpleNamespace(text='{"safe": false, "reason": "water on lithium fire"}')
+    _install_fake_genai(monkeypatch, response=resp)
+    out = GeminiProvider().judge_safety("ctx", ["step 1"])
+    assert out == {"safe": False, "reason": "water on lithium fire"}
+
+
+def test_gemini_judge_raises_without_key(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="GEMINI_API_KEY"):
+        GeminiProvider().judge_safety("ctx", ["step 1"])
+
+
+def test_gemini_judge_raises_on_api_error(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "key-test")
+    _install_fake_genai(monkeypatch, raise_exc=Exception("503"))
+    with pytest.raises(RuntimeError, match="Gemini API call failed"):
+        GeminiProvider().judge_safety("ctx", ["step 1"])
+
+
+def test_gemini_judge_raises_on_empty_text(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "key-test")
+    resp = types.SimpleNamespace(text="")
+    _install_fake_genai(monkeypatch, response=resp)
+    with pytest.raises(RuntimeError, match="no text"):
+        GeminiProvider().judge_safety("ctx", ["step 1"])
+
+
+def test_gemini_judge_raises_on_malformed(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "key-test")
+    resp = types.SimpleNamespace(text='{"foo": 1}')
+    _install_fake_genai(monkeypatch, response=resp)
+    with pytest.raises(RuntimeError, match="malformed"):
+        GeminiProvider().judge_safety("ctx", ["step 1"])
+
+
+def test_gemini_judge_raises_on_bad_json(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "key-test")
+    resp = types.SimpleNamespace(text="not-json")
+    _install_fake_genai(monkeypatch, response=resp)
+    with pytest.raises(RuntimeError, match="malformed"):
+        GeminiProvider().judge_safety("ctx", ["step 1"])
+
+
+class TestJudgeChain:
+    def test_deepseek_fail_falls_to_gemini(self, monkeypatch):
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+        monkeypatch.setenv("GEMINI_API_KEY", "key-test")
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+        with (
+            patch.object(
+                DeepSeekProvider, "judge_safety",
+                side_effect=RuntimeError("DeepSeek down"),
+            ),
+            patch.object(
+                GeminiProvider, "judge_safety",
+                return_value={"safe": True, "reason": "ok"},
+            ),
+        ):
+            out = chain.judge_safety("ctx", ["step 1"])
+        assert out["provider"] == "gemini"
+        assert out["safe"] is True
+
+    def test_all_fail_raises(self, monkeypatch):
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+        monkeypatch.setenv("GEMINI_API_KEY", "key-test")
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+        with (
+            patch.object(
+                DeepSeekProvider, "judge_safety",
+                side_effect=RuntimeError("down"),
+            ),
+            patch.object(
+                GeminiProvider, "judge_safety",
+                side_effect=RuntimeError("down"),
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="All LLM judge providers"):
+                chain.judge_safety("ctx", ["step 1"])
+
+    def test_no_key_configured_raises(self, monkeypatch):
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        with pytest.raises(RuntimeError, match="All LLM judge providers"):
+            chain.judge_safety("ctx", ["step 1"])
+
+    def test_budget_exceeded_skips_remaining_tiers(self, monkeypatch):
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+        monkeypatch.setattr(chain, "TOTAL_BUDGET_S", -1.0)
+        with pytest.raises(RuntimeError, match="judge budget"):
+            chain.judge_safety("ctx", ["step 1"])

@@ -12,7 +12,9 @@ POST /prescribe flow:
 The rule-based path never touches the network, so the default (enrich=False) stays
 on the P1 <100ms hot-path. Enrichment is opt-in and explicitly off that path.
 """
+import json
 import logging
+import os
 import time
 
 from src.services.inference import run_inference
@@ -20,6 +22,10 @@ from src.services.prescription.rule_prescription import build_rule_prescription
 from src.services.prescription.safety_gate import apply_safety_gate
 
 logger = logging.getLogger(__name__)
+
+# GH-81: dedicated audit trail for blocked prescriptions — separate logger name
+# so ops can route/retain it independently, and tests can assert on it (caplog).
+_audit_logger = logging.getLogger("safety_gate.audit")
 
 # Lazy singleton — only built when enrichment is first requested, so the rule-only
 # path never pays the SentenceTransformer/ChromaDB import + load cost.
@@ -66,6 +72,57 @@ def _dedup(items: list[str]) -> list[str]:
     return out
 
 
+def _judge_enabled() -> bool:
+    """GH-81: LLM-as-judge feature flag — default off (enable when budget allows)."""
+    return os.getenv("SAFETY_LLM_JUDGE", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _run_judge(warnings: list[dict], action_steps: list[str]) -> dict | None:
+    """
+    GH-81: LLM-as-judge — ask the provider chain whether the generated steps
+    are safe for the current warning state. Returns {"safe": bool, "reason": str}
+    or None on any failure/timeout: the output already passed rule-based
+    validation, so judge unavailability must never block a valid response.
+    """
+    from src.services.prescription.llm import chain
+
+    try:
+        return chain.judge_safety(_build_safety_query(warnings), action_steps)
+    except Exception as exc:
+        logger.warning("Safety judge unavailable — passing rule-validated output: %s", exc)
+        return None
+
+
+def _audit_block(
+    battery_id: str,
+    risk: dict,
+    warnings: list[dict],
+    blocked_output: dict,
+    reasons: list[str],
+    matched_patterns: list[str],
+    source: str,
+) -> None:
+    """GH-81: one structured audit record per blocked prescription."""
+    _audit_logger.warning(
+        "PRESCRIPTION_BLOCKED %s",
+        json.dumps(
+            {
+                "battery_id": battery_id,
+                "priority": risk.get("priority", "None"),
+                "action_code": risk.get("action_code", "MONITOR"),
+                "warning_codes": [w.get("code", "") for w in warnings],
+                "source": source,  # "blocklist" | "llm_judge"
+                "reasons": reasons,
+                "matched_patterns": matched_patterns,
+                "blocked_prescription": blocked_output.get("prescription", ""),
+                "blocked_action_steps": blocked_output.get("action_steps", []),
+                "llm_provider": blocked_output.get("llm_provider", "none"),
+            },
+            ensure_ascii=False,
+        ),
+    )
+
+
 def _enrich(prediction: dict, risk: dict, warnings: list[dict], rule_out: dict) -> dict:
     """
     Run RAG retrieval + LLM generation. Returns a partial dict to merge into the
@@ -108,12 +165,16 @@ def _enrich(prediction: dict, risk: dict, warnings: list[dict], rule_out: dict) 
     try:
         context = _build_maintenance_query(prediction, risk)
         llm_out = chain.generate_prescription(context, maint_docs, safety_docs)
-        result["prescription"] = llm_out["prescription"]
-        result["action_steps"] = llm_out["action_steps"]
-        # Union with rule PPE so safety-critical PPE is never dropped by the LLM.
-        result["ppe_required"] = _dedup(rule_out["ppe_required"] + llm_out["ppe_required"])
-        result["enriched"] = True
-        result["llm_provider"] = llm_out.get("provider", "none")
+        if not llm_out.get("action_steps"):
+            # GH-81 edge case: empty steps from the LLM → keep the rule-based output.
+            logger.warning("LLM returned empty action_steps — keeping rule-based prescription.")
+        else:
+            result["prescription"] = llm_out["prescription"]
+            result["action_steps"] = llm_out["action_steps"]
+            # Union with rule PPE so safety-critical PPE is never dropped by the LLM.
+            result["ppe_required"] = _dedup(rule_out["ppe_required"] + llm_out["ppe_required"])
+            result["enriched"] = True
+            result["llm_provider"] = llm_out.get("provider", "none")
     except Exception as exc:
         logger.warning("LLM enrichment failed, using rule-based prescription: %s", exc)
     result["llm_ms"] = round((time.perf_counter() - t_llm) * 1000, 2)
@@ -168,15 +229,62 @@ def run_prescription(
             "llm_ms":         0.0,
         }
 
-    # 4. Safety gate (runs for both paths)
+    # 4. Safety gate (runs for both paths) — v2 (GH-81) also validates the
+    #    OUTPUT: LOTO/thermal injection, PPE enforcement, blocklist on LLM text.
     gate = apply_safety_gate(
-        priority     = risk.get("priority", "None"),
-        action_code  = risk.get("action_code", "MONITOR"),
-        warnings     = warnings,
-        prescription = enriched["prescription"],
+        priority      = risk.get("priority", "None"),
+        action_code   = risk.get("action_code", "MONITOR"),
+        warnings      = warnings,
+        prescription  = enriched["prescription"],
+        action_steps  = enriched["action_steps"],
+        ppe_required  = enriched["ppe_required"],
+        llm_generated = enriched["enriched"],
     )
 
+    # 4b. LLM-as-judge (GH-81, optional): only for enriched output that passed
+    #     rule validation; an unsafe verdict is treated exactly like a
+    #     blocklist hit. Judge failure/timeout → pass (never block on it).
+    judge_reasons: list[str] = []
+    if not gate["blocked"] and enriched["enriched"] and _judge_enabled():
+        verdict = _run_judge(warnings, gate["action_steps"])
+        if verdict is not None and not verdict.get("safe", True):
+            judge_reasons = [
+                f"LLM judge verdict: unsafe — {verdict.get('reason', 'no reason given')}"
+            ]
+
+    # 4c. Blocked path: never deliver the LLM output — audit it, fall back to
+    #     the rule-based prescription, and re-run the gate once on that output
+    #     so it still gets PPE/LOTO enforcement (blocklist is off for rule
+    #     text → a second block is impossible, no loop).
+    blocked = gate["blocked"] or bool(judge_reasons)
+    block_warnings = gate["blocked_reasons"] + judge_reasons
+    if blocked:
+        _audit_block(
+            battery_id, risk, warnings, enriched,
+            reasons=block_warnings,
+            matched_patterns=gate["matched_patterns"],
+            source="blocklist" if gate["blocked"] else "llm_judge",
+        )
+        enriched = {
+            **enriched,  # keep retrieved docs + rag/llm timings
+            "prescription": rule_out["prescription"],
+            "action_steps": rule_out["action_steps"],
+            "ppe_required": rule_out["ppe_required"],
+            "enriched":     False,
+            "llm_provider": "none",
+        }
+        gate = apply_safety_gate(
+            priority      = risk.get("priority", "None"),
+            action_code   = risk.get("action_code", "MONITOR"),
+            warnings      = warnings,
+            prescription  = enriched["prescription"],
+            action_steps  = enriched["action_steps"],
+            ppe_required  = enriched["ppe_required"],
+            llm_generated = False,
+        )
+
     escalation = _dedup(rule_out["escalation_conditions"] + gate["escalation_conditions"])
+    safety_warnings = _dedup(gate["safety_warnings"] + block_warnings)
 
     return {
         "battery_id":   battery_id,
@@ -186,9 +294,9 @@ def run_prescription(
         "action_code":  risk.get("action_code", "MONITOR"),
 
         "prescription":          enriched["prescription"],
-        "action_steps":          enriched["action_steps"],
+        "action_steps":          gate["action_steps"],   # post-validation (GH-81 injection)
         "escalation_conditions": escalation,
-        "ppe_required":          enriched["ppe_required"],
+        "ppe_required":          gate["ppe_required"],   # post-validation (GH-81 PPE union)
         "sop_references":        rule_out["sop_references"],
         "enriched":              enriched["enriched"],
         "llm_provider":          enriched["llm_provider"],
@@ -196,8 +304,9 @@ def run_prescription(
         "maintenance_docs": enriched["maintenance_docs"],
         "safety_docs":      enriched["safety_docs"],
 
-        "human_verification_required": gate["human_verification_required"],
-        "safety_warnings":             gate["safety_warnings"],
+        "human_verification_required": gate["human_verification_required"] or blocked,
+        "safety_warnings":             safety_warnings,
+        "blocked":                     blocked,
 
         "inference_ms": inference_ms,
         "rag_ms":       enriched["rag_ms"],

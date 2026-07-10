@@ -185,3 +185,42 @@ class TestPackConfigRouter:
         payload = self._pack_12v_payload() | {"pack_config": {"n_series": 3}}
         resp = client.post("/prescribe/", json=payload)
         assert resp.status_code == 200
+
+    def test_prescribe_blocked_llm_returns_200_rule_based(self, client):
+        """GH-81: blocked LLM output → HTTP 200, blocked=true, rule-based fallback."""
+
+        class FakeRetriever:
+            def retrieve_maintenance(self, q, top_k=3):
+                return []
+
+            def retrieve_safety(self, q, top_k=2):
+                return []
+
+        banned = {
+            "prescription": "Inspect the pack internals.",
+            "action_steps": ["Open the battery casing to inspect the cells."],
+            "ppe_required": [],
+            "provider": "deepseek",
+        }
+        payload = self._pack_12v_payload() | {
+            "pack_config": {"n_series": 3},
+            "enrich": True,
+        }
+        with (
+            patch(
+                "src.services.prescription.orchestrator._get_retriever",
+                return_value=FakeRetriever(),
+            ),
+            patch("src.services.prescription.llm.chain.is_available", return_value=True),
+            patch(
+                "src.services.prescription.llm.chain.generate_prescription",
+                return_value=banned,
+            ),
+        ):
+            resp = client.post("/prescribe/", json=payload)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["blocked"] is True
+        assert body["human_verification_required"] is True
+        assert body["enriched"] is False
+        assert "open the battery casing" not in " ".join(body["action_steps"]).lower()

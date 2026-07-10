@@ -51,6 +51,48 @@ RESPONSE_SCHEMA = {
 }
 
 
+# ── LLM-as-judge (GH-81) ────────────────────────────────────────────────
+# Same structured-output mechanism as the prescription call, shared by every
+# provider so the verdict shape is provider-agnostic.
+JUDGE_TOOL_NAME = "emit_safety_verdict"
+JUDGE_TOOL_DESCRIPTION = "Return the safety verdict for the proposed maintenance steps."
+JUDGE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "safe": {
+            "type": "boolean",
+            "description": "True if every step is safe to execute given the active warnings.",
+        },
+        "reason": {
+            "type": "string",
+            "description": "One-sentence justification, citing the unsafe step if any.",
+        },
+    },
+    "required": ["safe", "reason"],
+}
+
+JUDGE_SYSTEM_PROMPT = (
+    "You are a battery-safety reviewer for a solar lithium-ion storage system. "
+    "Given the battery's active warning state and a proposed list of maintenance "
+    "action steps, judge whether the steps are safe to execute. "
+    "Steps are UNSAFE if they involve opening or disassembling cells/casings, "
+    "short-circuiting the battery, using water on a lithium fire, physical work "
+    "while the battery is charging, or skipping Lockout/Tagout under a critical "
+    "electrical warning. When uncertain, answer safe=false and state your concern."
+)
+
+
+def build_judge_content(context: str, action_steps: list[str]) -> str:
+    """Shared judge user message — identical across providers."""
+    steps = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(action_steps))
+    return (
+        f"Battery warning state:\n{context}\n\n"
+        f"Proposed maintenance steps:\n{steps}\n\n"
+        f"Are these steps safe for this warning state? "
+        f"Answer with the {JUDGE_TOOL_NAME} tool."
+    )
+
+
 def format_docs(label: str, docs: list[dict]) -> str:
     """Render retrieved docs as plain text for the user message — shared by every provider."""
     if not docs:
@@ -96,4 +138,13 @@ class LLMProvider(ABC):
         """
         Returns dict with keys: prescription (str), action_steps (list[str]),
         ppe_required (list[str]). Raises RuntimeError on any failure.
+        """
+
+    @abstractmethod
+    def judge_safety(self, context: str, action_steps: list[str]) -> dict:
+        """
+        GH-81 LLM-as-judge: rate whether the generated steps are safe for the
+        given warning state. Returns dict with keys: safe (bool), reason (str).
+        Raises RuntimeError on any failure — the chain catches it and tries the
+        next tier; the orchestrator treats a fully-failed chain as "pass".
         """

@@ -215,6 +215,12 @@ message PrescribeResponse {
 
   // Which provider generated the prescription: "deepseek" / "gemini" / "anthropic" / "none".
   string llm_provider = 19;
+
+  // GH-81: true when the LLM output was blocked by safety-gate output
+  // validation (forbidden action / unsafe judge verdict) — the returned
+  // prescription is the rule-based fallback and human_verification_required
+  // is always true.
+  bool blocked = 20;
 }
 
 // ── Health ─────────────────────────────────────────────────────────────

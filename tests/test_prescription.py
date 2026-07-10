@@ -228,6 +228,145 @@ class TestPrescriptionPipeline:
         assert out["llm_provider"] == "none"
 
 
+# ── GH-81: safety gate v2 — blocked path, judge, audit log ───────────────────
+class FakeEmptyRetriever:
+    def retrieve_maintenance(self, q, top_k=3):
+        return []
+
+    def retrieve_safety(self, q, top_k=2):
+        return []
+
+
+BANNED_LLM_OUT = {
+    "prescription": "Inspect the pack internals.",
+    "action_steps": ["Open the battery casing to inspect the cells.", "Log findings."],
+    "ppe_required": [],
+    "provider": "deepseek",
+}
+CLEAN_LLM_OUT = {
+    "prescription": "Replace the battery within 24 hours.",
+    "action_steps": ["Complete the Lockout/Tagout procedure.", "Replace the unit."],
+    "ppe_required": ["Face shield"],
+    "provider": "deepseek",
+}
+
+
+def run_enriched(llm_out=None, llm_side_effect=None, judge=None, judge_side_effect=None,
+                 inference=None):
+    """Run the pipeline with mocked inference/RAG/LLM; returns the response dict."""
+    from src.services.prescription import orchestrator as prescription
+
+    patches = [
+        patch.object(
+            prescription, "run_inference",
+            return_value=inference or fake_inference_result(),
+        ),
+        patch.object(prescription, "_get_retriever", return_value=FakeEmptyRetriever()),
+        patch("src.services.prescription.llm.chain.is_available", return_value=True),
+        patch(
+            "src.services.prescription.llm.chain.generate_prescription",
+            return_value=llm_out, side_effect=llm_side_effect,
+        ),
+        patch(
+            "src.services.prescription.llm.chain.judge_safety",
+            return_value=judge, side_effect=judge_side_effect,
+        ),
+    ]
+    with patches[0], patches[1], patches[2], patches[3], patches[4] as judge_mock:
+        out = prescription.run_prescription(make_dummy_readings(), "B0005", enrich=True)
+    return out, judge_mock
+
+
+class TestSafetyGateV2Pipeline:
+    @pytest.fixture(autouse=True)
+    def judge_flag_off(self, monkeypatch):
+        monkeypatch.delenv("SAFETY_LLM_JUDGE", raising=False)
+
+    def test_blocked_llm_output_returns_rule_based(self, caplog):
+        with caplog.at_level("WARNING", logger="safety_gate.audit"):
+            out, _ = run_enriched(llm_out=BANNED_LLM_OUT)
+
+        assert out["blocked"] is True
+        assert out["human_verification_required"] is True
+        assert out["enriched"] is False
+        assert out["llm_provider"] == "none"
+        # LLM output must never leak — rule-based text is returned instead
+        assert "end-of-life" in out["prescription"].lower()
+        assert all("open the battery casing" not in s.lower() for s in out["action_steps"])
+        assert any("forbidden action" in w.lower() for w in out["safety_warnings"])
+        # audit log: one structured record with the matched pattern + blocked output
+        audit = [r for r in caplog.records if r.name == "safety_gate.audit"]
+        assert len(audit) == 1
+        assert "PRESCRIPTION_BLOCKED" in audit[0].getMessage()
+        assert "open/disassemble" in audit[0].getMessage()
+        assert "Open the battery casing" in audit[0].getMessage()
+
+    def test_blocked_output_still_gets_ppe_loto_enforcement(self):
+        # After the swap, the rule-based output is re-gated: electrical critical
+        # → LOTO present (rule template) + mandatory PPE unioned.
+        out, _ = run_enriched(
+            llm_out=BANNED_LLM_OUT,
+            inference=fake_inference_result(
+                warnings=[{"code": "VOLTAGE_CRITICAL", "severity": "critical"}]
+            ),
+        )
+        assert out["blocked"] is True
+        assert any("lockout/tagout" in s.lower() for s in out["action_steps"])
+        assert any("steel-toed" in p.lower() for p in out["ppe_required"])
+
+    def test_empty_llm_steps_falls_back_to_rule(self):
+        out, _ = run_enriched(
+            llm_out={"prescription": "x", "action_steps": [], "ppe_required": [],
+                     "provider": "deepseek"}
+        )
+        assert out["blocked"] is False
+        assert out["enriched"] is False
+        assert "end-of-life" in out["prescription"].lower()
+
+    def test_judge_not_called_when_flag_off(self):
+        out, judge_mock = run_enriched(llm_out=CLEAN_LLM_OUT)
+        judge_mock.assert_not_called()
+        assert out["blocked"] is False
+        assert out["enriched"] is True
+
+    def test_judge_unsafe_blocks(self, monkeypatch, caplog):
+        monkeypatch.setenv("SAFETY_LLM_JUDGE", "1")
+        with caplog.at_level("WARNING", logger="safety_gate.audit"):
+            out, judge_mock = run_enriched(
+                llm_out=CLEAN_LLM_OUT,
+                judge={"safe": False, "reason": "step 2 unsafe near thermal event"},
+            )
+        judge_mock.assert_called_once()
+        assert out["blocked"] is True
+        assert out["enriched"] is False
+        assert "end-of-life" in out["prescription"].lower()
+        assert any("judge" in w.lower() for w in out["safety_warnings"])
+        audit = [r for r in caplog.records if r.name == "safety_gate.audit"]
+        assert len(audit) == 1 and "llm_judge" in audit[0].getMessage()
+
+    def test_judge_failure_passes(self, monkeypatch):
+        monkeypatch.setenv("SAFETY_LLM_JUDGE", "1")
+        out, _ = run_enriched(
+            llm_out=CLEAN_LLM_OUT, judge_side_effect=RuntimeError("all providers down")
+        )
+        assert out["blocked"] is False
+        assert out["enriched"] is True  # judge unavailability never blocks
+
+    def test_judge_safe_verdict_keeps_llm_output(self, monkeypatch):
+        monkeypatch.setenv("SAFETY_LLM_JUDGE", "1")
+        out, _ = run_enriched(llm_out=CLEAN_LLM_OUT, judge={"safe": True, "reason": "ok"})
+        assert out["blocked"] is False
+        assert out["enriched"] is True
+        assert out["prescription"] == CLEAN_LLM_OUT["prescription"]
+
+    def test_judge_not_called_on_rule_path(self, monkeypatch):
+        # blocklist already blocked the output → judge must not run
+        monkeypatch.setenv("SAFETY_LLM_JUDGE", "1")
+        out, judge_mock = run_enriched(llm_out=BANNED_LLM_OUT)
+        judge_mock.assert_not_called()
+        assert out["blocked"] is True
+
+
 # ── Latency: rule path must stay on the P1 <100ms hot-path ───────────────────
 class TestPrescriptionLatency:
     @pytest.fixture(autouse=True)
