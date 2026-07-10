@@ -1,9 +1,9 @@
 """
 Shared interface + prompt/schema contract for all LLM providers used by the
 optional /prescribe enrichment (enrich=true). Providers are tried in order by
-src.services.llm.chain — this module defines what every provider must return
-and the grounding rules every provider must enforce, so behavior stays
-provider-agnostic from prescription.py's point of view.
+src.services.prescription.llm.chain — this module defines what every provider
+must return and the grounding rules every provider must enforce, so behavior
+stays provider-agnostic from orchestrator.py's point of view.
 """
 from abc import ABC, abstractmethod
 
@@ -77,7 +77,7 @@ class LLMProvider(ABC):
     """Common contract every LLM provider (Anthropic/DeepSeek/Gemini) implements.
 
     Providers raise RuntimeError on any failure (missing key, SDK error, timeout,
-    malformed output) — src.services.llm.chain catches it and tries the next tier.
+    malformed output) — src.services.prescription.llm.chain catches it and tries the next tier.
     """
 
     name: str

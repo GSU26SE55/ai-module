@@ -65,7 +65,7 @@ Bốn lý do cốt lõi:
 | Schema response đủ evidence + ppe + escalation | Chưa có **đánh giá chất lượng prescription** |
 | Dùng Claude `claude-sonnet-4-6` | Chưa có timeout / cache / fallback khi API lỗi |
 
-Các file đã có trên branch:
+Các file đã có trên branch (path lúc 2026-06-22; từ GH-96 các file `src/services/*` dưới đây đã gom vào subpackage `src/services/prescription/`):
 - `src/routers/prescribe.py` — endpoint `POST /prescribe/`
 - `src/services/prescription.py` — orchestrator: predict → query → retrieve → LLM → gate
 - `src/services/rag_retriever.py` — ChromaDB + sentence-transformers (lazy import)

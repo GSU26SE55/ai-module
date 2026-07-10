@@ -3,14 +3,14 @@
 Matches the current API:
   - rule_prescription.build_rule_prescription(prediction, risk, warnings)
   - prescription._enrich / run_prescription(enrich=...)
-  - src.services.llm.chain.is_available / generate_prescription (GH-79 provider chain)
+  - src.services.prescription.llm.chain.is_available / generate_prescription (GH-79 provider chain)
 """
 import os
 from unittest import mock
 
-from src.services.rule_prescription import build_rule_prescription
-from src.services.llm import chain
-from src.services.prescription import _enrich, _dedup
+from src.services.prescription.rule_prescription import build_rule_prescription
+from src.services.prescription.llm import chain
+from src.services.prescription.orchestrator import _enrich, _dedup
 
 
 class TestRulePrescription:

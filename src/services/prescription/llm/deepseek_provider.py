@@ -1,7 +1,7 @@
 """
 DeepSeek provider — OpenAI-compatible API, function calling for structured output.
 
-Primary provider in the LLM fallback chain (src.services.llm.chain) as of
+Primary provider in the LLM fallback chain (src.services.prescription.llm.chain) as of
 GH-79 / docs/adr/0003-llm-provider-chain.md.
 
 Config (env):
@@ -11,7 +11,7 @@ Config (env):
 import json
 import os
 
-from src.services.llm.base import (
+from src.services.prescription.llm.base import (
     MAX_RETRIES,
     RESPONSE_SCHEMA,
     SYSTEM_PROMPT,

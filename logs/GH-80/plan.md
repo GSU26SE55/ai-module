@@ -1,7 +1,7 @@
 # Plan — GH-80: [AI] Prescription — Mở rộng Knowledge Base + chuẩn hoá ingest pipeline
 
 ## Metadata
-- **Status:** IN_PROGRESS | **Role:** AI | **Ngày:** 2026-07-09
+- **Status:** REVIEWING | **Role:** AI | **Ngày:** 2026-07-10
 - **Issue:** #80 — https://github.com/GSU26SE55/ai-module/issues/80
 - **Sprint:** (chưa gán milestone)
 
@@ -63,12 +63,28 @@ Mở rộng Knowledge Base cho Prescription Layer từ 4 → ≥12 document (SOP
 - [ ] `pytest tests/ -q` toàn bộ PASS (không regression `test_rag_services.py`, `test_prescription.py`)
 
 ## Steps
-- [ ] Bước 1: Viết 9 file KB mới (nội dung + citation từ B2 §1)
-- [ ] Bước 2: Viết lại `scripts/ingest_rag.py` v2 (heading-aware chunk, metadata 5 field, manifest, idempotent + xoá chunk mồ côi)
-- [ ] Bước 3: `tests/test_kb_manifest.py`
-- [ ] Bước 4: Chạy `ingest_rag.py` lần 1 → verify `manifest.json` sinh ra đúng; chạy lần 2 → verify idempotent (số chunk không đổi)
-- [ ] Bước 5: Retrieval smoke test thủ công (query mẫu cho từng action_code/warning code) → ghi kết quả
-- [ ] Bước 6: `pytest tests/ -q --cov=src` — không regression, coverage giữ ≥85%
+- [x] Bước 1: Viết 9 file KB mới (nội dung + citation từ B2 §1) — 2026-07-09 (tổng 13 doc, ≥12)
+- [x] Bước 2: Viết lại `scripts/ingest_rag.py` v2 (heading-aware chunk, metadata 5 field, manifest, idempotent + xoá chunk mồ côi) — 2026-07-09
+- [x] Bước 3: `tests/test_kb_manifest.py` — 2026-07-09
+- [x] Bước 4: Chạy `ingest_rag.py` lần 1 → verify `manifest.json` sinh ra đúng; chạy lần 2 → verify idempotent (số chunk không đổi) — 2026-07-09 (39 maintenance + 25 safety = 64 chunk, ổn định qua 2 lần chạy; `chromadb collection.count()` xác nhận không nhân đôi)
+- [x] Bước 5: Retrieval smoke test thủ công (query mẫu cho từng action_code/warning code) → ghi kết quả — 2026-07-09
+
+**Kết quả retrieval smoke test (baseline cho GH-24):**
+
+| Query | Top-1 | Top-2 | Top-3 | Đánh giá |
+|---|---|---|---|---|
+| action_code REPLACE_IMMEDIATELY | bms_warning_codes.md (0.699) | action_code_sop.md (0.632) | action_code_sop.md (0.585) | ✅ đúng chủ đề |
+| action_code SCHEDULE_REPLACEMENT | action_code_sop.md (0.656) | battery_maintenance_sop.md (0.632) | bms_warning_codes.md (0.602) | ✅ đúng chủ đề |
+| action_code SCHEDULE_MAINTENANCE | bms_warning_codes.md (0.689) | action_code_sop.md (0.670) | action_code_sop.md (0.656) | ✅ đúng chủ đề |
+| action_code MONITOR | action_code_sop.md (0.620) | anomaly_soc_soh.md (0.563) | action_code_sop.md (0.528) | ✅ đúng chủ đề |
+| warning TEMP_CRITICAL | anomaly_thermal.md (0.569) | thermal_runaway_response.md (0.465) | anomaly_thermal.md (0.464) | ✅ đúng chủ đề |
+| warning VOLTAGE_CRITICAL | electrical_safety_sop.md (0.461) | ppe_matrix.md (0.459) | ppe_matrix.md (0.435) | ✅ đúng chủ đề |
+| warning OVERCURRENT_CRITICAL | ppe_matrix.md (0.438) | anomaly_thermal.md (0.437) | ppe_matrix.md (0.380) | ⚠️ lệch nhẹ — `anomaly_electrical.md` (chứa RapidDischarge/OVERCURRENT threshold) nằm ở collection `maintenance`, không được `retrieve_safety()` query tới — hạn chế kiến trúc 2-collection sẵn có, không phải bug ingest |
+| warning BATTERY_EOL / SOH_LOW | anomaly_soc_soh.md (0.625) | battery_maintenance_sop.md (0.537) | action_code_sop.md (0.475) | ✅ đúng chủ đề |
+| 12V LiFePO4 pack | battery_12v_lifepo4.md (0.633/0.583/0.495) — cả 3 | | | ✅ đúng chủ đề tuyệt đối |
+
+8/9 query có top-3 đúng chủ đề. Điểm yếu duy nhất (OVERCURRENT_CRITICAL) là do ranh giới collection maintenance/safety, không phải lỗi chunking/ingest — đáng note cho GH-24.
+- [x] Bước 6: `pytest tests/ -q --cov=src` — không regression, coverage giữ ≥85% — 2026-07-09 (347 test PASS, aggregate coverage 90%, `test_kb_manifest.py` 4/4 PASS, `ruff check` sạch)
 
 ## Câu hỏi đã giải đáp
 1. **Ai viết nội dung 12 tài liệu KB mới?** — Claude tự draft, dựa trên citation đã có sẵn trong `ai-research-references.md` B2 §1 (không bịa threshold/standard mới), giữ format giống 4 doc hiện có. User sẽ tự review nội dung kỹ thuật trước khi nộp bảo vệ KLTN (Claude không có full-text các standard trả phí như IEC/NFPA nên không thể tự verify 100%).

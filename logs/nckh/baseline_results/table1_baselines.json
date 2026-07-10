@@ -1,0 +1,14 @@
+{
+  "commit": "c170e29794d553ed0eed22184aeb1e3fe4b6bb49",
+  "protocol": "OLD split 23/2/1 by battery ID (B0047 in VAL \u2014 paper protocol), seed 42, window=30, 6 features",
+  "cnn_lstm": {
+    "params": 61089,
+    "test_mae_pct": 4.8967,
+    "test_rmse_pct": 6.4887,
+    "best_val_mae_pct": 4.8385
+  },
+  "naive_last_soh": {
+    "test_mae_pct": 0.8907,
+    "test_rmse_pct": 1.4937
+  }
+}

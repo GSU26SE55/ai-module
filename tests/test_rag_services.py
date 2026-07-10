@@ -1,6 +1,5 @@
 """Tests for RAG service components."""
-import pytest
-from src.services.safety_gate import apply_safety_gate
+from src.services.prescription.safety_gate import apply_safety_gate
 
 
 class TestSafetyGate:
@@ -55,14 +54,14 @@ class TestSafetyGate:
 class TestRagRetriever:
     def test_retriever_gracefully_handles_missing_chromadb(self):
         """RagRetriever should not crash if chromadb is not installed."""
-        from src.services.rag_retriever import RagRetriever
+        from src.services.prescription.rag_retriever import RagRetriever
         retriever = RagRetriever()
         # If chromadb not installed, _ready=False and returns empty list
         docs = retriever.retrieve_maintenance("SOH 82%", top_k=3)
         assert isinstance(docs, list)
 
     def test_retriever_safety_returns_list(self):
-        from src.services.rag_retriever import RagRetriever
+        from src.services.prescription.rag_retriever import RagRetriever
         retriever = RagRetriever()
         docs = retriever.retrieve_safety("thermal warning", top_k=2)
         assert isinstance(docs, list)

@@ -1,0 +1,71 @@
+{
+  "embedding_model": "all-MiniLM-L6-v2",
+  "files": {
+    "maintenance/action_code_sop.md": {
+      "chunks": 6,
+      "ingested_at": "2026-07-09T08:25:48.215022+00:00",
+      "sha256": "2c7211aeeb6245039bc213539a33adbe4c5dfb8cd2186e41054b104c7960e807"
+    },
+    "maintenance/anomaly_connectivity.md": {
+      "chunks": 3,
+      "ingested_at": "2026-07-09T08:25:48.215022+00:00",
+      "sha256": "08c6ea88aac2ce305d8ee7c69c24289c64a75c1a3cf469dab560247f082f6909"
+    },
+    "maintenance/anomaly_electrical.md": {
+      "chunks": 7,
+      "ingested_at": "2026-07-09T08:25:48.215022+00:00",
+      "sha256": "06e092036904909fe36204232375cb4326ff8ae3926b3149677600347983cdfb"
+    },
+    "maintenance/anomaly_soc_soh.md": {
+      "chunks": 3,
+      "ingested_at": "2026-07-09T08:25:48.215022+00:00",
+      "sha256": "c8db1025940c773186a17dcb2961618f1200f680a55b3ece056f67ec06d0e4c0"
+    },
+    "maintenance/battery_12v_lifepo4.md": {
+      "chunks": 4,
+      "ingested_at": "2026-07-09T08:25:48.215022+00:00",
+      "sha256": "5af2469fde7040e125eb71a7e630d36541411126cbdde057cbc9ec2e9e5a29e2"
+    },
+    "maintenance/battery_maintenance_sop.md": {
+      "chunks": 6,
+      "ingested_at": "2026-07-09T08:25:48.215022+00:00",
+      "sha256": "6315f3cf7c089021b2452de67daac706d4f5d8e57cee35892b6cef3ba193d2d6"
+    },
+    "maintenance/bms_warning_codes.md": {
+      "chunks": 6,
+      "ingested_at": "2026-07-09T08:25:48.215022+00:00",
+      "sha256": "9490b66ca8876ef845b458a0041d273720ba15367cfc4ceb2359a09e4a2d1f98"
+    },
+    "maintenance/solar_operations.md": {
+      "chunks": 4,
+      "ingested_at": "2026-07-09T08:25:48.215022+00:00",
+      "sha256": "a0f2c73e51845f9d4e2e78975a8568809cc2c42a177f6e3bfca5722611a97dc4"
+    },
+    "safety/anomaly_environmental.md": {
+      "chunks": 4,
+      "ingested_at": "2026-07-09T08:25:49.361087+00:00",
+      "sha256": "b5d45796b810d0d0a6e6f31c07fca33a1b0ec267f1b0a8d45b0aba8bc4f033b4"
+    },
+    "safety/anomaly_thermal.md": {
+      "chunks": 3,
+      "ingested_at": "2026-07-09T08:25:49.361087+00:00",
+      "sha256": "bf738a7d08307a9e5aa6c6631dbd6bb0feee5c81c88698b4c5b6c2b0759eb1ab"
+    },
+    "safety/electrical_safety_sop.md": {
+      "chunks": 7,
+      "ingested_at": "2026-07-09T08:25:49.361087+00:00",
+      "sha256": "d0f8c6d3b8aee7d05ef428bb08b8891283c49c231d915d03910b3023b69d3ca9"
+    },
+    "safety/ppe_matrix.md": {
+      "chunks": 4,
+      "ingested_at": "2026-07-09T08:25:49.361087+00:00",
+      "sha256": "d86a8c188323bc1b5284257d9723b8390780aa934e95e85380f634499b07b59a"
+    },
+    "safety/thermal_runaway_response.md": {
+      "chunks": 7,
+      "ingested_at": "2026-07-09T08:25:49.361087+00:00",
+      "sha256": "0262bc001889f0bb766cea7567a92c9c9adc665cee469b8499cbd6d2f717259b"
+    }
+  },
+  "generated_at": "2026-07-09T08:25:48.214022+00:00"
+}

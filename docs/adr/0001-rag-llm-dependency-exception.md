@@ -32,3 +32,7 @@ Rule `ai.md` quy định AI module chỉ dùng **PyTorch + scikit-learn** (cho m
 
 - **Rule-only (không LLM/RAG):** đơn giản nhất, đã là default/fallback. Nhưng thiếu khả năng diễn giải ngữ cảnh + trích dẫn SOP → giữ làm baseline, LLM chỉ *enrich*.
 - **Tự viết embedding/retrieval bằng numpy:** tránh chromadb nhưng tăng maintenance, kém chuẩn hơn — không đáng cho scope capstone.
+
+## Cập nhật path (GH-96, 2026-07-10)
+
+`src/services/_llm_client.py` đã đổi thành package `src/services/prescription/llm/` (GH-79), sau đó toàn bộ lớp prescription (`prescription.py`, `rule_prescription.py`, `safety_gate.py`, `rag_retriever.py`, `llm/`) được gom vào subpackage `src/services/prescription/` (GH-96). Quyết định ngoại lệ dependency ở ADR này không đổi — chỉ đổi vị trí file.

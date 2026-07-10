@@ -49,3 +49,7 @@ Quyết định do người phụ trách prescription (đủ thẩm quyền quy�
 - **Giữ Anthropic single-provider (không đổi):** đơn giản nhất, nhưng không có backup khi Anthropic lỗi/hết quota — rơi thẳng rule-based dù có thể vẫn muốn LLM enrichment.
 - **Chỉ đổi hẳn sang DeepSeek, bỏ Anthropic/không làm chain:** giảm phức tạp, nhưng lại quay về vấn đề single-point-of-failure như hiện tại, chỉ đổi provider.
 - **Thêm retry/backoff dài thay vì fallback provider khác:** không giải quyết được trường hợp provider bị outage kéo dài; fallback sang provider khác thực tế hơn cho uptime.
+
+## Cập nhật path (GH-96, 2026-07-10)
+
+`src/services/llm/` (mô tả ở phần Decision) đã gom tiếp vào `src/services/prescription/llm/` cùng với `prescription.py` (→ `prescription/orchestrator.py`), `rule_prescription.py`, `safety_gate.py`, `rag_retriever.py` — tất cả nằm chung 1 subpackage `src/services/prescription/`. Kiến trúc chain/fallback không đổi, chỉ đổi vị trí file.

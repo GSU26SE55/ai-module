@@ -41,18 +41,31 @@ giao thức chia dữ liệu 23/2/1 và cùng seed.
 
 | Model | #Params | Input | MAE (%) | RMSE (%) |
 |-------|--------:|-------|--------:|---------:|
-| Naive (last-SOH) | — | — | [x.xx] ⬜ TODO(#69) | [x.xx] |
-| CNN-LSTM (baseline) | [xx]k ⬜ TODO(#69) | window 30 | [x.xx] | [x.xx] |
-| Mamba window-30 (ours) | 79k | window 30 | 1.98 | 2.38 |
-| Mamba long L=4096 (ours) | 99k | full cycle | **1.52** | **1.97** |
+| Naive last-SOH (oracle)† | — | SOH thật của cycle trước | 0.89 | 1.49 |
+| CNN-LSTM (baseline) | 61k | telemetry window 30 | 4.90 | 6.49 |
+| Mamba window-30 (ours) | 79k | telemetry window 30 | 1.98 | 2.38 |
+| Mamba long L=4096 (ours) | 99k | telemetry full cycle | **1.52** | **1.97** |
 
-Mô hình Mamba long-seq đạt MAE 1.52%, dưới ngưỡng công nghiệp 2%, trong điều
-kiện đánh giá khắc nghiệt: pin test chưa từng thấy VÀ ở nhiệt độ 4°C — miền
-mà phần lớn dữ liệu huấn luyện không bao phủ. So với CNN-LSTM baseline cùng
-giao thức, sai số giảm `[xx]%` tương đối ⬜ TODO(#69). Đáng chú ý, biến thể
-window-30 chỉ 79 nghìn tham số vẫn đạt MAE 1.98% — nằm dưới ngưỡng 2% — cho
-thấy có thể đánh đổi một phần độ chính xác để lấy khả năng suy luận thời gian
-thực trên CPU (xem §4.5).
+† Oracle baseline — cần giá trị SOH thật (đo dung lượng) của chu kỳ liền
+trước, thông tin KHÔNG tồn tại khi triển khai thực tế; xem thảo luận dưới.
+
+Trong nhóm mô hình chỉ dùng telemetry thô — điều kiện triển khai thực tế —
+Mamba long-seq đạt MAE 1.52%, dưới ngưỡng công nghiệp 2%, giảm **69% sai số
+tương đối** so với CNN-LSTM cùng giao thức (4.90%); biến thể window-30 giảm
+60% (1.98%). Kết quả đạt được trong điều kiện đánh giá khắc nghiệt: pin test
+chưa từng thấy VÀ ở nhiệt độ 4°C — miền mà phần lớn dữ liệu huấn luyện không
+bao phủ. CNN-LSTM với cửa sổ 30 bước tỏ ra không đủ sức tổng quát hóa
+cross-battery, củng cố lựa chọn kiến trúc SSM.
+
+Baseline naive (SOH chu kỳ này = SOH đo được của chu kỳ trước) đạt MAE 0.89% —
+tốt hơn mọi mô hình học máy. Chúng tôi báo cáo trung thực con số này và lưu ý
+nó KHÔNG phải phương pháp cạnh tranh: naive đòi hỏi biết SOH thật của chu kỳ
+liền trước, tức phải đo dung lượng bằng chu trình xả kiểm soát — chính là phép
+đo mà hệ thống giám sát thực địa không thể thực hiện mỗi chu kỳ. Giá trị của
+nó là một "trần tham chiếu" (oracle): SOH biến thiên chậm giữa các chu kỳ
+liên tiếp, nên bài toán có ý nghĩa duy nhất là ước lượng SOH từ telemetry
+khi KHÔNG có lịch sử dung lượng — đúng nhiệm vụ mà các mô hình trong bảng
+giải quyết.
 
 Chúng tôi không so sánh trực tiếp với các con số công bố ở nghiên cứu khác,
 vì phần lớn dùng giao thức chia theo timestep trong cùng một pin — cách chia
@@ -151,21 +164,28 @@ mở tại §5.
 
 ## 4.5 Độ trễ suy luận (Table 4)
 
-Bảng 4 báo cáo độ trễ suy luận end-to-end (bao gồm chuẩn hóa scaler, trích
-xuất đặc trưng và 20 lượt forward MC Dropout), đo trên [n=100] lần chạy,
-batch size 1.
+Bảng 4 báo cáo độ trễ suy luận end-to-end qua gRPC (bao gồm chuẩn hóa scaler,
+trích xuất đặc trưng và 10 mẫu MC Dropout đã gộp batch), đo 50 lần lặp mỗi
+RPC với real weights trên CPU Intel Core i7-14650HX.
 
-**Table 4 — Inference latency.**
+**Table 4 — Inference latency (window-30, CPU i7-14650HX, n=50).**
 
-| Model | Device | Mean (ms) | P95 (ms) |
-|-------|--------|----------:|---------:|
-| Mamba window-30 | CPU ([model CPU]) | **[xx.x]** ⬜ TODO(#72, chờ GH-63) | [xx.x] |
-| Mamba long L=4096 | CPU | [xxx.x] | [xxx.x] |
-| Mamba long L=4096 | GPU | [xx.x] | [xx.x] |
+| Đường gọi | Mean (ms) | P50 (ms) | P95 (ms) |
+|-----------|----------:|---------:|---------:|
+| Pipeline trực tiếp (`run_inference`) | 58.7 | 58.8 | 79.3 |
+| gRPC `Predict` (unary, end-to-end) | **56.1** | 52.5 | **78.3** |
+| gRPC `PredictStream` (per window) | 60.8 | 61.9 | 66.5 |
 
-Biến thể window-30 đạt [xx] ms trung bình, thỏa ràng buộc <100 ms cho cảnh
-báo thời gian thực ưu tiên P1. Mô hình long đổi độ trễ cao hơn lấy độ chính
-xác — phù hợp cho đánh giá theo lô (batch) định kỳ thay vì cảnh báo tức thời.
+Biến thể window-30 đạt 56.1 ms trung bình và 78.3 ms P95 end-to-end — thỏa
+ràng buộc <100 ms cho cảnh báo thời gian thực ưu tiên P1 với biên an toàn
+ngay cả ở P95. Kết quả đạt được nhờ hai tối ưu: gộp các lượt forward MC
+Dropout thành một batch duy nhất (494.8 → 124 ms) và giảm số mẫu Monte Carlo
+từ 20 xuống 10 (124 → ~56–88 ms; độ lệch ước lượng uncertainty thay đổi
+không đáng kể trên các payload kiểm chứng). Chi phí transport gRPC không
+đáng kể so với chi phí suy luận (chênh lệch Predict với gọi trực tiếp nằm
+trong nhiễu đo). Mô hình long đổi độ trễ cao hơn lấy độ chính xác — phù hợp
+cho đánh giá theo lô (batch) định kỳ thay vì cảnh báo tức thời; `[tùy chọn:
+thêm 1 câu số CPU long model nếu đo — không bắt buộc]`.
 
 ## 4.6 Phát hiện bất thường (Table 5)
 
@@ -215,6 +235,6 @@ giám sát) được thảo luận tại §5.
 | v1.6: MAE 1.34 / RMSE 1.84 + per-band Table 3b + case 82.9% | `logs/GH-88/ablation.md` (commit `bcf0aa9`, split MỚI 24/1/1) | chỉ dùng ở §4.2 data-centric + §4.4b |
 | Table 2 LOBO: 16 folds, mean 3.91±3.27, median 2.22 | `logs/nckh/lobo_results/` (khôi phục 09/07 từ raw logs; commit run `504fcf4`) | per-fold CSV đã restore |
 | Table 5 anomaly | `logs/nckh/anomaly/table5.md` (GH-70, PR #85) | F1 0.34 test — quyết định bỏ claim 0.80 |
-| Table 1 LSTM + naive | chưa chạy — notebook `notebooks/kaggle_train_lstm_baseline.ipynb` (đã vá ép split cũ 23/2/1) | #69 |
+| Table 1 baselines: CNN-LSTM 4.90/6.49 (61,089 params, val 4.84), naive 0.89/1.49 | `logs/nckh/baseline_results/table1_baselines.json` (run Kaggle 09/07, commit `c170e29`, split CŨ 23/2/1 đã vá trong notebook) | ✅ ĐÃ CHẠY — #69 xong |
 | Table 3 component ablation | 3 variant khả thi bằng flag `--pooling mean` / config `LONG_D_STATE=16` / bỏ `--weighted-loss` — KHÔNG có số cũ trong logs (Kaggle logs không được lưu) | #71 |
-| Table 4 latency | chờ GH-63 (<100ms); lưu ý `logs/GH-88/ablation.md` ghi 494.8ms (GH-60, trước GH-62 batching 124ms) — khi đo chính thức phải ghi rõ điều kiện | #72 |
+| Table 4: Predict avg 56.1 / p50 52.5 / p95 78.3 ms; direct 58.7/58.8/79.3; stream 60.8/61.9/66.5 | User chạy `benchmark_grpc.py --real-weights` 09/07 trên CPU i7-14650HX (n=50/RPC, output paste trong chat 09/07 — nên lưu file `logs/nckh/latency/benchmark_20260709.txt`) | ✅ Table 4 XONG. Tiến trình tối ưu: 494.8 (GH-60) → 124 (GH-62) → 88.2 (GH-63 test.md 04/07) → 56.1 (đo 09/07). Dòng GOAWAY cuối log = server đóng kết nối bình thường |

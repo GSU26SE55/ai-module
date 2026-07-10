@@ -1,7 +1,7 @@
 """
 LLM provider fallback chain — orchestrates DeepSeek -> Gemini -> (optional Anthropic).
 
-Called by src.services.prescription._enrich() on enrich=true. Each provider
+Called by src.services.prescription.orchestrator._enrich() on enrich=true. Each provider
 raises RuntimeError on failure; this module tries the next tier in order.
 Bounded total wall-clock budget (~25s) so a slow/hung provider can't block an
 event-driven call indefinitely — see docs/adr/0003-llm-provider-chain.md.
@@ -14,9 +14,9 @@ import logging
 import os
 import time
 
-from src.services.llm.anthropic_provider import AnthropicProvider
-from src.services.llm.deepseek_provider import DeepSeekProvider
-from src.services.llm.gemini_provider import GeminiProvider
+from src.services.prescription.llm.anthropic_provider import AnthropicProvider
+from src.services.prescription.llm.deepseek_provider import DeepSeekProvider
+from src.services.prescription.llm.gemini_provider import GeminiProvider
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ def generate_prescription(
     """
     Try each provider in LLM_PROVIDER_CHAIN order. Returns the first successful
     result with an added "provider" key. Raises RuntimeError if every provider
-    is unavailable or fails — caller (prescription.py::_enrich) falls back to
+    is unavailable or fails — caller (orchestrator.py::_enrich) falls back to
     the rule-based prescription, exactly as it did for the single-provider path.
     """
     start = time.perf_counter()

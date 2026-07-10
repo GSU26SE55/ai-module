@@ -16,8 +16,8 @@ import logging
 import time
 
 from src.services.inference import run_inference
-from src.services.rule_prescription import build_rule_prescription
-from src.services.safety_gate import apply_safety_gate
+from src.services.prescription.rule_prescription import build_rule_prescription
+from src.services.prescription.safety_gate import apply_safety_gate
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ _retriever = None
 def _get_retriever():
     global _retriever
     if _retriever is None:
-        from src.services.rag_retriever import RagRetriever
+        from src.services.prescription.rag_retriever import RagRetriever
         _retriever = RagRetriever()
     return _retriever
 
@@ -72,7 +72,7 @@ def _enrich(prediction: dict, risk: dict, warnings: list[dict], rule_out: dict) 
     response. On any failure, returns the rule-based fields with enriched=False
     (docs may still be attached if retrieval succeeded).
     """
-    from src.services.llm import chain
+    from src.services.prescription.llm import chain
 
     result = {
         "prescription":   rule_out["prescription"],

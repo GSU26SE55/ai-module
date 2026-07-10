@@ -1,7 +1,7 @@
 """
 Anthropic Claude provider — forced tool-use, structured prescription output.
 
-One tier in the LLM fallback chain (src.services.llm.chain). Kept as an
+One tier in the LLM fallback chain (src.services.prescription.llm.chain). Kept as an
 optional provider for backward compat with GH-20/22 — no longer the default
 chain (see docs/adr/0003-llm-provider-chain.md), but still usable via
 LLM_PROVIDER_CHAIN=...,anthropic.
@@ -12,7 +12,7 @@ Config (env):
 """
 import os
 
-from src.services.llm.base import (
+from src.services.prescription.llm.base import (
     MAX_RETRIES,
     RESPONSE_SCHEMA,
     SYSTEM_PROMPT,

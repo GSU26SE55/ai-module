@@ -1,7 +1,7 @@
 """
 Gemini provider — native structured output via response_schema.
 
-Backup provider in the LLM fallback chain (src.services.llm.chain), tried
+Backup provider in the LLM fallback chain (src.services.prescription.llm.chain), tried
 after DeepSeek fails — see docs/adr/0003-llm-provider-chain.md.
 
 Config (env):
@@ -11,7 +11,7 @@ Config (env):
 import json
 import os
 
-from src.services.llm.base import (
+from src.services.prescription.llm.base import (
     MAX_RETRIES,
     RESPONSE_SCHEMA,
     SYSTEM_PROMPT,

@@ -5,11 +5,11 @@ from unittest.mock import patch
 
 import pytest
 
-from src.services.llm import chain
-from src.services.llm.anthropic_provider import AnthropicProvider
-from src.services.llm.base import build_user_content, format_docs
-from src.services.llm.deepseek_provider import DeepSeekProvider
-from src.services.llm.gemini_provider import GeminiProvider
+from src.services.prescription.llm import chain
+from src.services.prescription.llm.anthropic_provider import AnthropicProvider
+from src.services.prescription.llm.base import build_user_content, format_docs
+from src.services.prescription.llm.deepseek_provider import DeepSeekProvider
+from src.services.prescription.llm.gemini_provider import GeminiProvider
 
 
 # ── Shared base helpers ─────────────────────────────────────────────────────

@@ -14,7 +14,7 @@ from src.core.config import (
 )
 
 from src.models.soh_predictor import MambaSOHPredictor
-from src.services.rule_prescription import build_rule_prescription
+from src.services.prescription.rule_prescription import build_rule_prescription
 
 BASE_N = len(BASE_FEATURES)  # GH-54: payload/scaler width (4)
 
@@ -114,7 +114,7 @@ class TestRulePrescription:
 # ── Hybrid pipeline (run_inference mocked → deterministic, no models) ─────────
 class TestPrescriptionPipeline:
     def test_default_is_rule_based_no_network(self):
-        from src.services import prescription
+        from src.services.prescription import orchestrator as prescription
 
         with patch.object(
             prescription, "run_inference", return_value=fake_inference_result()
@@ -132,7 +132,7 @@ class TestPrescriptionPipeline:
         assert out["human_verification_required"] is True  # P1
 
     def test_enrich_success_uses_llm_output(self):
-        from src.services import prescription
+        from src.services.prescription import orchestrator as prescription
 
         class FakeRetriever:
             def retrieve_maintenance(self, q, top_k=3):
@@ -159,9 +159,9 @@ class TestPrescriptionPipeline:
                 prescription, "run_inference", return_value=fake_inference_result()
             ),
             patch.object(prescription, "_get_retriever", return_value=FakeRetriever()),
-            patch("src.services.llm.chain.is_available", return_value=True),
+            patch("src.services.prescription.llm.chain.is_available", return_value=True),
             patch(
-                "src.services.llm.chain.generate_prescription",
+                "src.services.prescription.llm.chain.generate_prescription",
                 return_value=llm_out,
             ),
         ):
@@ -176,7 +176,7 @@ class TestPrescriptionPipeline:
         assert out["llm_provider"] == "deepseek"
 
     def test_enrich_falls_back_when_llm_errors(self):
-        from src.services import prescription
+        from src.services.prescription import orchestrator as prescription
 
         class FakeRetriever:
             def retrieve_maintenance(self, q, top_k=3):
@@ -190,9 +190,9 @@ class TestPrescriptionPipeline:
                 prescription, "run_inference", return_value=fake_inference_result()
             ),
             patch.object(prescription, "_get_retriever", return_value=FakeRetriever()),
-            patch("src.services.llm.chain.is_available", return_value=True),
+            patch("src.services.prescription.llm.chain.is_available", return_value=True),
             patch(
-                "src.services.llm.chain.generate_prescription",
+                "src.services.prescription.llm.chain.generate_prescription",
                 side_effect=RuntimeError("API down"),
             ),
         ):
@@ -205,7 +205,7 @@ class TestPrescriptionPipeline:
         assert out["llm_provider"] == "none"
 
     def test_enrich_skipped_without_api_key(self):
-        from src.services import prescription
+        from src.services.prescription import orchestrator as prescription
 
         class FakeRetriever:
             def retrieve_maintenance(self, q, top_k=3):
@@ -219,7 +219,7 @@ class TestPrescriptionPipeline:
                 prescription, "run_inference", return_value=fake_inference_result()
             ),
             patch.object(prescription, "_get_retriever", return_value=FakeRetriever()),
-            patch("src.services.llm.chain.is_available", return_value=False),
+            patch("src.services.prescription.llm.chain.is_available", return_value=False),
         ):
             out = prescription.run_prescription(
                 make_dummy_readings(), "B0005", enrich=True
