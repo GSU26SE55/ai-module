@@ -1,7 +1,7 @@
 # Plan — GH-82: Prescription — Agentic multi-step chain theo paper: diagnosis statement + LLM tự sinh search queries
 
 ## Metadata
-- **Status:** REVIEWING | **Role:** AI | **Ngày:** 2026-07-11
+- **Status:** TESTING | **Role:** AI | **Ngày:** 2026-07-11
 - **Branch:** `feat/GH-82-agentic-query-gen-chain`
 - **Issue:** #82 — https://github.com/GSU26SE55/ai-module/issues/82
 - **Sprint:** (chưa gán milestone) | **Priority:** P3 Standard | **Dev:** Nguyễn Phúc Duy (DuyNguyen-3006)

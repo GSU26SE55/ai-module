@@ -1,3 +1,4 @@
+
 """
 GH-42 — gRPC client demo: gọi đủ 4 RPC của AiService (thay Swagger khi demo).
 

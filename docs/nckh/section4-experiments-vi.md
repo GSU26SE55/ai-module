@@ -125,19 +125,44 @@ thay đổi, giữ nguyên mọi điều kiện còn lại.
 
 **Table 3 — Component ablation trên B0048 (long model, split 23/2/1).**
 
-| Variant | MAE (%) | Δ MAE |
-|---------|--------:|------:|
-| Full model (v2.2) | 1.52 | — |
-| Attention pooling → last token | [x.xx] ⬜ TODO(#71, notebook VARIANT=pooling_last) | [+x.xx] |
-| d_state 32 → 16 | [x.xx] ⬜ TODO(#71, VARIANT=d_state16) | [+x.xx] |
-| Bỏ EOL-weighted loss | [x.xx] ⬜ TODO(#71, VARIANT=no_weighted_loss) | [+x.xx] |
+| Variant | MAE (%) | RMSE (%) | Δ MAE |
+|---------|--------:|---------:|------:|
+| Full model (v2.2) | 1.52 | 1.97 | — |
+| Attention pooling → last token | 1.93 | 2.38 | +0.41 |
+| d_state 32 → 16 | [x.xx] ⬜ TODO(#71, VARIANT=d_state16) | [x.xx] | [+x.xx] |
+| Bỏ EOL-weighted loss | **1.32** | **1.69** | **−0.20** |
 
-> Ghi chú thực thi: 3 variant trên chạy được ngay bằng flag/config có sẵn
-> (3 run Kaggle × 3–5h). Ablation FiLM và kênh IC đòi hỏi sửa code — nếu
-> không kịp trước 20/7 thì ghi nhận ở future work, KHÔNG nợ số trong bảng.
+> Ghi chú thực thi: 2/3 run đã xong (09–11/07, protocol split cũ đã vá đúng,
+> `logs/nckh/ablation/{pooling_last,no_weighted_loss}.json`). Còn thiếu
+> `d_state16` — chạy notebook với `VARIANT="d_state16"`.
 
-`[Đoạn văn 2–3 câu sau khi có số: thành phần nào đóng góp lớn nhất; nếu có
-Δ âm — báo cáo trung thực + giải thích giả thuyết.]` ⬜ TODO(#71)
+Attention pooling đóng góp rõ rệt: thay bằng lấy token cuối (last-token
+pooling) làm MAE tăng từ 1.52% lên 1.93% (+0.41 điểm phần trăm, +27% tương
+đối) — phù hợp trực giác rằng với chuỗi 511 token sau patch encoding, tín
+hiệu suy thoái không tập trung ở token cuối mà phân tán khắp chuỗi, nên cơ
+chế attention tổng hợp toàn cục có lợi thế rõ so với chỉ lấy trạng thái ẩn
+cuối cùng.
+
+Ngược lại, bỏ EOL-weighted loss cho **Δ MAE âm** (−0.20, tức MAE giảm xuống
+1.32% — tốt hơn cả full model): việc nhân đôi trọng số cho các mẫu SOH < 80%
+trong tập huấn luyện, vốn nhằm ưu tiên độ chính xác ở vùng ra quyết định
+EOL, dường như khiến mô hình đánh đổi ngược lại — hy sinh một phần độ chính
+xác tổng thể trên B0048 (pin có SOH trải rộng 0–83.7% nhưng đa số cycle nằm
+ngoài vùng gần EOL) để tối ưu vùng thiểu số. Chúng tôi báo cáo trung thực
+kết quả này thay vì loại bỏ: nó cho thấy `--weighted-loss` là một lựa chọn
+đánh đổi (trade-off) giữa độ chính xác trung bình và độ chính xác tại vùng
+quyết định an toàn (EOL), không phải một cải tiến thuần túy — quyết định
+giữ weighted loss trong mô hình headline (v2.2) ưu tiên độ tin cậy ở ngưỡng
+EOL hơn là MAE trung bình thấp nhất có thể, phù hợp với ứng dụng bảo trì
+dự đoán nơi sai số gần ngưỡng thay thế có chi phí cao hơn sai số ở vùng SOH
+khỏe mạnh.
+
+⬜ *Việc cần làm thêm (không chặn nộp bài):* metadata `pooling` lưu trong
+checkpoint dài (`train.py` dòng 840) bị hardcode `"attention"` bất kể pooling
+thật sự dùng khi huấn luyện — bug ghi log, không ảnh hưởng đến việc mô hình
+đã dùng đúng cấu hình patch (đã verify: patch chỉ khớp duy nhất dòng khởi
+tạo model, dòng 625, không đụng dòng checkpoint). Không sửa trong scope bài
+báo, nhưng nên mở issue riêng để tránh đọc nhầm metadata checkpoint sau này.
 
 **(b) Phân tích lỗi theo dải SOH.** Để hiểu mô hình sai ở đâu thay vì chỉ
 sai bao nhiêu, chúng tôi phân rã sai số của biến thể window-30 trên B0048
