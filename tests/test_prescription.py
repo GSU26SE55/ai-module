@@ -367,6 +367,148 @@ class TestSafetyGateV2Pipeline:
         assert out["blocked"] is True
 
 
+# ── GH-82: agentic chain — query-gen, multi-query retrieval, dedup ───────────
+class RecordingRetriever:
+    """2 docs per maintenance query (1 unique + 1 shared chunk), 1 per safety
+    query — records every call for retrieval assertions."""
+
+    def __init__(self):
+        self.calls = []
+
+    def retrieve_maintenance(self, q, top_k=3):
+        self.calls.append(("maintenance", q, top_k))
+        return [
+            {"title": "M", "content": f"m-{q}", "source": "maintenance/battery_maintenance_sop.md",
+             "relevance_score": 0.9, "chunk_id": f"m-{q}"},
+            {"title": "M", "content": "shared", "source": "maintenance/action_code_sop.md",
+             "relevance_score": 0.8, "chunk_id": "m-shared"},
+        ]
+
+    def retrieve_safety(self, q, top_k=2):
+        self.calls.append(("safety", q, top_k))
+        return [
+            {"title": "S", "content": f"s-{q}", "source": "safety/ppe_matrix.md",
+             "relevance_score": 0.7, "chunk_id": f"s-{q}"},
+        ]
+
+
+QUERIES_OUT = {
+    "maintenance_queries": ["capacity fade inspection", "replacement criteria eol", "internal resistance check"],
+    "safety_queries": ["lockout tagout before replacement"],
+    "provider": "deepseek",
+}
+
+
+def run_agentic_pipeline(queries=None, queries_side_effect=None, agentic=True, enrich=True):
+    from src.services.prescription import orchestrator as prescription
+
+    retriever = RecordingRetriever()
+    with (
+        patch.object(prescription, "run_inference", return_value=fake_inference_result()),
+        patch.object(prescription, "_get_retriever", return_value=retriever),
+        patch("src.services.prescription.llm.chain.is_available", return_value=True),
+        patch(
+            "src.services.prescription.llm.chain.generate_queries",
+            return_value=queries, side_effect=queries_side_effect,
+        ) as qg_mock,
+        patch(
+            "src.services.prescription.llm.chain.generate_prescription",
+            return_value=dict(CLEAN_LLM_OUT),
+        ) as gen_mock,
+    ):
+        out = prescription.run_prescription(
+            make_dummy_readings(), "B0005", enrich=enrich, agentic=agentic
+        )
+    return out, retriever, qg_mock, gen_mock
+
+
+class TestAgenticPipeline:
+    @pytest.fixture(autouse=True)
+    def judge_flag_off(self, monkeypatch):
+        monkeypatch.delenv("SAFETY_LLM_JUDGE", raising=False)
+
+    def test_agentic_two_llm_calls_and_per_query_retrieval(self):
+        out, retriever, qg_mock, gen_mock = run_agentic_pipeline(queries=QUERIES_OUT)
+        # exactly 2 LLM calls: query-gen + summarize
+        qg_mock.assert_called_once()
+        gen_mock.assert_called_once()
+        # retrieval ran per query with top_k=2
+        maint_calls = [c for c in retriever.calls if c[0] == "maintenance"]
+        safety_calls = [c for c in retriever.calls if c[0] == "safety"]
+        assert [c[1] for c in maint_calls] == QUERIES_OUT["maintenance_queries"]
+        assert [c[1] for c in safety_calls] == QUERIES_OUT["safety_queries"]
+        assert all(c[2] == 2 for c in retriever.calls)
+        assert out["enriched"] is True
+        assert out["generated_queries"] == (
+            QUERIES_OUT["maintenance_queries"] + QUERIES_OUT["safety_queries"]
+        )
+        assert out["query_gen_ms"] >= 0.0
+
+    def test_agentic_dedup_and_retrieved_via(self):
+        out, _, _, _ = run_agentic_pipeline(queries=QUERIES_OUT)
+        docs = out["maintenance_docs"]
+        # 3 unique + shared chunk dedup'd to 1 → 4 docs (≤ cap 5)
+        assert len(docs) == 4
+        shared = [d for d in docs if d["chunk_id"] == "m-shared"]
+        assert len(shared) == 1
+        # shared chunk keeps the first (highest-relevance tie) query as source
+        assert shared[0]["retrieved_via"] == QUERIES_OUT["maintenance_queries"][0]
+        assert all(d["retrieved_via"] in QUERIES_OUT["maintenance_queries"] for d in docs)
+        # sorted by relevance: unique docs (0.9) before shared (0.8)
+        assert [d["relevance_score"] for d in docs] == sorted(
+            [d["relevance_score"] for d in docs], reverse=True
+        )
+
+    def test_agentic_caps_maintenance_docs_at_5(self):
+        many = {
+            "maintenance_queries": [f"q{i}" for i in range(4)],  # 4×1 unique + shared = 5
+            "safety_queries": ["s1", "s2", "s3", "s4"],          # 4 unique > cap 3
+            "provider": "deepseek",
+        }
+        out, _, _, _ = run_agentic_pipeline(queries=many)
+        assert len(out["maintenance_docs"]) == 5
+        assert len(out["safety_docs"]) == 3
+
+    def test_query_gen_failure_falls_back_to_template(self):
+        out, retriever, qg_mock, gen_mock = run_agentic_pipeline(
+            queries_side_effect=RuntimeError("all providers down")
+        )
+        qg_mock.assert_called_once()
+        gen_mock.assert_called_once()  # pipeline still completes with LLM summarize
+        # template fallback: single query per collection, original top_k
+        assert [c[2] for c in retriever.calls] == [3, 2]
+        assert out["enriched"] is True
+        assert out["generated_queries"] == []
+        assert all(d["retrieved_via"] == "template" for d in out["maintenance_docs"])
+        assert out["query_gen_ms"] >= 0.0
+
+    def test_empty_queries_fall_back_to_template(self):
+        out, retriever, _, _ = run_agentic_pipeline(
+            queries={"maintenance_queries": [], "safety_queries": [], "provider": "deepseek"}
+        )
+        assert [c[2] for c in retriever.calls] == [3, 2]
+        assert out["generated_queries"] == []
+
+    def test_agentic_false_never_calls_query_gen(self):
+        out, retriever, qg_mock, _ = run_agentic_pipeline(queries=QUERIES_OUT, agentic=False)
+        qg_mock.assert_not_called()
+        assert [c[2] for c in retriever.calls] == [3, 2]  # unchanged template behavior
+        assert out["generated_queries"] == []
+        assert out["query_gen_ms"] == 0.0
+        assert all(d["retrieved_via"] == "template" for d in out["maintenance_docs"])
+
+    def test_agentic_ignored_without_enrich(self):
+        out, retriever, qg_mock, gen_mock = run_agentic_pipeline(
+            queries=QUERIES_OUT, agentic=True, enrich=False
+        )
+        qg_mock.assert_not_called()
+        gen_mock.assert_not_called()
+        assert retriever.calls == []  # rule path touches nothing
+        assert out["enriched"] is False
+        assert out["query_gen_ms"] == 0.0
+        assert out["generated_queries"] == []
+
+
 # ── Latency: rule path must stay on the P1 <100ms hot-path ───────────────────
 class TestPrescriptionLatency:
     @pytest.fixture(autouse=True)

@@ -154,7 +154,15 @@ FIXED_PRESCRIBE_RESULT = {
     "sop_references": ["SOP-BAT-07"],
     "enriched": False,
     "llm_provider": "none",
-    "maintenance_docs": [],
+    "maintenance_docs": [
+        {
+            "title": "Battery Maintenance Sop",
+            "content": "Replacement criteria …",
+            "source": "maintenance/battery_maintenance_sop.md",
+            "relevance_score": 0.87,
+            "retrieved_via": "template",
+        }
+    ],
     "safety_docs": [],
     "human_verification_required": True,
     "safety_warnings": ["High voltage"],
@@ -162,6 +170,8 @@ FIXED_PRESCRIBE_RESULT = {
     "inference_ms": 15.0,
     "rag_ms": 0.0,
     "llm_ms": 0.0,
+    "query_gen_ms": 0.0,
+    "generated_queries": [],
 }
 
 
@@ -590,6 +600,7 @@ def test_prescribe_parity_with_rest(servicer, rest_client):
         "inference_ms",
         "rag_ms",
         "llm_ms",
+        "query_gen_ms",
     ):
         assert getattr(rpc, field) == rest[field], field
     for field in (
@@ -598,9 +609,14 @@ def test_prescribe_parity_with_rest(servicer, rest_client):
         "ppe_required",
         "sop_references",
         "safety_warnings",
+        "generated_queries",
     ):
         assert list(getattr(rpc, field)) == rest[field], field
-    assert len(rpc.maintenance_docs) == len(rest["maintenance_docs"]) == 0
+    # RetrievedDoc parity — GH-82 retrieved_via included
+    assert len(rpc.maintenance_docs) == len(rest["maintenance_docs"]) == 1
+    rpc_doc, rest_doc = rpc.maintenance_docs[0], rest["maintenance_docs"][0]
+    for field in ("title", "content", "source", "relevance_score", "retrieved_via"):
+        assert getattr(rpc_doc, field) == rest_doc[field], field
 
 
 def test_prescribe_forwards_optional_context(servicer):
@@ -635,6 +651,32 @@ def test_prescribe_forwards_optional_context(servicer):
             None,
         )
     assert mock_run.call_args.kwargs["last_maintenance_date"] == "2026-05-01"
+
+
+def test_prescribe_forwards_agentic_flag(servicer):
+    """GH-82: agentic reaches run_prescription (proto3 bool, default false)."""
+    with patch(
+        "src.grpc_server.run_prescription", return_value=FIXED_PRESCRIBE_RESULT
+    ) as mock_run:
+        servicer.Prescribe(
+            pb.PrescribeRequest(
+                battery_id="B0005",
+                readings=VALID_READINGS,
+                enrich=True,
+                agentic=True,
+            ),
+            None,
+        )
+    assert mock_run.call_args.kwargs["agentic"] is True
+
+    with patch(
+        "src.grpc_server.run_prescription", return_value=FIXED_PRESCRIBE_RESULT
+    ) as mock_run:
+        servicer.Prescribe(
+            pb.PrescribeRequest(battery_id="B0005", readings=VALID_READINGS),
+            None,
+        )
+    assert mock_run.call_args.kwargs["agentic"] is False
 
 
 # ── Error paths (INTERNAL) ─────────────────────────────────────────────

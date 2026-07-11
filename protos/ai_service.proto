@@ -173,6 +173,10 @@ message PrescribeRequest {
   bool enrich = 6;
   // GH-65: omit for single-cell (legacy behavior unchanged).
   PackConfig pack_config = 7;
+  // GH-82: if true (and enrich=true), run the agentic chain — diagnosis
+  // statement → LLM query generation → multi-query retrieval (2 LLM calls).
+  // Ignored when enrich=false.
+  bool agentic = 8;
 }
 
 message RetrievedDoc {
@@ -180,6 +184,9 @@ message RetrievedDoc {
   string content = 2;
   string source = 3;  // e.g. "maintenance/bms_warning_codes.md"
   double relevance_score = 4;
+  // GH-82: which search query retrieved this doc — "template" on the
+  // non-agentic path, the generated query text on the agentic path.
+  string retrieved_via = 5;
 }
 
 message PrescribeResponse {
@@ -221,6 +228,11 @@ message PrescribeResponse {
   // prescription is the rule-based fallback and human_verification_required
   // is always true.
   bool blocked = 20;
+
+  // GH-82: agentic chain metrics — query-gen latency and the LLM-generated
+  // search queries (empty on the template path or query-gen fallback).
+  double query_gen_ms = 21;
+  repeated string generated_queries = 22;
 }
 
 // ── Health ─────────────────────────────────────────────────────────────

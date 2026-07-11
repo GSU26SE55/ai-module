@@ -543,6 +543,197 @@ def test_gemini_judge_raises_on_bad_json(monkeypatch):
         GeminiProvider().judge_safety("ctx", ["step 1"])
 
 
+# ── Query generation (GH-82) — same fake SDKs, no network ──────────────────
+_QOUT = '{"maintenance_queries": ["capacity fade check", "replacement criteria"], "safety_queries": ["loto before work"]}'
+
+
+def test_deepseek_generate_queries_success(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    _install_fake_openai(monkeypatch, response=_fake_chat_response(_QOUT))
+    out = DeepSeekProvider().generate_queries("Diagnosis: Degrading battery.")
+    assert out["maintenance_queries"] == ["capacity fade check", "replacement criteria"]
+    assert out["safety_queries"] == ["loto before work"]
+
+
+def test_deepseek_generate_queries_raises_without_key(monkeypatch):
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="DEEPSEEK_API_KEY"):
+        DeepSeekProvider().generate_queries("diag")
+
+
+def test_deepseek_generate_queries_raises_on_api_error(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    _install_fake_openai(monkeypatch, raise_exc=Exception("503"))
+    with pytest.raises(RuntimeError, match="DeepSeek API call failed"):
+        DeepSeekProvider().generate_queries("diag")
+
+
+def test_deepseek_generate_queries_raises_on_no_tool_call(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    message = types.SimpleNamespace(tool_calls=None)
+    resp = types.SimpleNamespace(choices=[types.SimpleNamespace(message=message)])
+    _install_fake_openai(monkeypatch, response=resp)
+    with pytest.raises(RuntimeError, match="no tool call"):
+        DeepSeekProvider().generate_queries("diag")
+
+
+def test_deepseek_generate_queries_raises_on_malformed(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    _install_fake_openai(monkeypatch, response=_fake_chat_response('{"foo": 1}'))
+    with pytest.raises(RuntimeError, match="malformed"):
+        DeepSeekProvider().generate_queries("diag")
+
+
+def test_deepseek_generate_queries_raises_on_bad_json(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    _install_fake_openai(monkeypatch, response=_fake_chat_response("not-json"))
+    with pytest.raises(RuntimeError, match="malformed"):
+        DeepSeekProvider().generate_queries("diag")
+
+
+def test_gemini_generate_queries_success(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "key-test")
+    _install_fake_genai(monkeypatch, response=types.SimpleNamespace(text=_QOUT))
+    out = GeminiProvider().generate_queries("diag")
+    assert len(out["maintenance_queries"]) == 2
+    assert out["safety_queries"] == ["loto before work"]
+
+
+def test_gemini_generate_queries_raises_without_key(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="GEMINI_API_KEY"):
+        GeminiProvider().generate_queries("diag")
+
+
+def test_gemini_generate_queries_raises_on_api_error(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "key-test")
+    _install_fake_genai(monkeypatch, raise_exc=Exception("503"))
+    with pytest.raises(RuntimeError, match="Gemini API call failed"):
+        GeminiProvider().generate_queries("diag")
+
+
+def test_gemini_generate_queries_raises_on_empty_text(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "key-test")
+    _install_fake_genai(monkeypatch, response=types.SimpleNamespace(text=""))
+    with pytest.raises(RuntimeError, match="no text"):
+        GeminiProvider().generate_queries("diag")
+
+
+def test_gemini_generate_queries_raises_on_bad_json(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "key-test")
+    _install_fake_genai(monkeypatch, response=types.SimpleNamespace(text="not-json"))
+    with pytest.raises(RuntimeError, match="malformed"):
+        GeminiProvider().generate_queries("diag")
+
+
+def test_gemini_generate_queries_raises_on_malformed(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "key-test")
+    _install_fake_genai(monkeypatch, response=types.SimpleNamespace(text='{"foo": 1}'))
+    with pytest.raises(RuntimeError, match="malformed"):
+        GeminiProvider().generate_queries("diag")
+
+
+def test_anthropic_generate_queries_success(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    resp = _AnthropicResp([_AnthropicBlock("tool_use", {
+        "maintenance_queries": ["capacity fade check"],
+        "safety_queries": ["loto before work"],
+    })])
+    _install_fake_anthropic(monkeypatch, response=resp)
+    out = AnthropicProvider().generate_queries("diag")
+    assert out["maintenance_queries"] == ["capacity fade check"]
+
+
+def test_anthropic_generate_queries_raises_without_key(monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
+        AnthropicProvider().generate_queries("diag")
+
+
+def test_anthropic_generate_queries_raises_on_api_error(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    _install_fake_anthropic(monkeypatch, raise_exc=Exception("503"))
+    with pytest.raises(RuntimeError, match="Anthropic API call failed"):
+        AnthropicProvider().generate_queries("diag")
+
+
+def test_anthropic_generate_queries_raises_on_malformed(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    resp = _AnthropicResp([_AnthropicBlock("tool_use", {"foo": 1})])
+    _install_fake_anthropic(monkeypatch, response=resp)
+    with pytest.raises(RuntimeError, match="malformed"):
+        AnthropicProvider().generate_queries("diag")
+
+
+def test_anthropic_generate_queries_raises_on_no_tool_use(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    resp = _AnthropicResp([_AnthropicBlock("text", None)])
+    _install_fake_anthropic(monkeypatch, response=resp)
+    with pytest.raises(RuntimeError, match="no tool_use"):
+        AnthropicProvider().generate_queries("diag")
+
+
+class TestQueryGenChain:
+    def test_deepseek_fail_falls_to_gemini(self, monkeypatch):
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+        monkeypatch.setenv("GEMINI_API_KEY", "key-test")
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+        with (
+            patch.object(
+                DeepSeekProvider, "generate_queries",
+                side_effect=RuntimeError("DeepSeek down"),
+            ),
+            patch.object(
+                GeminiProvider, "generate_queries",
+                return_value={"maintenance_queries": ["q"], "safety_queries": []},
+            ),
+        ):
+            out = chain.generate_queries("diag")
+        assert out["provider"] == "gemini"
+        assert out["maintenance_queries"] == ["q"]
+
+    def test_all_fail_raises(self, monkeypatch):
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+        monkeypatch.setenv("GEMINI_API_KEY", "key-test")
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+        with (
+            patch.object(
+                DeepSeekProvider, "generate_queries", side_effect=RuntimeError("down"),
+            ),
+            patch.object(
+                GeminiProvider, "generate_queries", side_effect=RuntimeError("down"),
+            ),
+        ):
+            with pytest.raises(RuntimeError, match="All LLM query-gen providers"):
+                chain.generate_queries("diag")
+
+    def test_no_key_configured_raises(self, monkeypatch):
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        with pytest.raises(RuntimeError, match="All LLM query-gen providers"):
+            chain.generate_queries("diag")
+
+    def test_budget_param_skips_remaining_tiers(self, monkeypatch):
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+        with pytest.raises(RuntimeError, match="query-gen budget"):
+            chain.generate_queries("diag", budget_s=-1.0)
+
+    def test_default_budget_is_total_budget(self, monkeypatch):
+        """budget_s omitted → falls back to TOTAL_BUDGET_S (no early skip)."""
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        with patch.object(
+            DeepSeekProvider, "generate_queries",
+            return_value={"maintenance_queries": ["q"], "safety_queries": []},
+        ):
+            out = chain.generate_queries("diag")
+        assert out["provider"] == "deepseek"
+
+
 class TestJudgeChain:
     def test_deepseek_fail_falls_to_gemini(self, monkeypatch):
         monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")

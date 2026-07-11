@@ -71,6 +71,7 @@ class RagRetriever:
     @staticmethod
     def _format(results: dict) -> list[dict]:
         docs = []
+        ids = results.get("ids", [[]])[0]
         for i, doc in enumerate(results.get("documents", [[]])[0]):
             docs.append({
                 "title":           results["metadatas"][0][i].get("title", ""),
@@ -78,5 +79,8 @@ class RagRetriever:
                 "source":          results["metadatas"][0][i].get("source", ""),
                 # cosine distance ∈ [0, 2]; clamp similarity to [0, 1]
                 "relevance_score": max(0.0, 1.0 - results["distances"][0][i]),
+                # GH-82: chunk id for multi-query dedup (internal key — the
+                # response schema does not expose it).
+                "chunk_id":        ids[i] if i < len(ids) else "",
             })
         return docs

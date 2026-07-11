@@ -51,6 +51,54 @@ RESPONSE_SCHEMA = {
 }
 
 
+# ── Query generation (GH-82, agentic chain step 2) ──────────────────────
+# Same structured-output mechanism as the prescription call. The LLM turns a
+# diagnosis statement into focused KB search queries (Deng et al. 2024 §3.2).
+QUERYGEN_TOOL_NAME = "emit_search_queries"
+QUERYGEN_TOOL_DESCRIPTION = "Return knowledge-base search queries for the diagnosis."
+QUERYGEN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "maintenance_queries": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "2-4 short English search queries about lithium battery "
+                "maintenance procedures relevant to the diagnosis."
+            ),
+        },
+        "safety_queries": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "1-2 short English search queries about safety hazards or "
+                "precautions relevant to the diagnosis."
+            ),
+        },
+    },
+    "required": ["maintenance_queries", "safety_queries"],
+}
+
+QUERYGEN_SYSTEM_PROMPT = (
+    "You are a retrieval query planner for a solar lithium-ion battery "
+    "maintenance knowledge base. Given a diagnosis statement, generate focused "
+    "search queries that would retrieve the most relevant maintenance "
+    "procedures and safety documents. "
+    "RULES: 3-5 queries total (2-4 maintenance + 1-2 safety); each query under "
+    "15 words; English only; specific to the diagnosed condition (e.g. "
+    "'capacity fade inspection schedule for degrading battery'), never generic "
+    "('battery maintenance')."
+)
+
+
+def build_querygen_content(diagnosis: str) -> str:
+    """Shared query-gen user message — identical across providers."""
+    return (
+        f"Diagnosis statement:\n{diagnosis}\n\n"
+        f"Generate the search queries using the {QUERYGEN_TOOL_NAME} tool."
+    )
+
+
 # ── LLM-as-judge (GH-81) ────────────────────────────────────────────────
 # Same structured-output mechanism as the prescription call, shared by every
 # provider so the verdict shape is provider-agnostic.
@@ -147,4 +195,13 @@ class LLMProvider(ABC):
         given warning state. Returns dict with keys: safe (bool), reason (str).
         Raises RuntimeError on any failure — the chain catches it and tries the
         next tier; the orchestrator treats a fully-failed chain as "pass".
+        """
+
+    @abstractmethod
+    def generate_queries(self, diagnosis: str) -> dict:
+        """
+        GH-82 agentic step 2: turn a diagnosis statement into KB search
+        queries. Returns dict with keys: maintenance_queries (list[str]),
+        safety_queries (list[str]). Raises RuntimeError on any failure — the
+        chain catches it; the orchestrator falls back to the template query.
         """

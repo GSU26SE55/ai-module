@@ -18,6 +18,10 @@ from src.services.prescription.llm.base import (
     JUDGE_TOOL_DESCRIPTION,
     JUDGE_TOOL_NAME,
     MAX_RETRIES,
+    QUERYGEN_SCHEMA,
+    QUERYGEN_SYSTEM_PROMPT,
+    QUERYGEN_TOOL_DESCRIPTION,
+    QUERYGEN_TOOL_NAME,
     RESPONSE_SCHEMA,
     SYSTEM_PROMPT,
     TIMEOUT_S,
@@ -25,6 +29,7 @@ from src.services.prescription.llm.base import (
     TOOL_NAME,
     LLMProvider,
     build_judge_content,
+    build_querygen_content,
     build_user_content,
 )
 
@@ -138,5 +143,52 @@ class AnthropicProvider(LLMProvider):
                 if not isinstance(out, dict) or "safe" not in out:
                     raise RuntimeError("LLM returned malformed tool output.")
                 return {"safe": bool(out["safe"]), "reason": str(out.get("reason", ""))}
+
+        raise RuntimeError("LLM response contained no tool_use block.")
+
+    def generate_queries(self, diagnosis: str) -> dict:
+        """
+        GH-82 query generation via Claude forced tool-use.
+
+        Returns dict with keys: maintenance_queries, safety_queries (list[str]).
+        Raises RuntimeError on missing key / API error / malformed output.
+        """
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise RuntimeError("ANTHROPIC_API_KEY not set — cannot use Anthropic provider.")
+
+        try:
+            import anthropic
+        except ImportError as exc:  # pragma: no cover - dependency guard
+            raise RuntimeError("anthropic SDK not installed.") from exc
+
+        tool = {
+            "name": QUERYGEN_TOOL_NAME,
+            "description": QUERYGEN_TOOL_DESCRIPTION,
+            "input_schema": QUERYGEN_SCHEMA,
+        }
+
+        client = anthropic.Anthropic(api_key=api_key, timeout=TIMEOUT_S, max_retries=MAX_RETRIES)
+        try:
+            resp = client.messages.create(
+                model=os.getenv("ANTHROPIC_MODEL", DEFAULT_MODEL),
+                max_tokens=MAX_TOKENS,
+                system=QUERYGEN_SYSTEM_PROMPT,
+                tools=[tool],
+                tool_choice={"type": "tool", "name": QUERYGEN_TOOL_NAME},
+                messages=[{"role": "user", "content": build_querygen_content(diagnosis)}],
+            )
+        except Exception as exc:  # anthropic.APIError, timeouts, etc.
+            raise RuntimeError(f"Anthropic API call failed: {exc}") from exc
+
+        for block in resp.content:
+            if getattr(block, "type", None) == "tool_use":
+                out = block.input
+                if not isinstance(out, dict) or "maintenance_queries" not in out:
+                    raise RuntimeError("LLM returned malformed tool output.")
+                return {
+                    "maintenance_queries": [str(q) for q in out.get("maintenance_queries", [])],
+                    "safety_queries": [str(q) for q in out.get("safety_queries", [])],
+                }
 
         raise RuntimeError("LLM response contained no tool_use block.")

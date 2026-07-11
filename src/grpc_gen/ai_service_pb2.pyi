@@ -208,7 +208,7 @@ class PredictResponse(_message.Message):
     def __init__(self, battery_id: _Optional[str] = ..., prediction: _Optional[_Union[PredictionInfo, _Mapping]] = ..., anomaly: _Optional[_Union[AnomalyInfo, _Mapping]] = ..., risk: _Optional[_Union[RiskInfo, _Mapping]] = ..., evidence: _Optional[_Union[EvidenceInfo, _Mapping]] = ..., metadata: _Optional[_Union[ResponseMetadata, _Mapping]] = ..., soh_percent: _Optional[float] = ..., classification: _Optional[str] = ..., confidence: _Optional[float] = ..., inference_ms: _Optional[float] = ..., rul_cycles_estimate: _Optional[int] = ..., degradation_rate_per_cycle: _Optional[float] = ..., soh_trend: _Optional[str] = ..., cycles_to_maintenance: _Optional[int] = ..., soh_trajectory: _Optional[_Iterable[float]] = ..., anomaly_score: _Optional[float] = ..., recommended_action: _Optional[str] = ..., warnings: _Optional[_Iterable[_Union[WarningItem, _Mapping]]] = ..., feature_summary: _Optional[_Mapping[str, FeatureStat]] = ...) -> None: ...
 
 class PrescribeRequest(_message.Message):
-    __slots__ = ("battery_id", "readings", "age_cycles", "last_maintenance_date", "ticket_history", "enrich", "pack_config")
+    __slots__ = ("battery_id", "readings", "age_cycles", "last_maintenance_date", "ticket_history", "enrich", "pack_config", "agentic")
     BATTERY_ID_FIELD_NUMBER: _ClassVar[int]
     READINGS_FIELD_NUMBER: _ClassVar[int]
     AGE_CYCLES_FIELD_NUMBER: _ClassVar[int]
@@ -216,6 +216,7 @@ class PrescribeRequest(_message.Message):
     TICKET_HISTORY_FIELD_NUMBER: _ClassVar[int]
     ENRICH_FIELD_NUMBER: _ClassVar[int]
     PACK_CONFIG_FIELD_NUMBER: _ClassVar[int]
+    AGENTIC_FIELD_NUMBER: _ClassVar[int]
     battery_id: str
     readings: _containers.RepeatedCompositeFieldContainer[Reading]
     age_cycles: int
@@ -223,22 +224,25 @@ class PrescribeRequest(_message.Message):
     ticket_history: _containers.RepeatedScalarFieldContainer[str]
     enrich: bool
     pack_config: PackConfig
-    def __init__(self, battery_id: _Optional[str] = ..., readings: _Optional[_Iterable[_Union[Reading, _Mapping]]] = ..., age_cycles: _Optional[int] = ..., last_maintenance_date: _Optional[str] = ..., ticket_history: _Optional[_Iterable[str]] = ..., enrich: _Optional[bool] = ..., pack_config: _Optional[_Union[PackConfig, _Mapping]] = ...) -> None: ...
+    agentic: bool
+    def __init__(self, battery_id: _Optional[str] = ..., readings: _Optional[_Iterable[_Union[Reading, _Mapping]]] = ..., age_cycles: _Optional[int] = ..., last_maintenance_date: _Optional[str] = ..., ticket_history: _Optional[_Iterable[str]] = ..., enrich: _Optional[bool] = ..., pack_config: _Optional[_Union[PackConfig, _Mapping]] = ..., agentic: _Optional[bool] = ...) -> None: ...
 
 class RetrievedDoc(_message.Message):
-    __slots__ = ("title", "content", "source", "relevance_score")
+    __slots__ = ("title", "content", "source", "relevance_score", "retrieved_via")
     TITLE_FIELD_NUMBER: _ClassVar[int]
     CONTENT_FIELD_NUMBER: _ClassVar[int]
     SOURCE_FIELD_NUMBER: _ClassVar[int]
     RELEVANCE_SCORE_FIELD_NUMBER: _ClassVar[int]
+    RETRIEVED_VIA_FIELD_NUMBER: _ClassVar[int]
     title: str
     content: str
     source: str
     relevance_score: float
-    def __init__(self, title: _Optional[str] = ..., content: _Optional[str] = ..., source: _Optional[str] = ..., relevance_score: _Optional[float] = ...) -> None: ...
+    retrieved_via: str
+    def __init__(self, title: _Optional[str] = ..., content: _Optional[str] = ..., source: _Optional[str] = ..., relevance_score: _Optional[float] = ..., retrieved_via: _Optional[str] = ...) -> None: ...
 
 class PrescribeResponse(_message.Message):
-    __slots__ = ("battery_id", "soh_percent", "risk_level", "priority", "action_code", "prescription", "action_steps", "escalation_conditions", "ppe_required", "sop_references", "enriched", "maintenance_docs", "safety_docs", "human_verification_required", "safety_warnings", "inference_ms", "rag_ms", "llm_ms", "llm_provider", "blocked")
+    __slots__ = ("battery_id", "soh_percent", "risk_level", "priority", "action_code", "prescription", "action_steps", "escalation_conditions", "ppe_required", "sop_references", "enriched", "maintenance_docs", "safety_docs", "human_verification_required", "safety_warnings", "inference_ms", "rag_ms", "llm_ms", "llm_provider", "blocked", "query_gen_ms", "generated_queries")
     BATTERY_ID_FIELD_NUMBER: _ClassVar[int]
     SOH_PERCENT_FIELD_NUMBER: _ClassVar[int]
     RISK_LEVEL_FIELD_NUMBER: _ClassVar[int]
@@ -259,6 +263,8 @@ class PrescribeResponse(_message.Message):
     LLM_MS_FIELD_NUMBER: _ClassVar[int]
     LLM_PROVIDER_FIELD_NUMBER: _ClassVar[int]
     BLOCKED_FIELD_NUMBER: _ClassVar[int]
+    QUERY_GEN_MS_FIELD_NUMBER: _ClassVar[int]
+    GENERATED_QUERIES_FIELD_NUMBER: _ClassVar[int]
     battery_id: str
     soh_percent: float
     risk_level: str
@@ -279,7 +285,9 @@ class PrescribeResponse(_message.Message):
     llm_ms: float
     llm_provider: str
     blocked: bool
-    def __init__(self, battery_id: _Optional[str] = ..., soh_percent: _Optional[float] = ..., risk_level: _Optional[str] = ..., priority: _Optional[str] = ..., action_code: _Optional[str] = ..., prescription: _Optional[str] = ..., action_steps: _Optional[_Iterable[str]] = ..., escalation_conditions: _Optional[_Iterable[str]] = ..., ppe_required: _Optional[_Iterable[str]] = ..., sop_references: _Optional[_Iterable[str]] = ..., enriched: _Optional[bool] = ..., maintenance_docs: _Optional[_Iterable[_Union[RetrievedDoc, _Mapping]]] = ..., safety_docs: _Optional[_Iterable[_Union[RetrievedDoc, _Mapping]]] = ..., human_verification_required: _Optional[bool] = ..., safety_warnings: _Optional[_Iterable[str]] = ..., inference_ms: _Optional[float] = ..., rag_ms: _Optional[float] = ..., llm_ms: _Optional[float] = ..., llm_provider: _Optional[str] = ..., blocked: _Optional[bool] = ...) -> None: ...
+    query_gen_ms: float
+    generated_queries: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, battery_id: _Optional[str] = ..., soh_percent: _Optional[float] = ..., risk_level: _Optional[str] = ..., priority: _Optional[str] = ..., action_code: _Optional[str] = ..., prescription: _Optional[str] = ..., action_steps: _Optional[_Iterable[str]] = ..., escalation_conditions: _Optional[_Iterable[str]] = ..., ppe_required: _Optional[_Iterable[str]] = ..., sop_references: _Optional[_Iterable[str]] = ..., enriched: _Optional[bool] = ..., maintenance_docs: _Optional[_Iterable[_Union[RetrievedDoc, _Mapping]]] = ..., safety_docs: _Optional[_Iterable[_Union[RetrievedDoc, _Mapping]]] = ..., human_verification_required: _Optional[bool] = ..., safety_warnings: _Optional[_Iterable[str]] = ..., inference_ms: _Optional[float] = ..., rag_ms: _Optional[float] = ..., llm_ms: _Optional[float] = ..., llm_provider: _Optional[str] = ..., blocked: _Optional[bool] = ..., query_gen_ms: _Optional[float] = ..., generated_queries: _Optional[_Iterable[str]] = ...) -> None: ...
 
 class HealthRequest(_message.Message):
     __slots__ = ()

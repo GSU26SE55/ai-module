@@ -22,6 +22,9 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CHAIN = "deepseek,gemini"
 TOTAL_BUDGET_S = 25.0
+# GH-82: tighter budget for the query-gen step so the agentic path
+# (query-gen + summarize) stays bounded well under 30s total.
+QUERYGEN_BUDGET_S = 8.0
 
 _PROVIDERS = {
     "deepseek": DeepSeekProvider,
@@ -121,5 +124,49 @@ def judge_safety(context: str, action_steps: list[str]) -> dict:
 
     raise RuntimeError(
         "All LLM judge providers unavailable or failed: "
+        + ("; ".join(errors) if errors else "no provider configured")
+    )
+
+
+def generate_queries(diagnosis: str, budget_s: float | None = None) -> dict:
+    """
+    GH-82 agentic step 2: try each provider in LLM_PROVIDER_CHAIN order and
+    return the first successful query set {"maintenance_queries": [str],
+    "safety_queries": [str], "provider": name}. Raises RuntimeError when every
+    provider is unavailable or fails — the caller (orchestrator) falls back to
+    the template query, the pipeline never dies here.
+
+    budget_s: wall-clock budget for the whole chain loop (default
+    TOTAL_BUDGET_S) — the orchestrator passes QUERYGEN_BUDGET_S so query-gen
+    can't eat the summarize step's time.
+    """
+    limit = TOTAL_BUDGET_S if budget_s is None else budget_s
+    start = time.perf_counter()
+    errors: list[str] = []
+
+    for name in _chain_order():
+        provider_cls = _PROVIDERS.get(name)
+        if provider_cls is None:
+            logger.warning("Unknown LLM provider %r in LLM_PROVIDER_CHAIN — skipping.", name)
+            continue
+
+        if time.perf_counter() - start > limit:
+            errors.append(f"{name}: skipped, query-gen budget ({limit}s) exceeded")
+            break
+
+        provider = provider_cls()
+        if not provider.is_available():
+            continue
+
+        try:
+            out = provider.generate_queries(diagnosis)
+            out["provider"] = name
+            return out
+        except Exception as exc:  # provider's own RuntimeError, or anything unexpected
+            logger.warning("LLM query-gen provider %r failed: %s", name, exc)
+            errors.append(f"{name}: {exc}")
+
+    raise RuntimeError(
+        "All LLM query-gen providers unavailable or failed: "
         + ("; ".join(errors) if errors else "no provider configured")
     )

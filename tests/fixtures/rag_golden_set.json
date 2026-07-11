@@ -1,0 +1,131 @@
+{
+  "_comment": "GH-82 mini golden set — retrieval recall eval (template vs agentic query-gen). expected_sources are FILE-level (match RetrievedDoc.source). Hand-labeled from knowledge/ KB. Seed set for GH-24 to extend.",
+  "scenarios": [
+    {
+      "id": "eol-immediate-replacement",
+      "description": "End-of-life battery, immediate replacement, no active warnings",
+      "prediction": {"soh_percent": 68.0, "soh_std": 1.2, "health_stage": "End of Life", "degradation_rate_per_cycle": 0.31, "soh_trend": "accelerating", "rul_cycles_estimate": 0},
+      "anomaly": {"anomaly_status": "Failed", "anomaly_score": -0.34, "anomaly_confidence": 0.34},
+      "risk": {"risk_level": "Critical", "priority": "P1", "action_code": "REPLACE_IMMEDIATELY"},
+      "warnings": [],
+      "expected_sources": ["maintenance/battery_maintenance_sop.md", "maintenance/action_code_sop.md", "safety/electrical_safety_sop.md", "safety/ppe_matrix.md"]
+    },
+    {
+      "id": "thermal-runaway-critical",
+      "description": "Critical temperature — thermal runaway precursor",
+      "prediction": {"soh_percent": 74.0, "soh_std": 2.1, "health_stage": "End of Life", "degradation_rate_per_cycle": 0.45, "soh_trend": "accelerating", "rul_cycles_estimate": 3},
+      "anomaly": {"anomaly_status": "Failed", "anomaly_score": -0.41, "anomaly_confidence": 0.41},
+      "risk": {"risk_level": "Critical", "priority": "P1", "action_code": "REPLACE_IMMEDIATELY"},
+      "warnings": [{"code": "TEMP_CRITICAL", "severity": "critical"}],
+      "expected_sources": ["safety/thermal_runaway_response.md", "safety/anomaly_thermal.md", "maintenance/bms_warning_codes.md"]
+    },
+    {
+      "id": "overvoltage-charging",
+      "description": "Overvoltage during charging — overcharge risk",
+      "prediction": {"soh_percent": 88.0, "soh_std": 1.0, "health_stage": "Good", "degradation_rate_per_cycle": 0.12, "soh_trend": "stable", "rul_cycles_estimate": 90},
+      "anomaly": {"anomaly_status": "Degrading", "anomaly_score": -0.18, "anomaly_confidence": 0.18},
+      "risk": {"risk_level": "High", "priority": "P2", "action_code": "SCHEDULE_MAINTENANCE"},
+      "warnings": [{"code": "OVERVOLTAGE_CRITICAL", "severity": "critical"}],
+      "expected_sources": ["maintenance/anomaly_electrical.md", "maintenance/bms_warning_codes.md", "safety/electrical_safety_sop.md"]
+    },
+    {
+      "id": "undervoltage-discharge",
+      "description": "Cell voltage below cutoff during discharge",
+      "prediction": {"soh_percent": 83.0, "soh_std": 1.4, "health_stage": "Fair", "degradation_rate_per_cycle": 0.2, "soh_trend": "stable", "rul_cycles_estimate": 40},
+      "anomaly": {"anomaly_status": "Degrading", "anomaly_score": -0.22, "anomaly_confidence": 0.22},
+      "risk": {"risk_level": "High", "priority": "P2", "action_code": "SCHEDULE_MAINTENANCE"},
+      "warnings": [{"code": "VOLTAGE_CRITICAL", "severity": "critical"}],
+      "expected_sources": ["maintenance/anomaly_electrical.md", "maintenance/bms_warning_codes.md", "safety/electrical_safety_sop.md"]
+    },
+    {
+      "id": "overcurrent-load",
+      "description": "Overcurrent — load above 1C, emergency disconnect needed",
+      "prediction": {"soh_percent": 90.0, "soh_std": 0.9, "health_stage": "Good", "degradation_rate_per_cycle": 0.1, "soh_trend": "stable", "rul_cycles_estimate": 110},
+      "anomaly": {"anomaly_status": "Degrading", "anomaly_score": -0.2, "anomaly_confidence": 0.2},
+      "risk": {"risk_level": "High", "priority": "P2", "action_code": "SCHEDULE_MAINTENANCE"},
+      "warnings": [{"code": "OVERCURRENT_CRITICAL", "severity": "critical"}],
+      "expected_sources": ["maintenance/anomaly_electrical.md", "safety/electrical_safety_sop.md", "safety/ppe_matrix.md"]
+    },
+    {
+      "id": "degrading-schedule-replacement",
+      "description": "SOH near EOL threshold — plan replacement within 7 days",
+      "prediction": {"soh_percent": 78.5, "soh_std": 1.6, "health_stage": "Degrading", "degradation_rate_per_cycle": 0.28, "soh_trend": "accelerating", "rul_cycles_estimate": 12},
+      "anomaly": {"anomaly_status": "Degrading", "anomaly_score": -0.25, "anomaly_confidence": 0.25},
+      "risk": {"risk_level": "High", "priority": "P2", "action_code": "SCHEDULE_REPLACEMENT"},
+      "warnings": [{"code": "SOH_LOW", "severity": "warning"}],
+      "expected_sources": ["maintenance/battery_maintenance_sop.md", "maintenance/action_code_sop.md", "safety/ppe_matrix.md"]
+    },
+    {
+      "id": "early-degradation-inspection",
+      "description": "Early degradation — monthly inspection within 30 days",
+      "prediction": {"soh_percent": 86.0, "soh_std": 1.1, "health_stage": "Fair", "degradation_rate_per_cycle": 0.18, "soh_trend": "stable", "rul_cycles_estimate": 55},
+      "anomaly": {"anomaly_status": "Degrading", "anomaly_score": -0.15, "anomaly_confidence": 0.15},
+      "risk": {"risk_level": "Medium", "priority": "P3", "action_code": "SCHEDULE_MAINTENANCE"},
+      "warnings": [],
+      "expected_sources": ["maintenance/battery_maintenance_sop.md", "maintenance/action_code_sop.md"]
+    },
+    {
+      "id": "healthy-monitor",
+      "description": "Healthy battery in routine solar operation",
+      "prediction": {"soh_percent": 97.0, "soh_std": 0.6, "health_stage": "Excellent", "degradation_rate_per_cycle": 0.05, "soh_trend": "stable", "rul_cycles_estimate": 200},
+      "anomaly": {"anomaly_status": "Normal", "anomaly_score": 0.05, "anomaly_confidence": 0.05},
+      "risk": {"risk_level": "Low", "priority": "None", "action_code": "MONITOR"},
+      "warnings": [],
+      "expected_sources": ["maintenance/battery_maintenance_sop.md", "maintenance/solar_operations.md"]
+    },
+    {
+      "id": "temp-elevated-ventilation",
+      "description": "Elevated temperature — ventilation and derating needed",
+      "prediction": {"soh_percent": 89.0, "soh_std": 1.0, "health_stage": "Good", "degradation_rate_per_cycle": 0.14, "soh_trend": "stable", "rul_cycles_estimate": 80},
+      "anomaly": {"anomaly_status": "Degrading", "anomaly_score": -0.12, "anomaly_confidence": 0.12},
+      "risk": {"risk_level": "Medium", "priority": "P3", "action_code": "SCHEDULE_MAINTENANCE"},
+      "warnings": [{"code": "TEMP_ELEVATED", "severity": "warning"}],
+      "expected_sources": ["safety/anomaly_thermal.md", "maintenance/bms_warning_codes.md"]
+    },
+    {
+      "id": "soc-soh-mismatch",
+      "description": "SOC drift / SOH estimate mismatch anomaly",
+      "prediction": {"soh_percent": 84.0, "soh_std": 3.5, "health_stage": "Fair", "degradation_rate_per_cycle": 0.22, "soh_trend": "accelerating", "rul_cycles_estimate": 35},
+      "anomaly": {"anomaly_status": "Degrading", "anomaly_score": -0.28, "anomaly_confidence": 0.28},
+      "risk": {"risk_level": "Medium", "priority": "P3", "action_code": "SCHEDULE_MAINTENANCE"},
+      "warnings": [{"code": "SOC_DRIFT", "severity": "warning"}],
+      "expected_sources": ["maintenance/anomaly_soc_soh.md", "maintenance/battery_maintenance_sop.md"]
+    },
+    {
+      "id": "connectivity-dropout",
+      "description": "Telemetry gaps — BMS connectivity anomaly, stale sensor data",
+      "prediction": {"soh_percent": 91.0, "soh_std": 2.8, "health_stage": "Good", "degradation_rate_per_cycle": 0.08, "soh_trend": "stable", "rul_cycles_estimate": 120},
+      "anomaly": {"anomaly_status": "Degrading", "anomaly_score": -0.16, "anomaly_confidence": 0.16},
+      "risk": {"risk_level": "Medium", "priority": "P3", "action_code": "SCHEDULE_MAINTENANCE"},
+      "warnings": [{"code": "CONNECTIVITY_LOSS", "severity": "warning"}],
+      "expected_sources": ["maintenance/anomaly_connectivity.md"]
+    },
+    {
+      "id": "humidity-corrosion",
+      "description": "High humidity / condensation — terminal corrosion risk",
+      "prediction": {"soh_percent": 88.0, "soh_std": 1.2, "health_stage": "Good", "degradation_rate_per_cycle": 0.11, "soh_trend": "stable", "rul_cycles_estimate": 95},
+      "anomaly": {"anomaly_status": "Degrading", "anomaly_score": -0.14, "anomaly_confidence": 0.14},
+      "risk": {"risk_level": "Medium", "priority": "P3", "action_code": "SCHEDULE_MAINTENANCE"},
+      "warnings": [{"code": "HUMIDITY_HIGH", "severity": "warning"}],
+      "expected_sources": ["safety/anomaly_environmental.md", "safety/ppe_matrix.md"]
+    },
+    {
+      "id": "lifepo4-12v-pack",
+      "description": "12V LiFePO4 pack degrading — chemistry-specific care",
+      "prediction": {"soh_percent": 81.0, "soh_std": 1.9, "health_stage": "Degrading", "degradation_rate_per_cycle": 0.24, "soh_trend": "accelerating", "rul_cycles_estimate": 20},
+      "anomaly": {"anomaly_status": "Degrading", "anomaly_score": -0.24, "anomaly_confidence": 0.24},
+      "risk": {"risk_level": "High", "priority": "P2", "action_code": "SCHEDULE_REPLACEMENT"},
+      "warnings": [{"code": "SOH_LOW", "severity": "warning"}],
+      "expected_sources": ["maintenance/battery_12v_lifepo4.md", "maintenance/battery_maintenance_sop.md"]
+    },
+    {
+      "id": "smoke-detected-emergency",
+      "description": "Smoke detected near battery enclosure — fire response",
+      "prediction": {"soh_percent": 72.0, "soh_std": 2.4, "health_stage": "End of Life", "degradation_rate_per_cycle": 0.5, "soh_trend": "accelerating", "rul_cycles_estimate": 1},
+      "anomaly": {"anomaly_status": "Failed", "anomaly_score": -0.45, "anomaly_confidence": 0.45},
+      "risk": {"risk_level": "Critical", "priority": "P1", "action_code": "REPLACE_IMMEDIATELY"},
+      "warnings": [{"code": "SMOKE", "severity": "critical"}],
+      "expected_sources": ["safety/thermal_runaway_response.md", "safety/anomaly_environmental.md", "safety/anomaly_thermal.md"]
+    }
+  ]
+}
