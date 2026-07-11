@@ -15,11 +15,14 @@ from src.services.prescription.llm.base import (
     JUDGE_SCHEMA,
     JUDGE_SYSTEM_PROMPT,
     MAX_RETRIES,
+    QUERYGEN_SCHEMA,
+    QUERYGEN_SYSTEM_PROMPT,
     RESPONSE_SCHEMA,
     SYSTEM_PROMPT,
     TIMEOUT_S,
     LLMProvider,
     build_judge_content,
+    build_querygen_content,
     build_user_content,
 )
 
@@ -152,3 +155,59 @@ class GeminiProvider(LLMProvider):
             raise RuntimeError("Gemini returned malformed tool output.")
 
         return {"safe": bool(out["safe"]), "reason": str(out.get("reason", ""))}
+
+    def generate_queries(self, diagnosis: str) -> dict:
+        """
+        GH-82 query generation via Gemini native response_schema.
+
+        Returns dict with keys: maintenance_queries, safety_queries (list[str]).
+        Raises RuntimeError on missing key / API error / malformed output.
+        """
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise RuntimeError("GEMINI_API_KEY not set — cannot use Gemini provider.")
+
+        try:
+            from google import genai
+        except ImportError as exc:  # pragma: no cover - dependency guard
+            raise RuntimeError("google-genai SDK not installed.") from exc
+
+        client = genai.Client(api_key=api_key)
+        # Manual retry for the same reason as generate_prescription above.
+        last_exc: Exception | None = None
+        resp = None
+        for _attempt in range(MAX_RETRIES + 1):
+            try:
+                resp = client.models.generate_content(
+                    model=os.getenv("GEMINI_MODEL", DEFAULT_MODEL),
+                    contents=build_querygen_content(diagnosis),
+                    config={
+                        "system_instruction": QUERYGEN_SYSTEM_PROMPT,
+                        "response_mime_type": "application/json",
+                        "response_schema": QUERYGEN_SCHEMA,
+                        "http_options": {"timeout": int(TIMEOUT_S * 1000)},
+                    },
+                )
+                last_exc = None
+                break
+            except Exception as exc:  # google.genai errors, timeouts, etc.
+                last_exc = exc
+        if last_exc is not None:
+            raise RuntimeError(f"Gemini API call failed: {last_exc}") from last_exc
+
+        text = getattr(resp, "text", None)
+        if not text:
+            raise RuntimeError("Gemini response contained no text.")
+
+        try:
+            out = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("Gemini returned malformed tool output.") from exc
+
+        if not isinstance(out, dict) or "maintenance_queries" not in out:
+            raise RuntimeError("Gemini returned malformed tool output.")
+
+        return {
+            "maintenance_queries": [str(q) for q in out.get("maintenance_queries", [])],
+            "safety_queries": [str(q) for q in out.get("safety_queries", [])],
+        }

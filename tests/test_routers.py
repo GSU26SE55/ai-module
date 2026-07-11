@@ -224,3 +224,16 @@ class TestPackConfigRouter:
         assert body["human_verification_required"] is True
         assert body["enriched"] is False
         assert "open the battery casing" not in " ".join(body["action_steps"]).lower()
+
+    def test_prescribe_agentic_ignored_without_enrich(self, client):
+        """GH-82: agentic=true without enrich → rule path, new fields defaulted."""
+        payload = self._pack_12v_payload() | {
+            "pack_config": {"n_series": 3},
+            "agentic": True,
+        }
+        resp = client.post("/prescribe/", json=payload)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["enriched"] is False
+        assert body["query_gen_ms"] == 0.0
+        assert body["generated_queries"] == []

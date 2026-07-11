@@ -13,6 +13,10 @@ class PrescribeRequest(PredictRequest):
     enrich: bool = False
     """If True, also run RAG + LLM enrichment (slower, off the P1 hot-path).
     Default False → deterministic rule-based prescription only (<100ms)."""
+    agentic: bool = False
+    """GH-82: if True (and enrich=True), run the agentic chain — diagnosis
+    statement → LLM query generation → multi-query retrieval (2 LLM calls).
+    Ignored when enrich=False; enrich stays the master switch."""
 
 
 class RetrievedDoc(BaseModel):
@@ -20,6 +24,9 @@ class RetrievedDoc(BaseModel):
     content: str
     source: str           # e.g. "maintenance/bms_warning_codes.md"
     relevance_score: float
+    # GH-82: which search query retrieved this doc — "template" for the
+    # non-agentic path, the generated query text on the agentic path.
+    retrieved_via: str = ""
 
 
 class PrescribeResponse(BaseModel):
@@ -58,3 +65,7 @@ class PrescribeResponse(BaseModel):
     inference_ms: float
     rag_ms: float = 0.0
     llm_ms: float = 0.0
+    # GH-82: agentic chain metrics — query-gen latency and the LLM-generated
+    # search queries (empty on the template path or query-gen fallback).
+    query_gen_ms: float = 0.0
+    generated_queries: list[str] = []

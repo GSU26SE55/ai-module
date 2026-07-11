@@ -18,6 +18,7 @@ import os
 import time
 
 from src.services.inference import run_inference
+from src.services.prescription.diagnosis import build_diagnosis_statement
 from src.services.prescription.rule_prescription import build_rule_prescription
 from src.services.prescription.safety_gate import apply_safety_gate
 
@@ -72,6 +73,24 @@ def _dedup(items: list[str]) -> list[str]:
     return out
 
 
+def _multi_query_retrieve(fetch, queries: list[str], top_k: int, cap: int) -> list[dict]:
+    """
+    GH-82: retrieve top_k per query, tag each doc with the query that found it
+    (retrieved_via), dedup by chunk_id keeping the highest-relevance copy, and
+    return at most `cap` docs sorted by relevance_score.
+    """
+    best: dict = {}
+    for query in queries:
+        for doc in fetch(query, top_k=top_k):
+            doc = {**doc, "retrieved_via": query}
+            # chunk_id from the retriever; content-based fallback for safety.
+            key = doc.get("chunk_id") or (doc.get("source", ""), doc.get("content", "")[:80])
+            if key not in best or doc["relevance_score"] > best[key]["relevance_score"]:
+                best[key] = doc
+    ranked = sorted(best.values(), key=lambda d: d["relevance_score"], reverse=True)
+    return ranked[:cap]
+
+
 def _judge_enabled() -> bool:
     """GH-81: LLM-as-judge feature flag — default off (enable when budget allows)."""
     return os.getenv("SAFETY_LLM_JUDGE", "").strip().lower() in {"1", "true", "yes", "on"}
@@ -123,11 +142,22 @@ def _audit_block(
     )
 
 
-def _enrich(prediction: dict, risk: dict, warnings: list[dict], rule_out: dict) -> dict:
+def _enrich(
+    prediction: dict,
+    risk: dict,
+    warnings: list[dict],
+    rule_out: dict,
+    anomaly: dict | None = None,
+    agentic: bool = False,
+) -> dict:
     """
     Run RAG retrieval + LLM generation. Returns a partial dict to merge into the
     response. On any failure, returns the rule-based fields with enriched=False
     (docs may still be attached if retrieval succeeded).
+
+    agentic=True (GH-82): first ask the LLM to expand the diagnosis statement
+    into 3-5 focused search queries, then retrieve per query with dedup.
+    Query-gen failure falls back to the template query — never fatal.
     """
     from src.services.prescription.llm import chain
 
@@ -141,14 +171,45 @@ def _enrich(prediction: dict, risk: dict, warnings: list[dict], rule_out: dict) 
         "safety_docs":      [],
         "rag_ms":         0.0,
         "llm_ms":         0.0,
+        "query_gen_ms":   0.0,
+        "generated_queries": [],
     }
+
+    # 0. Query planning (GH-82). Template queries by default; when agentic,
+    #    LLM expands the diagnosis into focused queries (timed separately).
+    maint_queries = [_build_maintenance_query(prediction, risk)]
+    safety_queries = [_build_safety_query(warnings)]
+    agentic_active = False
+    if agentic and chain.is_available():
+        t_qg = time.perf_counter()
+        try:
+            diagnosis = build_diagnosis_statement(prediction, anomaly or {}, risk, warnings)
+            q = chain.generate_queries(diagnosis, budget_s=chain.QUERYGEN_BUDGET_S)
+            gen_maint = [s.strip() for s in q.get("maintenance_queries", []) if s.strip()]
+            gen_safety = [s.strip() for s in q.get("safety_queries", []) if s.strip()]
+            if gen_maint or gen_safety:
+                maint_queries = gen_maint or maint_queries
+                safety_queries = gen_safety or safety_queries
+                result["generated_queries"] = gen_maint + gen_safety
+                agentic_active = True
+        except Exception as exc:
+            logger.warning("Query generation failed — falling back to template query: %s", exc)
+        result["query_gen_ms"] = round((time.perf_counter() - t_qg) * 1000, 2)
 
     # 1. Retrieve (timed). Retriever returns [] gracefully if ChromaDB unavailable.
     t_rag = time.perf_counter()
     try:
         retriever = _get_retriever()
-        maint_docs  = retriever.retrieve_maintenance(_build_maintenance_query(prediction, risk), top_k=3)
-        safety_docs = retriever.retrieve_safety(_build_safety_query(warnings), top_k=2)
+        if agentic_active:
+            maint_docs = _multi_query_retrieve(
+                retriever.retrieve_maintenance, maint_queries, top_k=2, cap=5)
+            safety_docs = _multi_query_retrieve(
+                retriever.retrieve_safety, safety_queries, top_k=2, cap=3)
+        else:
+            maint_docs  = retriever.retrieve_maintenance(maint_queries[0], top_k=3)
+            safety_docs = retriever.retrieve_safety(safety_queries[0], top_k=2)
+            maint_docs  = [{**d, "retrieved_via": "template"} for d in maint_docs]
+            safety_docs = [{**d, "retrieved_via": "template"} for d in safety_docs]
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("RAG retrieval failed: %s", exc)
         maint_docs, safety_docs = [], []
@@ -186,6 +247,7 @@ def run_prescription(
     battery_id: str,
     enrich: bool = False,
     n_series: int = 1,
+    agentic: bool = False,
     **context_kwargs,
 ) -> dict:
     """
@@ -196,6 +258,9 @@ def run_prescription(
         battery_id: battery identifier.
         enrich: if True, attempt RAG + LLM enrichment (off the P1 hot-path).
         n_series: GH-65 pack_config.n_series, passed through to run_inference.
+        agentic: GH-82 — if True (and enrich=True), run the agentic chain:
+            diagnosis statement → LLM query generation → multi-query retrieval.
+            Ignored when enrich=False (enrich stays the master switch).
         context_kwargs: age_cycles, last_maintenance_date, ticket_history (reserved).
 
     Returns:
@@ -206,6 +271,7 @@ def run_prescription(
         readings, n_series=n_series, battery_id=battery_id
     )
     prediction = prediction_result.get("prediction", {})
+    anomaly    = prediction_result.get("anomaly", {})
     risk       = prediction_result.get("risk", {})
     warnings   = prediction_result.get("evidence", {}).get("warnings", [])
     inference_ms = prediction_result.get("metadata", {}).get("inference_ms", 0)
@@ -215,7 +281,9 @@ def run_prescription(
 
     # 3. Optional enrichment
     if enrich:
-        enriched = _enrich(prediction, risk, warnings, rule_out)
+        enriched = _enrich(
+            prediction, risk, warnings, rule_out, anomaly=anomaly, agentic=agentic
+        )
     else:
         enriched = {
             "prescription":   rule_out["prescription"],
@@ -227,6 +295,8 @@ def run_prescription(
             "safety_docs":      [],
             "rag_ms":         0.0,
             "llm_ms":         0.0,
+            "query_gen_ms":   0.0,
+            "generated_queries": [],
         }
 
     # 4. Safety gate (runs for both paths) — v2 (GH-81) also validates the
@@ -311,4 +381,6 @@ def run_prescription(
         "inference_ms": inference_ms,
         "rag_ms":       enriched["rag_ms"],
         "llm_ms":       enriched["llm_ms"],
+        "query_gen_ms": enriched["query_gen_ms"],
+        "generated_queries": enriched["generated_queries"],
     }

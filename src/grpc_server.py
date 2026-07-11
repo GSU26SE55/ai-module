@@ -141,6 +141,7 @@ def _to_retrieved_docs(docs: list[dict]) -> list[ai_service_pb2.RetrievedDoc]:
             content=d["content"],
             source=d["source"],
             relevance_score=d["relevance_score"],
+            retrieved_via=d.get("retrieved_via", ""),
         )
         for d in docs
     ]
@@ -168,6 +169,8 @@ def _to_prescribe_response(result: dict) -> ai_service_pb2.PrescribeResponse:
         llm_ms=result["llm_ms"],
         llm_provider=result["llm_provider"],
         blocked=result.get("blocked", False),
+        query_gen_ms=result.get("query_gen_ms", 0.0),
+        generated_queries=result.get("generated_queries", []),
     )
 
 
@@ -228,6 +231,7 @@ class AiServiceServicer(ai_service_pb2_grpc.AiServiceServicer):
             "readings": [list(r.values) for r in request.readings],
             "ticket_history": list(request.ticket_history),
             "enrich": request.enrich,
+            "agentic": request.agentic,
         }
         # proto3 optional → only forward when explicitly set (Pydantic defaults otherwise)
         if request.HasField("age_cycles"):
@@ -243,6 +247,7 @@ class AiServiceServicer(ai_service_pb2_grpc.AiServiceServicer):
                 battery_id=parsed.battery_id,
                 enrich=parsed.enrich,
                 n_series=parsed.pack_config.n_series if parsed.pack_config else 1,
+                agentic=parsed.agentic,
                 age_cycles=parsed.age_cycles,
                 last_maintenance_date=parsed.last_maintenance_date,
                 ticket_history=parsed.ticket_history,

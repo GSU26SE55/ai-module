@@ -15,6 +15,8 @@ async def prescribe(request: PrescribeRequest) -> dict:
     Default (enrich=false): deterministic rule-based prescription, <100ms, no network.
     enrich=true: also run RAG retrieval + LLM generation (slower, off the P1 hot-path);
     falls back to the rule-based result if the LLM is unavailable or errors.
+    agentic=true (GH-82, requires enrich=true): LLM expands the diagnosis into
+    3-5 search queries before retrieval (2 LLM calls total).
 
     Returns SOH/risk context, action steps, PPE, retrieved evidence (when enriched),
     and the safety-gate result (human_verification_required forced True for P1).
@@ -24,6 +26,7 @@ async def prescribe(request: PrescribeRequest) -> dict:
         battery_id            = request.battery_id,
         enrich                = request.enrich,
         n_series              = request.pack_config.n_series if request.pack_config else 1,
+        agentic               = request.agentic,
         age_cycles            = request.age_cycles,
         last_maintenance_date = request.last_maintenance_date,
         ticket_history        = request.ticket_history,

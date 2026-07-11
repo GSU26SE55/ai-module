@@ -17,6 +17,10 @@ from src.services.prescription.llm.base import (
     JUDGE_TOOL_DESCRIPTION,
     JUDGE_TOOL_NAME,
     MAX_RETRIES,
+    QUERYGEN_SCHEMA,
+    QUERYGEN_SYSTEM_PROMPT,
+    QUERYGEN_TOOL_DESCRIPTION,
+    QUERYGEN_TOOL_NAME,
     RESPONSE_SCHEMA,
     SYSTEM_PROMPT,
     TIMEOUT_S,
@@ -24,6 +28,7 @@ from src.services.prescription.llm.base import (
     TOOL_NAME,
     LLMProvider,
     build_judge_content,
+    build_querygen_content,
     build_user_content,
 )
 
@@ -162,3 +167,62 @@ class DeepSeekProvider(LLMProvider):
             raise RuntimeError("DeepSeek returned malformed tool output.")
 
         return {"safe": bool(out["safe"]), "reason": str(out.get("reason", ""))}
+
+    def generate_queries(self, diagnosis: str) -> dict:
+        """
+        GH-82 query generation via DeepSeek function calling.
+
+        Returns dict with keys: maintenance_queries, safety_queries (list[str]).
+        Raises RuntimeError on missing key / API error / malformed output.
+        """
+        api_key = os.getenv("DEEPSEEK_API_KEY")
+        if not api_key:
+            raise RuntimeError("DEEPSEEK_API_KEY not set — cannot use DeepSeek provider.")
+
+        try:
+            import openai
+        except ImportError as exc:  # pragma: no cover - dependency guard
+            raise RuntimeError("openai SDK not installed.") from exc
+
+        tool = {
+            "type": "function",
+            "function": {
+                "name": QUERYGEN_TOOL_NAME,
+                "description": QUERYGEN_TOOL_DESCRIPTION,
+                "parameters": QUERYGEN_SCHEMA,
+            },
+        }
+
+        client = openai.OpenAI(
+            api_key=api_key, base_url=BASE_URL, timeout=TIMEOUT_S, max_retries=MAX_RETRIES
+        )
+        try:
+            resp = client.chat.completions.create(
+                model=os.getenv("DEEPSEEK_MODEL", DEFAULT_MODEL),
+                max_tokens=MAX_TOKENS,
+                messages=[
+                    {"role": "system", "content": QUERYGEN_SYSTEM_PROMPT},
+                    {"role": "user", "content": build_querygen_content(diagnosis)},
+                ],
+                tools=[tool],
+                tool_choice={"type": "function", "function": {"name": QUERYGEN_TOOL_NAME}},
+            )
+        except Exception as exc:  # openai.APIError, timeouts, etc.
+            raise RuntimeError(f"DeepSeek API call failed: {exc}") from exc
+
+        tool_calls = resp.choices[0].message.tool_calls if resp.choices else None
+        if not tool_calls:
+            raise RuntimeError("DeepSeek response contained no tool call.")
+
+        try:
+            out = json.loads(tool_calls[0].function.arguments)
+        except (json.JSONDecodeError, AttributeError, IndexError) as exc:
+            raise RuntimeError("DeepSeek returned malformed tool output.") from exc
+
+        if not isinstance(out, dict) or "maintenance_queries" not in out:
+            raise RuntimeError("DeepSeek returned malformed tool output.")
+
+        return {
+            "maintenance_queries": [str(q) for q in out.get("maintenance_queries", [])],
+            "safety_queries": [str(q) for q in out.get("safety_queries", [])],
+        }

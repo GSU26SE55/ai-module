@@ -211,6 +211,81 @@ class TestSafetyGatePpeEnforcement:
         assert "Steel-toed footwear" in result["ppe_required"]
 
 
+# ── GH-82: diagnosis statement builder ───────────────────────────────────
+class TestDiagnosisStatement:
+    def _build(self, **over):
+        from src.services.prescription.diagnosis import build_diagnosis_statement
+
+        args = {
+            "prediction": {"soh_percent": 78.5, "soh_std": 1.6, "health_stage": "Degrading"},
+            "anomaly": {"anomaly_status": "Degrading", "anomaly_score": -0.25,
+                        "anomaly_confidence": 0.25},
+            "risk": {"risk_level": "High", "priority": "P2",
+                     "action_code": "SCHEDULE_REPLACEMENT"},
+            "warnings": [{"code": "SOH_LOW", "severity": "warning"}],
+        }
+        args.update(over)
+        return build_diagnosis_statement(**args)
+
+    def test_contains_three_parts(self):
+        out = self._build()
+        assert out.startswith("Diagnosis:")
+        assert "Inference evidence:" in out
+        assert "Description:" in out
+
+    def test_contains_prediction_evidence(self):
+        out = self._build()
+        assert "78.5%" in out and "± 1.6" in out
+        assert "Degrading" in out
+        assert "-0.250" in out
+        assert "SOH_LOW" in out
+        assert "SCHEDULE_REPLACEMENT" in out
+        assert "schedule replacement" in out.lower()  # action template summary
+
+    def test_no_warnings_says_none(self):
+        out = self._build(warnings=[])
+        assert "active warnings: none" in out
+
+    def test_empty_anomaly_block_defaults(self):
+        out = self._build(anomaly={})
+        assert out.startswith("Diagnosis: Unknown")
+
+    def test_unknown_action_code_falls_back_to_monitor(self):
+        out = self._build(risk={"action_code": "WAT", "risk_level": "Low", "priority": "None"})
+        assert "operating normally" in out.lower()
+
+    def test_deterministic(self):
+        assert self._build() == self._build()
+
+
+# ── GH-82: retriever chunk_id for multi-query dedup ─────────────────────
+class TestRetrieverFormat:
+    def test_format_includes_chunk_id(self):
+        from src.services.prescription.rag_retriever import RagRetriever
+
+        results = {
+            "ids": [["doc_a_0", "doc_a_1"]],
+            "documents": [["chunk one", "chunk two"]],
+            "metadatas": [[{"title": "T", "source": "maintenance/a.md"},
+                           {"title": "T", "source": "maintenance/a.md"}]],
+            "distances": [[0.1, 0.4]],
+        }
+        docs = RagRetriever._format(results)
+        assert [d["chunk_id"] for d in docs] == ["doc_a_0", "doc_a_1"]
+        assert docs[0]["relevance_score"] == pytest.approx(0.9)
+
+    def test_format_missing_ids_defaults_empty(self):
+        from src.services.prescription.rag_retriever import RagRetriever
+
+        results = {
+            "documents": [["chunk one"]],
+            "metadatas": [[{"title": "T", "source": "maintenance/a.md"}]],
+            "distances": [[0.2]],
+        }
+        docs = RagRetriever._format(results)
+        assert docs[0]["chunk_id"] == ""
+
+
 class TestRagRetriever:
     def test_retriever_gracefully_handles_missing_chromadb(self):
         """RagRetriever should not crash if chromadb is not installed."""
