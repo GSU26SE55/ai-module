@@ -41,6 +41,7 @@ class GeminiProvider(LLMProvider):
         context: str,
         maintenance_docs: list[dict],
         safety_docs: list[dict],
+        past_cases: list[dict] | None = None,
     ) -> dict:
         """
         Call Gemini (native response_schema) to generate a structured prescription.
@@ -58,7 +59,7 @@ class GeminiProvider(LLMProvider):
         except ImportError as exc:  # pragma: no cover - dependency guard
             raise RuntimeError("google-genai SDK not installed.") from exc
 
-        user_content = build_user_content(context, maintenance_docs, safety_docs)
+        user_content = build_user_content(context, maintenance_docs, safety_docs, past_cases)
 
         client = genai.Client(api_key=api_key)
         # SDK's own retry config isn't guaranteed stable across versions — retry

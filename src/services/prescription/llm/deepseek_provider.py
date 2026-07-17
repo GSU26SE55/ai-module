@@ -49,6 +49,7 @@ class DeepSeekProvider(LLMProvider):
         context: str,
         maintenance_docs: list[dict],
         safety_docs: list[dict],
+        past_cases: list[dict] | None = None,
     ) -> dict:
         """
         Call DeepSeek (OpenAI-compatible function calling) to generate a
@@ -75,7 +76,7 @@ class DeepSeekProvider(LLMProvider):
                 "parameters": RESPONSE_SCHEMA,
             },
         }
-        user_content = build_user_content(context, maintenance_docs, safety_docs)
+        user_content = build_user_content(context, maintenance_docs, safety_docs, past_cases)
 
         client = openai.OpenAI(
             api_key=api_key, base_url=BASE_URL, timeout=TIMEOUT_S, max_retries=MAX_RETRIES

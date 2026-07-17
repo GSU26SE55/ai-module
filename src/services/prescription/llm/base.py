@@ -20,7 +20,10 @@ SYSTEM_PROMPT = (
     "recommend escalating to a qualified technician.\n"
     "3. Never recommend touching a battery under a critical electrical or thermal warning "
     "without Lockout/Tagout and human verification.\n"
-    "4. Keep action_steps short and imperative."
+    "4. Keep action_steps short and imperative.\n"
+    "5. Past resolved cases (if provided) are for reference only, to see how similar "
+    "situations were handled before. They are NOT authoritative — when a past case "
+    "conflicts with the retrieved documents, always prioritize the retrieved documents."
 )
 
 # Tool/function name + JSON schema shared by every provider (Anthropic forced
@@ -153,13 +156,39 @@ def format_docs(label: str, docs: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def build_user_content(context: str, maintenance_docs: list[dict], safety_docs: list[dict]) -> str:
+# ── Long-term memory (GH-83) ─────────────────────────────────────────────
+def format_past_cases(past_cases: list[dict]) -> str:
+    """
+    Render accepted past prescriptions as a reference-only section — shared by
+    every provider. Returns "" (omitted from the prompt entirely) when there
+    are no past cases, so history-less deployments never change the prompt.
+    """
+    if not past_cases:
+        return ""
+    lines = ["Past resolved cases (reference only, prioritize the retrieved documents above):"]
+    for case in past_cases:
+        steps = "; ".join(case.get("action_steps", []))
+        lines.append(
+            f"- [{case.get('risk_level', 'Unknown')}/{case.get('action_code', 'Unknown')}] "
+            f"{case.get('prescription', '')} Steps: {steps}"
+        )
+    return "\n".join(lines)
+
+
+def build_user_content(
+    context: str,
+    maintenance_docs: list[dict],
+    safety_docs: list[dict],
+    past_cases: list[dict] | None = None,
+) -> str:
     """Shared user message body — identical across providers."""
+    past_cases_section = format_past_cases(past_cases or [])
     return (
         f"Battery assessment:\n{context}\n\n"
         f"{format_docs('Retrieved maintenance documents', maintenance_docs)}\n\n"
         f"{format_docs('Retrieved safety documents', safety_docs)}\n\n"
-        f"Produce the prescription using the {TOOL_NAME} tool."
+        + (f"{past_cases_section}\n\n" if past_cases_section else "")
+        + f"Produce the prescription using the {TOOL_NAME} tool."
     )
 
 
@@ -182,10 +211,14 @@ class LLMProvider(ABC):
         context: str,
         maintenance_docs: list[dict],
         safety_docs: list[dict],
+        past_cases: list[dict] | None = None,
     ) -> dict:
         """
         Returns dict with keys: prescription (str), action_steps (list[str]),
         ppe_required (list[str]). Raises RuntimeError on any failure.
+
+        past_cases (GH-83): accepted past prescriptions retrieved as few-shot
+        context — reference only, empty/None when history has no accepted match.
         """
 
     @abstractmethod

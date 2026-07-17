@@ -50,6 +50,7 @@ class AnthropicProvider(LLMProvider):
         context: str,
         maintenance_docs: list[dict],
         safety_docs: list[dict],
+        past_cases: list[dict] | None = None,
     ) -> dict:
         """
         Call Claude to generate a structured prescription.
@@ -72,7 +73,7 @@ class AnthropicProvider(LLMProvider):
             "description": TOOL_DESCRIPTION,
             "input_schema": RESPONSE_SCHEMA,
         }
-        user_content = build_user_content(context, maintenance_docs, safety_docs)
+        user_content = build_user_content(context, maintenance_docs, safety_docs, past_cases)
 
         client = anthropic.Anthropic(api_key=api_key, timeout=TIMEOUT_S, max_retries=MAX_RETRIES)
         try:

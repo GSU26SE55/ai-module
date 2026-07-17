@@ -1,9 +1,10 @@
 # Section 5 — Discussion (bản nháp tiếng Việt)
 
-> Viết 11/07 dựa trên số liệu đã có ở §4 (Table 1, 2, 3b, 5). Không có ô
-> `[x.xx]` nào phụ thuộc thí nghiệm chưa chạy — phần duy nhất chờ là 1 câu
-> tùy chọn ở §5.1 nếu Table 3 (component ablation) có số trước khi chốt bài.
-> ⬜ = việc cần làm nhưng không chặn viết (trích dẫn, đối chiếu số liệu).
+> Viết 11/07, cập nhật 12/07 sau khi Table 3 (ablation) đủ số và sau khi
+> verify trực tiếp full-text SambaMixer (user cung cấp). Không còn ô `[x.xx]`
+> nào phụ thuộc thí nghiệm chưa chạy — mọi số liệu đã dùng đều có nguồn
+> trong §4. ⬜ còn lại chỉ là việc không chặn viết (literature matrix cho
+> §2, verify DOI cuối cho References — xem bảng "Nguồn" cuối file).
 
 ---
 
@@ -18,12 +19,19 @@ long-seq, việc giảm thêm xuống 1.52% khi mở rộng cửa sổ quan sát
 lên toàn bộ chu kỳ (L = 4096) gợi ý rằng tín hiệu suy thoái không nằm gọn
 trong một đoạn ngắn của đường cong xả, mà trải rộng theo hình dạng toàn cục
 của điện áp/dòng điện — điều mà kiến trúc cửa sổ ngắn buộc phải bỏ qua.
-Việc điều biến FiLM bằng vector phổ 57 chiều (tính trên toàn chu kỳ) là
-kênh duy nhất trong mô hình long mang thông tin toàn cục này vào biểu diễn
-cục bộ theo token; `[⬜ nếu Table 3 có số trước khi chốt bài: dẫn Δ MAE khi
-bỏ attention pooling / giảm d_state để định lượng đóng góp — hiện diễn giải
-này dựa trên thiết kế kiến trúc, chưa có ablation trực tiếp cho riêng FiLM
-trong phạm vi thí nghiệm đã chạy]`.
+Việc điều biến FiLM bằng vector phổ 57 chiều (tính trên toàn chu kỳ, áp dụng
+sau attention pooling lên biểu diễn chu kỳ đã tổng hợp — không phải theo
+từng token, xem §3.3) là kênh duy nhất trong mô hình long mang thông tin
+toàn cục dạng phổ vào dự đoán cuối cùng. Ablation thành phần (Bảng 3, §4.4a)
+củng cố trực tiếp lập
+luận này ở phần tổng hợp toàn cục: thay attention pooling — cơ chế duy nhất
+đọc được toàn bộ 511 token — bằng lấy token cuối làm MAE tăng +0.41 điểm
+phần trăm (+27% tương đối), mức tăng lớn nhất trong ba biến thể ablation.
+Đây là bằng chứng thực nghiệm, không chỉ suy luận từ thiết kế, rằng thông
+tin toàn cục cần được tổng hợp tường minh chứ không thể suy ra từ trạng
+thái cục bộ ở cuối chuỗi. Ablation riêng cho FiLM (bỏ hẳn điều biến phổ,
+không chỉ đổi cách tổng hợp) không nằm trong phạm vi 3 thí nghiệm đã chạy —
+đây vẫn là một giới hạn thực nghiệm, ghi nhận ở §5.4.
 
 Về mặt giao thức, việc B0048 — pin test chính — đạt MAE 1.47% trong LOBO
 (Bảng 2, §4.3), gần như trùng khớp với Table 1 (1.52% với mô hình long),
@@ -68,10 +76,69 @@ thấp nhất từng công bố", mà là ba điều: (i) đạt ngưỡng MAE <
 giao thức đánh giá khó hơn*; (ii) một kiến trúc duy nhất cung cấp cả cấu
 hình độ chính xác cao (long) lẫn cấu hình triển khai thời gian thực
 (window-30, §4.5); (iii) toàn bộ cài đặt bằng PyTorch thuần, không phụ
-thuộc CUDA kernel chuyên dụng. Chúng tôi cũng không claim là công trình đầu
-tiên áp dụng Mamba cho dự đoán SOH pin — vị trí của bài trong văn liệu
-Mamba-battery hiện có sẽ được làm rõ ở Related Work (§2) ⬜ *cần literature
-matrix*.
+thuộc CUDA kernel chuyên dụng.
+
+Chúng tôi cũng không claim là công trình đầu tiên áp dụng Mamba cho dự đoán
+SOH pin. Công trình gần nhất là SambaMixer [Olalde-Verano, Kirch, Pérez-Molina
+& Martín, *IEEE Access*, vol. 13, 2025, tr. 2313–2324+], cũng dùng kiến trúc
+Mamba (MambaMixer — selective SSM có channel-mixing) trên NASA battery
+dataset với giao thức cross-battery: cấu hình lớn nhất của họ (NASA-L) huấn
+luyện trên 10 pin (#5, 18, 31, 34, 36, 45, 48, 54, 55, 56) và đánh giá trên
+3 pin hoàn toàn tách biệt (#6, #7, #47). Trên các pin có thể đối chiếu,
+SambaMixer đạt MAE thấp hơn kết quả của chúng tôi (0.512–1.197% tùy pin test
+— tự báo cáo giảm 52% MAE so với các baseline CNN/RNN trước đó, so với 1.52%
+của mô hình long-seq chúng tôi) — chúng tôi không claim vượt trội về độ
+chính xác thuần túy. Khác biệt nằm ở quy mô và tính triển khai được: mô hình
+lớn nhất của họ (SambaMixer-L) có 48.7 triệu tham số (~490 lần mô hình
+long-seq của chúng tôi, 99 nghìn tham số) và bài không báo cáo độ trễ suy
+luận hay khả năng chạy trên thiết bị biên. Đóng góp của chúng tôi là đạt
+ngưỡng chính xác công nghiệp (MAE < 2%) ở quy mô nhỏ hơn nhiều bậc, với độ
+trễ CPU đã đo và xác nhận <100 ms (§4.5).
+
+Đáng chú ý, hai phát hiện độc lập của SambaMixer củng cố trực tiếp hai quan
+sát của chính chúng tôi. Thứ nhất, nhóm tác giả báo cáo sai số lớn bất
+thường khi dự đoán SOH trên 92% cho pin #06, và giả thuyết nguyên nhân là
+tập huấn luyện của họ không có mẫu nào ở vùng SOH đó — cùng cơ chế thất bại
+mà chúng tôi quan sát ở dải 80–90% (§4.4b, §5.2), từ một nhóm nghiên cứu độc
+lập trên cùng họ dữ liệu NASA. Thứ hai, thí nghiệm scaling model của họ cho
+thấy tăng từ SambaMixer-L lên XL (85.6M tham số) làm giảm hiệu năng, với
+giả thuyết overfitting trên tập dữ liệu nhỏ — song song với phát hiện của
+chúng tôi ở Bảng 3 rằng giảm d_state từ 32 xuống 16 lại cải thiện MAE trên
+B0048 (§4.4a). Cả hai điểm song song này gợi ý rằng giới hạn về năng lực dữ
+liệu (chỉ vài chục pin NASA) — không phải lựa chọn kiến trúc cụ thể — là
+yếu tố giới hạn chung của cả hai công trình.
+
+Một công trình Transformer gần đây, TIDSIT [Patel, Ramezankhani, Deodhar,
+Birru, arXiv:2507.18320, 2025], cũng đánh giá theo giao thức cross-battery
+trên chính NASA dataset (huấn luyện trên B0005 và B0006, kiểm thử trên
+B0007) và báo cáo RMSE 0.58% trên pin test — thấp hơn kết quả của chúng
+tôi. Tuy nhiên quy mô đánh giá của họ nhỏ hơn đáng kể: chỉ 3 pin tham gia
+toàn bộ thí nghiệm (2 train, 1 test), không có kiểm định robustness kiểu
+LOBO, và không công bố số tham số hay độ trễ suy luận. Chúng tôi nêu công
+trình này với cùng tinh thần như SambaMixer: không tranh cãi con số tuyệt
+đối, mà làm rõ rằng độ nghiêm ngặt của giao thức đánh giá (26 pin, LOBO
+16 fold, ablation trung thực) là một trục đóng góp độc lập với độ chính
+xác thô.
+
+**Bảng 6 — So sánh với các công trình cross-battery gần nhất trên NASA dataset.**
+
+| Công trình | Kiến trúc | Tham số | Giao thức | MAE | Latency | Robustness |
+|---|---|---:|---|---:|---|---|
+| SambaMixer-L (2025) | MambaMixer | 48.7M | 10 pin train / 3 eval | 0.51–1.20% | Không báo cáo | Không |
+| TIDSIT (2025) | Transformer | Không công bố | 2 pin train / 1 eval | 0.58% | Không báo cáo | Không |
+| **Mô hình long (bài này)** | Mamba + FiLM | **99k** | **23 pin train / 2 val / 1 test** | **1.52%** | Không đo (§4.5 đo bản window-30) | **LOBO 16 fold** |
+| **Mô hình window-30 (bài này)** | Mamba + FiLM | **79k** | Cùng trên | 1.98% | **56.1 ms (P95 78.3 ms)** | — |
+
+Bảng cho thấy rõ trục đánh đổi: hai công trình đối chứng đạt MAE thấp hơn
+nhưng không công bố quy mô tham số đầy đủ hoặc độ trễ, và đánh giá trên ít
+pin hơn đáng kể (3 và 1 pin tương ứng so với 26 pin của bài này); phía
+chúng tôi đạt ngưỡng công nghiệp ở quy mô nhỏ hơn nhiều bậc, có đo latency
+thật và có kiểm định robustness qua nhiều fold.
+
+Vị trí đầy đủ trong văn liệu Mamba-battery (gồm cả MambaLithium, U-H-Mamba,
+multimodal Mamba-battery, và Crocioni et al. — công trình về triển khai
+model nhỏ trên thiết bị nhúng, gần với hướng deployability của chúng tôi)
+sẽ hoàn thiện ở Related Work (§2).
 
 ## 5.4 Hạn chế (Limitations)
 

@@ -10,7 +10,9 @@ from unittest import mock
 
 from src.services.prescription.rule_prescription import build_rule_prescription
 from src.services.prescription.llm import chain
+from src.services.prescription import orchestrator
 from src.services.prescription.orchestrator import _enrich, _dedup
+from src.services.prescription.history_store import PrescriptionHistoryStore
 
 
 class TestRulePrescription:
@@ -127,3 +129,120 @@ class TestEnrichFallback:
         assert out["enriched"] is False
         assert out["prescription"] == "RULE TEXT"
         assert out["llm_provider"] == "none"
+
+    def test_enrich_result_includes_diagnosis(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            out = _enrich(
+                {"soh_percent": 90.0, "health_stage": "Degrading"},
+                {"risk_level": "Medium", "priority": "P3", "action_code": "SCHEDULE_MAINTENANCE"},
+                [],
+                self._RULE,
+            )
+        # diagnosis is built unconditionally (GH-83), even without an API key,
+        # since run_prescription() needs it to save the history record.
+        assert out["diagnosis"].startswith("Diagnosis:")
+
+    def test_enrich_forwards_past_cases_to_llm(self):
+        past_cases = [{"prescription": "Replaced last time", "action_steps": [], "ppe_required": []}]
+        fake_store = mock.Mock()
+        fake_store.retrieve_similar_accepted.return_value = past_cases
+        llm_out = {
+            "prescription": "LLM TEXT", "action_steps": ["s"], "ppe_required": [],
+            "provider": "deepseek",
+        }
+        with mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "sk-test"}, clear=True), \
+                mock.patch.object(chain, "is_available", return_value=True), \
+                mock.patch.object(chain, "generate_prescription", return_value=llm_out) as mock_gen, \
+                mock.patch.object(orchestrator, "_get_history_store", return_value=fake_store):
+            _enrich({"soh_percent": 90.0}, {"action_code": "SCHEDULE_MAINTENANCE"}, [], self._RULE)
+
+        fake_store.retrieve_similar_accepted.assert_called_once()
+        assert mock_gen.call_args[0][3] == past_cases
+
+
+class TestHistoryFewShotIntegration:
+    """
+    GH-83 end-to-end: run_prescription() writes history on enrich=true, and an
+    accepted case surfaces as few-shot context on the next enrich=true call for
+    a similar diagnosis — using a real PrescriptionHistoryStore (tmp_path) so
+    the save -> feedback -> retrieve round trip is exercised for real, only the
+    LLM chain and run_inference are mocked.
+    """
+
+    _PREDICTION_RESULT = {
+        "prediction": {"soh_percent": 78.0, "soh_std": 1.0, "health_stage": "Degrading"},
+        "anomaly": {"anomaly_status": "Degrading", "anomaly_score": -0.2, "anomaly_confidence": 0.3},
+        "risk": {"risk_level": "Medium", "priority": "P2", "action_code": "SCHEDULE_MAINTENANCE"},
+        "evidence": {"warnings": []},
+        "metadata": {"inference_ms": 5.0},
+    }
+    _READINGS = [[3.7, 1.0, 25.0]] * 30
+
+    def _patch_common(self, monkeypatch, tmp_path):
+        store = PrescriptionHistoryStore(path=str(tmp_path))
+        monkeypatch.setattr(orchestrator, "_get_history_store", lambda: store)
+        monkeypatch.setattr(orchestrator, "run_inference", lambda *a, **kw: self._PREDICTION_RESULT)
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+        monkeypatch.setattr(chain, "is_available", lambda: True)
+        return store
+
+    def test_prescription_id_empty_when_enrich_false(self, monkeypatch, tmp_path):
+        self._patch_common(monkeypatch, tmp_path)
+        result = orchestrator.run_prescription(self._READINGS, "B0001", enrich=False)
+        assert result["prescription_id"] == ""
+
+    def test_history_not_touched_when_enrich_false(self, monkeypatch, tmp_path):
+        def _boom():
+            raise AssertionError("history store must not be built on the enrich=false path")
+        monkeypatch.setattr(orchestrator, "_get_history_store", _boom)
+        monkeypatch.setattr(orchestrator, "run_inference", lambda *a, **kw: self._PREDICTION_RESULT)
+        orchestrator.run_prescription(self._READINGS, "B0001", enrich=False)
+
+    def test_accepted_case_surfaces_as_few_shot_on_next_call(self, monkeypatch, tmp_path):
+        self._patch_common(monkeypatch, tmp_path)
+
+        llm_out_1 = {
+            "prescription": "First fix", "action_steps": ["a"], "ppe_required": [],
+            "provider": "deepseek",
+        }
+        monkeypatch.setattr(chain, "generate_prescription", lambda *a, **kw: llm_out_1)
+        result_1 = orchestrator.run_prescription(self._READINGS, "B0001", enrich=True)
+        assert result_1["prescription_id"]
+
+        assert orchestrator.submit_prescription_feedback(result_1["prescription_id"], "accepted") is True
+
+        captured = {}
+
+        def fake_generate(context, maint_docs, safety_docs, past_cases=None):
+            captured["past_cases"] = past_cases
+            return {"prescription": "Second fix", "action_steps": ["b"], "ppe_required": [],
+                    "provider": "deepseek"}
+
+        monkeypatch.setattr(chain, "generate_prescription", fake_generate)
+        orchestrator.run_prescription(self._READINGS, "B0002", enrich=True)
+
+        assert any(c["prescription"] == "First fix" for c in captured["past_cases"])
+
+    def test_rejected_case_does_not_surface_as_few_shot(self, monkeypatch, tmp_path):
+        self._patch_common(monkeypatch, tmp_path)
+
+        llm_out_1 = {
+            "prescription": "First fix", "action_steps": ["a"], "ppe_required": [],
+            "provider": "deepseek",
+        }
+        monkeypatch.setattr(chain, "generate_prescription", lambda *a, **kw: llm_out_1)
+        result_1 = orchestrator.run_prescription(self._READINGS, "B0001", enrich=True)
+
+        assert orchestrator.submit_prescription_feedback(result_1["prescription_id"], "rejected") is True
+
+        captured = {}
+
+        def fake_generate(context, maint_docs, safety_docs, past_cases=None):
+            captured["past_cases"] = past_cases
+            return {"prescription": "Second fix", "action_steps": ["b"], "ppe_required": [],
+                    "provider": "deepseek"}
+
+        monkeypatch.setattr(chain, "generate_prescription", fake_generate)
+        orchestrator.run_prescription(self._READINGS, "B0002", enrich=True)
+
+        assert captured["past_cases"] == []

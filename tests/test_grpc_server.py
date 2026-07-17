@@ -172,6 +172,7 @@ FIXED_PRESCRIBE_RESULT = {
     "llm_ms": 0.0,
     "query_gen_ms": 0.0,
     "generated_queries": [],
+    "prescription_id": "rec-001",
 }
 
 
@@ -601,6 +602,7 @@ def test_prescribe_parity_with_rest(servicer, rest_client):
         "rag_ms",
         "llm_ms",
         "query_gen_ms",
+        "prescription_id",
     ):
         assert getattr(rpc, field) == rest[field], field
     for field in (

@@ -7,7 +7,12 @@ import pytest
 
 from src.services.prescription.llm import chain
 from src.services.prescription.llm.anthropic_provider import AnthropicProvider
-from src.services.prescription.llm.base import build_user_content, format_docs
+from src.services.prescription.llm.base import (
+    SYSTEM_PROMPT,
+    build_user_content,
+    format_docs,
+    format_past_cases,
+)
 from src.services.prescription.llm.deepseek_provider import DeepSeekProvider
 from src.services.prescription.llm.gemini_provider import GeminiProvider
 
@@ -31,6 +36,49 @@ def test_build_user_content_includes_docs():
     assert "SOH 68%" in out
     assert "m.md" in out and "replace battery" in out
     assert "s.md" in out and "wear gloves" in out
+
+
+# ── Long-term memory (GH-83) ────────────────────────────────────────────────
+def test_format_past_cases_empty():
+    assert format_past_cases([]) == ""
+
+
+def test_format_past_cases_with_items():
+    out = format_past_cases([{
+        "prescription": "Replaced the battery.",
+        "action_steps": ["Isolate", "Replace"],
+        "ppe_required": ["Gloves"],
+        "risk_level": "High",
+        "action_code": "SCHEDULE_REPLACEMENT",
+    }])
+    assert "Replaced the battery." in out
+    assert "Isolate; Replace" in out
+    assert "High" in out and "SCHEDULE_REPLACEMENT" in out
+
+
+def test_build_user_content_includes_past_cases():
+    out = build_user_content(
+        "SOH 68%", [], [],
+        past_cases=[{"prescription": "Replaced last time", "action_steps": [],
+                     "risk_level": "High", "action_code": "SCHEDULE_REPLACEMENT"}],
+    )
+    assert "Past resolved cases" in out
+    assert "Replaced last time" in out
+
+
+def test_build_user_content_omits_past_cases_section_when_none():
+    out = build_user_content("SOH 68%", [], [], past_cases=None)
+    assert "Past resolved cases" not in out
+
+
+def test_build_user_content_omits_past_cases_section_when_empty():
+    out = build_user_content("SOH 68%", [], [], past_cases=[])
+    assert "Past resolved cases" not in out
+
+
+def test_system_prompt_has_past_case_disclaimer():
+    assert "reference only" in SYSTEM_PROMPT.lower()
+    assert "retrieved documents" in SYSTEM_PROMPT.lower()
 
 
 # ── Fake Anthropic SDK ────────────────────────────────────────────────────
@@ -84,6 +132,28 @@ def test_anthropic_generate_success(monkeypatch):
     assert out["prescription"] == "Replace the battery."
     assert out["action_steps"] == ["Isolate", "Replace"]
     assert out["ppe_required"] == ["Gloves"]
+
+
+def test_anthropic_forwards_past_cases(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    captured = {}
+
+    def fake_build_user_content(context, maintenance_docs, safety_docs, past_cases=None):
+        captured["past_cases"] = past_cases
+        return "user content"
+
+    monkeypatch.setattr(
+        "src.services.prescription.llm.anthropic_provider.build_user_content",
+        fake_build_user_content,
+    )
+    resp = _AnthropicResp([_AnthropicBlock("tool_use", {
+        "prescription": "x", "action_steps": [], "ppe_required": [],
+    })])
+    _install_fake_anthropic(monkeypatch, response=resp)
+
+    past_cases = [{"prescription": "Replaced last time"}]
+    AnthropicProvider().generate_prescription("ctx", [], [], past_cases=past_cases)
+    assert captured["past_cases"] == past_cases
 
 
 def test_anthropic_generate_raises_without_key(monkeypatch):
@@ -171,6 +241,28 @@ def test_deepseek_generate_success(monkeypatch):
     assert out["ppe_required"] == ["Gloves"]
 
 
+def test_deepseek_forwards_past_cases(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    captured = {}
+
+    def fake_build_user_content(context, maintenance_docs, safety_docs, past_cases=None):
+        captured["past_cases"] = past_cases
+        return "user content"
+
+    monkeypatch.setattr(
+        "src.services.prescription.llm.deepseek_provider.build_user_content",
+        fake_build_user_content,
+    )
+    resp = _fake_chat_response(
+        '{"prescription": "Replace it", "action_steps": ["a"], "ppe_required": []}'
+    )
+    _install_fake_openai(monkeypatch, response=resp)
+
+    past_cases = [{"prescription": "Replaced last time"}]
+    DeepSeekProvider().generate_prescription("ctx", [], [], past_cases=past_cases)
+    assert captured["past_cases"] == past_cases
+
+
 def test_deepseek_generate_raises_without_key(monkeypatch):
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     with pytest.raises(RuntimeError, match="DEEPSEEK_API_KEY"):
@@ -250,6 +342,28 @@ def test_gemini_generate_success(monkeypatch):
     out = GeminiProvider().generate_prescription("ctx", [], [])
     assert out["prescription"] == "Replace it"
     assert out["ppe_required"] == ["Gloves"]
+
+
+def test_gemini_forwards_past_cases(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "key-test")
+    captured = {}
+
+    def fake_build_user_content(context, maintenance_docs, safety_docs, past_cases=None):
+        captured["past_cases"] = past_cases
+        return "user content"
+
+    monkeypatch.setattr(
+        "src.services.prescription.llm.gemini_provider.build_user_content",
+        fake_build_user_content,
+    )
+    resp = types.SimpleNamespace(
+        text='{"prescription": "Replace it", "action_steps": ["a"], "ppe_required": []}'
+    )
+    _install_fake_genai(monkeypatch, response=resp)
+
+    past_cases = [{"prescription": "Replaced last time"}]
+    GeminiProvider().generate_prescription("ctx", [], [], past_cases=past_cases)
+    assert captured["past_cases"] == past_cases
 
 
 def test_gemini_generate_raises_without_key(monkeypatch):

@@ -28,6 +28,11 @@ __pycache__/
 htmlcov/
 models/checkpoints*/
 
+# Prescription long-term memory (GH-83) — runtime data accumulated from real
+# /prescribe calls + technician feedback, NOT a reproducible artifact like
+# models/embeddings/ (static KB, committed).
+models/prescription_history/
+
 # Virtual environments
 .venv/
 venv/

@@ -171,6 +171,7 @@ def _to_prescribe_response(result: dict) -> ai_service_pb2.PrescribeResponse:
         blocked=result.get("blocked", False),
         query_gen_ms=result.get("query_gen_ms", 0.0),
         generated_queries=result.get("generated_queries", []),
+        prescription_id=result.get("prescription_id", ""),
     )
 
 
