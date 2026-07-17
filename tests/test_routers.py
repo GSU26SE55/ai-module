@@ -237,3 +237,86 @@ class TestPackConfigRouter:
         assert body["enriched"] is False
         assert body["query_gen_ms"] == 0.0
         assert body["generated_queries"] == []
+
+    def test_prescribe_id_empty_on_rule_only_path(self, client):
+        """GH-83: enrich=false never writes history — prescription_id stays ''."""
+        payload = self._pack_12v_payload() | {"pack_config": {"n_series": 3}}
+        resp = client.post("/prescribe/", json=payload)
+        assert resp.status_code == 200
+        assert resp.json()["prescription_id"] == ""
+
+    def _get_prescription_id(self, client, tmp_path):
+        """GH-83 test helper: run one enrich=true /prescribe/ call against a
+        tmp_path-isolated history store and return the resulting prescription_id."""
+        from src.services.prescription.history_store import PrescriptionHistoryStore
+
+        class FakeRetriever:
+            def retrieve_maintenance(self, q, top_k=3):
+                return []
+
+            def retrieve_safety(self, q, top_k=2):
+                return []
+
+        llm_out = {
+            "prescription": "Schedule inspection.",
+            "action_steps": ["Inspect terminals."],
+            "ppe_required": [],
+            "provider": "deepseek",
+        }
+        payload = self._pack_12v_payload() | {"pack_config": {"n_series": 3}, "enrich": True}
+        store = PrescriptionHistoryStore(path=str(tmp_path))
+        with (
+            patch("src.services.prescription.orchestrator._get_retriever", return_value=FakeRetriever()),
+            patch("src.services.prescription.orchestrator._get_history_store", return_value=store),
+            patch("src.services.prescription.llm.chain.is_available", return_value=True),
+            patch("src.services.prescription.llm.chain.generate_prescription", return_value=llm_out),
+        ):
+            resp = client.post("/prescribe/", json=payload)
+            assert resp.status_code == 200
+            prescription_id = resp.json()["prescription_id"]
+            assert prescription_id
+            return prescription_id, store
+
+    def test_prescribe_feedback_accepted_returns_200(self, client, tmp_path):
+        prescription_id, store = self._get_prescription_id(client, tmp_path)
+        with patch("src.services.prescription.orchestrator._get_history_store", return_value=store):
+            resp = client.post("/prescribe/feedback", json={
+                "prescription_id": prescription_id, "status": "accepted",
+            })
+        assert resp.status_code == 200
+        assert resp.json() == {"success": True}
+
+    def test_prescribe_feedback_edited_with_steps_and_note(self, client, tmp_path):
+        prescription_id, store = self._get_prescription_id(client, tmp_path)
+        with patch("src.services.prescription.orchestrator._get_history_store", return_value=store):
+            resp = client.post("/prescribe/feedback", json={
+                "prescription_id": prescription_id,
+                "status": "edited",
+                "edited_steps": ["Corrected step."],
+                "note": "Technician correction",
+            })
+        assert resp.status_code == 200
+        assert resp.json() == {"success": True}
+
+    def test_prescribe_feedback_rejected_returns_200(self, client, tmp_path):
+        prescription_id, store = self._get_prescription_id(client, tmp_path)
+        with patch("src.services.prescription.orchestrator._get_history_store", return_value=store):
+            resp = client.post("/prescribe/feedback", json={
+                "prescription_id": prescription_id, "status": "rejected",
+            })
+        assert resp.status_code == 200
+        assert resp.json() == {"success": True}
+
+    def test_prescribe_feedback_unknown_id_returns_404(self, client):
+        resp = client.post("/prescribe/feedback", json={
+            "prescription_id": "00000000-0000-0000-0000-000000000000",
+            "status": "accepted",
+        })
+        assert resp.status_code == 404
+
+    def test_prescribe_feedback_invalid_status_returns_422(self, client):
+        resp = client.post("/prescribe/feedback", json={
+            "prescription_id": "00000000-0000-0000-0000-000000000000",
+            "status": "not-a-real-status",
+        })
+        assert resp.status_code == 422

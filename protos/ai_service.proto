@@ -233,6 +233,11 @@ message PrescribeResponse {
   // search queries (empty on the template path or query-gen fallback).
   double query_gen_ms = 21;
   repeated string generated_queries = 22;
+
+  // GH-83: uuid4 identifying the saved history record — only set when
+  // enrich=true and the write succeeded; "" on the rule-only path or if the
+  // history store is unavailable. Pass this to POST /prescribe/feedback (REST-only).
+  string prescription_id = 23;
 }
 
 // ── Health ─────────────────────────────────────────────────────────────

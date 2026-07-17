@@ -1,8 +1,13 @@
 """POST /prescribe — RAG-augmented maintenance prescription endpoint."""
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
-from src.schemas.prescribe import PrescribeRequest, PrescribeResponse
-from src.services.prescription import run_prescription
+from src.schemas.prescribe import (
+    PrescribeRequest,
+    PrescribeResponse,
+    PrescriptionFeedbackRequest,
+    PrescriptionFeedbackResponse,
+)
+from src.services.prescription import run_prescription, submit_prescription_feedback
 
 router = APIRouter()
 
@@ -31,3 +36,23 @@ async def prescribe(request: PrescribeRequest) -> dict:
         last_maintenance_date = request.last_maintenance_date,
         ticket_history        = request.ticket_history,
     )
+
+
+@router.post("/prescribe/feedback", response_model=PrescriptionFeedbackResponse)
+async def prescribe_feedback(request: PrescriptionFeedbackRequest) -> dict:
+    """
+    GH-83 — record technician feedback (accepted/edited/rejected) for a
+    prescription_id returned by a prior POST /prescribe/ (enrich=true) call.
+    Accepted prescriptions become few-shot context for future similar cases.
+
+    404 when prescription_id doesn't exist (or the history store is unavailable).
+    """
+    ok = submit_prescription_feedback(
+        prescription_id = request.prescription_id,
+        status          = request.status,
+        edited_steps    = request.edited_steps,
+        note            = request.note,
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="prescription_id not found")
+    return {"success": True}

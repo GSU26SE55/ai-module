@@ -1,6 +1,8 @@
 """
 Request/response schemas for POST /prescribe endpoint.
 """
+from typing import Literal
+
 from pydantic import BaseModel
 from src.schemas.predict import PredictRequest
 
@@ -69,3 +71,20 @@ class PrescribeResponse(BaseModel):
     # search queries (empty on the template path or query-gen fallback).
     query_gen_ms: float = 0.0
     generated_queries: list[str] = []
+
+    # GH-83: uuid4 identifying the saved history record — only set when
+    # enrich=true and the write succeeded; "" on the rule-only path (enrich=false)
+    # or if the history store is unavailable. Pass this to POST /prescribe/feedback.
+    prescription_id: str = ""
+
+
+class PrescriptionFeedbackRequest(BaseModel):
+    """GH-83 — technician feedback for a previously returned prescription_id."""
+    prescription_id: str
+    status: Literal["accepted", "edited", "rejected"]
+    edited_steps: list[str] | None = None
+    note: str | None = None
+
+
+class PrescriptionFeedbackResponse(BaseModel):
+    success: bool

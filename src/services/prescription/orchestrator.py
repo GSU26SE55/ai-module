@@ -4,10 +4,13 @@ Prescription generator — Hybrid (rule-based default + optional LLM/RAG enrichm
 POST /prescribe flow:
   1. Run inference (SOH, risk, warnings).
   2. Build rule-based prescription (deterministic, <100ms) — ALWAYS the baseline.
-  3. If enrich=True: RAG retrieve docs + LLM generate; on success override the
-     prescription text/steps/PPE. On any failure → keep the rule-based result.
+  3. If enrich=True: RAG retrieve docs (+ past accepted cases, GH-83) + LLM
+     generate; on success override the prescription text/steps/PPE. On any
+     failure → keep the rule-based result.
   4. Apply safety gate (human verification, escalation).
-  5. Return structured PrescribeResponse dict.
+  5. If enrich=True: save the final delivered prescription to history (best-effort,
+     GH-83) — becomes future few-shot context once a technician marks it accepted.
+  6. Return structured PrescribeResponse dict.
 
 The rule-based path never touches the network, so the default (enrich=False) stays
 on the P1 <100ms hot-path. Enrichment is opt-in and explicitly off that path.
@@ -39,6 +42,19 @@ def _get_retriever():
         from src.services.prescription.rag_retriever import RagRetriever
         _retriever = RagRetriever()
     return _retriever
+
+
+# GH-83: same lazy-singleton pattern, separate ChromaDB store (models/prescription_history/,
+# not the committed static KB) — only built when enrichment is first requested.
+_history_store = None
+
+
+def _get_history_store():
+    global _history_store
+    if _history_store is None:
+        from src.services.prescription.history_store import PrescriptionHistoryStore
+        _history_store = PrescriptionHistoryStore()
+    return _history_store
 
 
 def _build_maintenance_query(prediction: dict, risk: dict) -> str:
@@ -161,6 +177,11 @@ def _enrich(
     """
     from src.services.prescription.llm import chain
 
+    # GH-83: built unconditionally (not just when agentic) — it is the "context"
+    # embedded for both history retrieval below and the history record saved by
+    # run_prescription() after this function returns.
+    diagnosis = build_diagnosis_statement(prediction, anomaly or {}, risk, warnings)
+
     result = {
         "prescription":   rule_out["prescription"],
         "action_steps":   rule_out["action_steps"],
@@ -173,6 +194,7 @@ def _enrich(
         "llm_ms":         0.0,
         "query_gen_ms":   0.0,
         "generated_queries": [],
+        "diagnosis":      diagnosis,
     }
 
     # 0. Query planning (GH-82). Template queries by default; when agentic,
@@ -183,7 +205,6 @@ def _enrich(
     if agentic and chain.is_available():
         t_qg = time.perf_counter()
         try:
-            diagnosis = build_diagnosis_statement(prediction, anomaly or {}, risk, warnings)
             q = chain.generate_queries(diagnosis, budget_s=chain.QUERYGEN_BUDGET_S)
             gen_maint = [s.strip() for s in q.get("maintenance_queries", []) if s.strip()]
             gen_safety = [s.strip() for s in q.get("safety_queries", []) if s.strip()]
@@ -222,10 +243,15 @@ def _enrich(
         logger.info("No LLM provider key configured — returning rule-based prescription.")
         return result
 
+    # 2a. Past-case retrieval (GH-83): accepted cases only, reference-only
+    #     few-shot context. retrieve_similar_accepted() is itself best-effort
+    #     (returns [] on any failure) — no extra try/except needed here.
+    past_cases = _get_history_store().retrieve_similar_accepted(diagnosis, top_k=2)
+
     t_llm = time.perf_counter()
     try:
         context = _build_maintenance_query(prediction, risk)
-        llm_out = chain.generate_prescription(context, maint_docs, safety_docs)
+        llm_out = chain.generate_prescription(context, maint_docs, safety_docs, past_cases)
         if not llm_out.get("action_steps"):
             # GH-81 edge case: empty steps from the LLM → keep the rule-based output.
             logger.warning("LLM returned empty action_steps — keeping rule-based prescription.")
@@ -264,7 +290,10 @@ def run_prescription(
         context_kwargs: age_cycles, last_maintenance_date, ticket_history (reserved).
 
     Returns:
-        PrescribeResponse-compatible dict.
+        PrescribeResponse-compatible dict. "prescription_id" (GH-83) is a uuid4
+        when enrich=True and the history write succeeded, "" otherwise (rule-only
+        path, or history store unavailable/write failed) — feedback endpoints
+        must treat "" as "no record to give feedback on".
     """
     # 1. Inference
     prediction_result = run_inference(
@@ -356,6 +385,23 @@ def run_prescription(
     escalation = _dedup(rule_out["escalation_conditions"] + gate["escalation_conditions"])
     safety_warnings = _dedup(gate["safety_warnings"] + block_warnings)
 
+    # GH-83: best-effort history write of the FINAL delivered content (after the
+    # blocked-path swap above, so a blocked LLM output is never persisted as if
+    # it were legitimate). Only on the enrich=true path — the rule-only hot path
+    # (enrich=false) must never pay for an embedding encode + ChromaDB write.
+    prescription_id = ""
+    if enrich:
+        prescription_id = _get_history_store().save(
+            context        = enriched["diagnosis"],
+            battery_id     = battery_id,
+            action_code    = risk.get("action_code", "MONITOR"),
+            risk_level     = risk.get("risk_level", "Low"),
+            llm_provider   = enriched["llm_provider"],
+            prescription   = enriched["prescription"],
+            action_steps   = gate["action_steps"],
+            ppe_required   = gate["ppe_required"],
+        ) or ""
+
     return {
         "battery_id":   battery_id,
         "soh_percent":  prediction.get("soh_percent", 0),
@@ -370,6 +416,7 @@ def run_prescription(
         "sop_references":        rule_out["sop_references"],
         "enriched":              enriched["enriched"],
         "llm_provider":          enriched["llm_provider"],
+        "prescription_id":       prescription_id,
 
         "maintenance_docs": enriched["maintenance_docs"],
         "safety_docs":      enriched["safety_docs"],
@@ -384,3 +431,18 @@ def run_prescription(
         "query_gen_ms": enriched["query_gen_ms"],
         "generated_queries": enriched["generated_queries"],
     }
+
+
+def submit_prescription_feedback(
+    prescription_id: str,
+    status: str,
+    edited_steps: list[str] | None = None,
+    note: str | None = None,
+) -> bool:
+    """
+    GH-83: record technician feedback (accepted/edited/rejected) for a
+    previously saved prescription. Returns False when the history store is
+    unavailable or prescription_id doesn't exist — POST /prescribe/feedback
+    maps False to a 404.
+    """
+    return _get_history_store().update_feedback(prescription_id, status, edited_steps, note)
