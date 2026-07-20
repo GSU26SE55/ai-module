@@ -427,6 +427,44 @@ class TestGenerateWarnings:
             assert max(critical_idx) < min(warning_idx)
 
 
+class TestGenerateWarningsChemistry:
+    """GH-67: per-cell voltage warning profile selected by pack chemistry."""
+
+    def _raw(self, voltage, current=-1.5, temperature=25.0, n=30):
+        return np.full((n, 3), [voltage, current, temperature], dtype=np.float32)
+
+    def test_lfp_discharge_plateau_not_flagged(self):
+        # 2.95 V/cell is a normal loaded LFP voltage: the NMC profile fires
+        # VOLTAGE_CRITICAL (<3.0), the LFP profile stays silent (knee at 2.8)
+        raw = self._raw(voltage=2.95)
+        nmc = [w["code"] for w in generate_warnings(raw, 95.0, "Normal")]
+        lfp = [w["code"] for w in generate_warnings(raw, 95.0, "Normal", chemistry="LFP")]
+        assert "VOLTAGE_CRITICAL" in nmc
+        assert lfp == []
+
+    def test_lfp_overcharge_detected_where_nmc_is_blind(self):
+        # 3.7 V/cell = real overcharge on LFP (charge cutoff 3.65 V) but far
+        # below the NMC 4.15 V threshold — the NMC profile would miss it
+        raw = self._raw(voltage=3.7)
+        nmc = [w["code"] for w in generate_warnings(raw, 95.0, "Normal")]
+        lfp = [w["code"] for w in generate_warnings(raw, 95.0, "Normal", chemistry="LFP")]
+        assert nmc == []
+        assert "OVERVOLTAGE" in lfp
+
+    def test_lfp_critical_overcharge(self):
+        raw = self._raw(voltage=3.85)
+        lfp = [w["code"] for w in generate_warnings(raw, 95.0, "Normal", chemistry="LFP")]
+        assert "OVERVOLTAGE_CRITICAL" in lfp
+
+    def test_unknown_chemistry_falls_back_to_nmc_profile(self):
+        raw = self._raw(voltage=2.95)
+        codes = [
+            w["code"]
+            for w in generate_warnings(raw, 95.0, "Normal", chemistry="lead-acid")
+        ]
+        assert "VOLTAGE_CRITICAL" in codes
+
+
 class TestTemperatureDomainDistance:
     """GH-91: distance to nearest NASA training chamber setpoint (4/24/44°C)."""
 

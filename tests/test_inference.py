@@ -664,3 +664,91 @@ class TestPackToCell:
         result = run_inference(pack, n_series=3)
         codes = [w["code"] for w in result["warnings"]]
         assert not any("OVERVOLTAGE" in c for c in codes), codes
+
+
+class TestChemistryCapacity:
+    """GH-67: capacity_ah rescales ONLY the current column to the NASA-2Ah
+    C-rate equivalent; chemistry selects the voltage warning profile."""
+
+    @pytest.fixture(autouse=True)
+    def patch_model_loader(self):
+        from sklearn.ensemble import IsolationForest
+        from sklearn.preprocessing import MinMaxScaler, StandardScaler
+
+        dummy_scaler = MinMaxScaler()
+        dummy_scaler.fit(np.random.rand(50, BASE_N))
+        dummy_feat_scaler = StandardScaler()
+        dummy_feat_scaler.fit(np.random.rand(50, SPECTRAL_FEAT_DIM))
+        dummy_model = MambaSOHPredictor(
+            input_features=INPUT_FEATURES,
+            feat_dim=SPECTRAL_FEAT_DIM,
+            d_model=8,
+            d_state=4,
+        )
+        dummy_model.eval()
+        dummy_iso = IsolationForest(n_estimators=10, random_state=42)
+        dummy_iso.fit(np.random.rand(50, SPECTRAL_FEAT_DIM))
+        with patch("src.services.inference.model_loader") as mock_loader:
+            mock_loader.scaler = dummy_scaler
+            mock_loader.feature_scaler = dummy_feat_scaler
+            mock_loader.soh_model = dummy_model
+            mock_loader.iso_model = dummy_iso
+            yield
+
+    def test_current_rescaled_by_c_rate_in_feature_summary(self):
+        from src.services.inference import run_inference
+
+        cell_readings = make_dummy_readings()
+        # same C-rate on a 50 Ah pack: current × 25, capacity 2 → 50
+        pack_readings = [[r[0], r[1] * 25, r[2], r[3]] for r in cell_readings]
+        pack = run_inference(pack_readings, capacity_ah=50.0)
+        cell = run_inference(cell_readings)
+        assert pack["feature_summary"]["current"]["mean"] == pytest.approx(
+            cell["feature_summary"]["current"]["mean"], abs=1e-3
+        )
+        # voltage/temperature untouched by capacity_ah
+        assert pack["feature_summary"]["voltage"] == cell["feature_summary"]["voltage"]
+        assert (
+            pack["feature_summary"]["temperature"]
+            == cell["feature_summary"]["temperature"]
+        )
+
+    def test_metadata_traces_chemistry_and_capacity(self):
+        from src.services.inference import run_inference
+
+        base = run_inference(make_dummy_readings())["metadata"]
+        assert base["chemistry"] is None
+        assert base["capacity_ah"] is None
+        lfp = run_inference(
+            [[r[0] * 4, r[1], r[2], r[3]] for r in make_dummy_readings()],
+            n_series=4,
+            chemistry="LFP",
+            capacity_ah=50.0,
+        )["metadata"]
+        assert lfp["chemistry"] == "LFP"
+        assert lfp["capacity_ah"] == 50.0
+
+    def test_no_overcurrent_false_alarm_for_high_capacity_pack(self):
+        from src.services.inference import run_inference
+
+        # 10 A discharge = 0.2C on a 50 Ah pack (NASA equivalent 0.4 A)
+        readings = [[r[0], -10.0, r[2], r[3]] for r in make_dummy_readings()]
+        with_capacity = run_inference(readings, capacity_ah=50.0)
+        without = run_inference(readings)
+        codes_with = [w["code"] for w in with_capacity["warnings"]]
+        codes_without = [w["code"] for w in without["warnings"]]
+        assert not any("OVERCURRENT" in c for c in codes_with), codes_with
+        assert "OVERCURRENT_CRITICAL" in codes_without
+
+    def test_lfp_4s_pack_no_false_voltage_warning(self):
+        from src.services.inference import run_inference
+
+        # 12.0 V pack / 4S = 3.00 V/cell — normal loaded LFP, but the NMC
+        # profile flags it as VOLTAGE_LOW (approaching the 3.2 V NMC cutoff)
+        readings = [[12.0, r[1], r[2], r[3]] for r in make_dummy_readings()]
+        nmc = run_inference(readings, n_series=4)
+        lfp = run_inference(readings, n_series=4, chemistry="LFP")
+        assert "VOLTAGE_LOW" in [w["code"] for w in nmc["warnings"]]
+        assert not any(
+            "VOLTAGE" in w["code"] for w in lfp["warnings"]
+        ), lfp["warnings"]

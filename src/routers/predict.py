@@ -8,9 +8,13 @@ router = APIRouter(prefix="/predict", tags=["predict"])
 
 @router.post("/", response_model=PredictResponse)
 async def predict(request: PredictRequest) -> PredictResponse:
-    n_series = request.pack_config.n_series if request.pack_config else 1
+    pack = request.pack_config
     result = run_inference(
-        request.readings, n_series=n_series, battery_id=request.battery_id
+        request.readings,
+        n_series=pack.n_series if pack else 1,
+        chemistry=pack.chemistry if pack else None,
+        capacity_ah=pack.capacity_ah if pack else None,
+        battery_id=request.battery_id,
     )
     return PredictResponse(
         battery_id=request.battery_id,

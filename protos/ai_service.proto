@@ -53,13 +53,18 @@ message ReadingFields {
   optional double soc_percent = 6;
 }
 
-// GH-65: pack-to-cell normalization for multi-cell packs (e.g. 12V ≈ 3S NMC).
-// voltage_cell = voltage_pack / n_series is applied server-side BEFORE the scaler
-// and BEFORE warning thresholds. chemistry is trace metadata only (accuracy on
-// LiFePO4 curves is GH-67). n_series 0/unset is treated as 1 (proto3 default).
+// GH-65: pack-to-cell normalization for multi-cell packs (e.g. 12V ≈ 3S NMC,
+// 12.8V ≈ 4S LFP). voltage_cell = voltage_pack / n_series is applied server-side
+// BEFORE the scaler and BEFORE warning thresholds. GH-67: chemistry selects the
+// per-cell voltage warning profile ("LFP" for LiFePO4; unset/unknown = NASA/NMC
+// defaults); capacity_ah (pack nominal Ah) rescales current to the NASA 2 Ah
+// cell's C-rate equivalent (current × 2.0 / capacity_ah) before the scaler,
+// range guard and current thresholds. n_series 0/unset is treated as 1,
+// capacity_ah 0/unset = no rescale (proto3 defaults).
 message PackConfig {
   int32 n_series = 1;
   string chemistry = 2;
+  double capacity_ah = 3;
 }
 
 message PredictRequest {
@@ -130,6 +135,10 @@ message ResponseMetadata {
   // and whether it exceeds the OOD threshold (extrapolation risk).
   double temperature_domain_distance = 6;
   bool is_temperature_ood = 7;
+  // GH-67: which voltage-warning profile / C-rate divisor were applied
+  // (empty/0 = NASA/NMC defaults) — trace for real-battery validation logs.
+  string chemistry = 8;
+  double capacity_ah = 9;
 }
 
 message PredictResponse {
