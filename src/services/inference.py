@@ -153,6 +153,8 @@ def run_inference(
     cycle_idx: int | None = None,
     n_series: int = 1,
     battery_id: str | None = None,
+    chemistry: str | None = None,
+    capacity_ah: float | None = None,
 ) -> dict:
     """
     Full inference pipeline: scale → Mamba SOH → IsolationForest → classify.
@@ -175,6 +177,16 @@ def run_inference(
                     battery vs. its own last CAUSAL_RATE_K recorded cycles). None/
                     missing → causal_rate is None, classify_anomaly() behaves exactly
                     as before GH-95.
+        chemistry:  GH-67 (pack_config.chemistry) — selects the per-cell voltage
+                    warning profile ("LFP" for LiFePO4). None/unknown → NASA/NMC
+                    thresholds (legacy behavior).
+        capacity_ah: GH-67 (pack_config.capacity_ah) — pack nominal capacity. When
+                    set, current is rescaled to the NASA 2 Ah cell's C-rate
+                    equivalent (current × 2.0 / capacity_ah) the same way voltage
+                    is divided per-cell: in-place on raw, before the scaler,
+                    warnings and feature_summary. A series pack keeps its real
+                    current, but the scaler + current thresholds were fit on the
+                    2 Ah amp scale. None = no rescale (legacy behavior).
 
     Returns:
         dict with soh_percent, classification, confidence, inference_ms,
@@ -187,8 +199,14 @@ def run_inference(
     if n_series > 1:
         # GH-65: pack → per-cell voltage. In-place on the raw copy so EVERYTHING
         # downstream (scaler, anomaly thresholds, feature_summary) sees per-cell
-        # values; current (series pack) and temperature stay as sent.
+        # values; temperature stays as sent.
         raw[:, BASE_FEATURES.index("voltage")] /= n_series
+    if capacity_ah:
+        # GH-67: pack current → NASA-2Ah C-rate equivalent, same in-place pattern
+        # as the voltage division above. This also keeps the Coulomb-counting SOC
+        # fallback in _append_derived_features() correct WITHOUT touching it:
+        # ∫|I×2/C|dt / 2Ah  ==  ∫|I|dt / C_real.
+        raw[:, BASE_FEATURES.index("current")] *= NOMINAL_CAPACITY_AH / capacity_ah
     x = _align_features(raw)  # (30, F_scaler)
     x_scaled = model_loader.scaler.transform(x)
     x_model = _append_derived_features(x_scaled, raw, cycle_idx)  # (30, 6) — GH-54
@@ -249,7 +267,7 @@ def run_inference(
     # More accurate when L >= 500 (spans multiple cycles); falls back to
     # population average (0.15%/cycle) for shorter windows.
     degradation = compute_degradation_metrics(raw, soh)
-    warnings = generate_warnings(raw, soh, classification)
+    warnings = generate_warnings(raw, soh, classification, chemistry=chemistry)
     feature_summary = _compute_feature_summary(raw)
     # GH-91: distance from the window's temperature to the nearest NASA
     # training chamber setpoint (4/24/44°C) — also drives the TEMP_OOD
@@ -296,6 +314,10 @@ def run_inference(
         "input_features": INPUT_FEATURES,
         "inference_ms": elapsed_ms,
         "n_series": n_series,  # GH-65: trace which pack→cell divisor was applied
+        # GH-67: trace which voltage profile / C-rate divisor were applied
+        # (None = NASA/NMC defaults) — the real-battery validation logs need this.
+        "chemistry": chemistry,
+        "capacity_ah": capacity_ah,
         "temperature_domain_distance": round(temp_domain_dist, 2),  # GH-91
         "is_temperature_ood": temp_domain_dist > TEMPERATURE_OOD_THRESHOLD,  # GH-91
     }

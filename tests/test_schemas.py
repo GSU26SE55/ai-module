@@ -125,3 +125,60 @@ def test_prescribe_request_inherits_guard():
         readings=_window([12.4, -1.0, 25.0, 1.0]),
         pack_config={"n_series": 3},
     )
+
+
+# ── GH-67: chemistry normalization + capacity_ah C-rate current guard ────────
+
+
+def test_128v_4s_lfp_passes_and_chemistry_normalized():
+    req = PredictRequest(
+        battery_id="B",
+        readings=_window([12.8, -1.0, 25.0, 1.0]),
+        pack_config={"n_series": 4, "chemistry": "lifepo4"},
+    )
+    # per-cell 12.8/4 = 3.2 V — inside [2.0, 4.5]; spelling canonicalized
+    assert req.pack_config.chemistry == "LFP"
+
+
+def test_chemistry_aliases_and_passthrough():
+    assert PackConfig(chemistry="lfp").chemistry == "LFP"
+    assert PackConfig(chemistry="LiFePO4").chemistry == "LFP"
+    assert PackConfig(chemistry="nmc").chemistry == "NMC"
+    # unknown strings pass through untouched (NMC thresholds apply downstream)
+    assert PackConfig(chemistry="lead-acid").chemistry == "lead-acid"
+    assert PackConfig().chemistry is None
+
+
+@pytest.mark.parametrize("capacity", [0, -2.0])
+def test_capacity_ah_must_be_positive(capacity):
+    with pytest.raises(ValidationError):
+        PackConfig(capacity_ah=capacity)
+
+
+def test_high_current_without_capacity_rejected_with_hint():
+    with pytest.raises(ValidationError, match="capacity_ah"):
+        PredictRequest(
+            battery_id="B",
+            readings=_window([12.8, -10.0, 25.0, 1.0]),
+            pack_config={"n_series": 4},
+        )
+
+
+def test_high_current_with_capacity_passes_c_rate_guard():
+    # 10 A discharge on a 50 Ah pack = 0.2C → NASA-2Ah equivalent 0.4 A ∈ [-5, 5]
+    req = PredictRequest(
+        battery_id="B",
+        readings=_window([12.8, -10.0, 25.0, 1.0]),
+        pack_config={"n_series": 4, "chemistry": "LFP", "capacity_ah": 50.0},
+    )
+    assert req.pack_config.capacity_ah == 50.0
+
+
+def test_current_still_out_of_range_after_c_rate_rejected():
+    # 200 A on 50 Ah = 4C → NASA equivalent 8 A > 5 A — message shows the rescale
+    with pytest.raises(ValidationError, match="capacity_ah 50"):
+        PredictRequest(
+            battery_id="B",
+            readings=_window([12.8, -200.0, 25.0, 1.0]),
+            pack_config={"n_series": 4, "capacity_ah": 50.0},
+        )

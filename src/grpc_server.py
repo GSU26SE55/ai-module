@@ -41,10 +41,13 @@ def _pack_config_dict(pack_config) -> dict:
 
     proto3 scalar semantics: n_series=0 means "not set" → treat as 1 (single
     cell) instead of failing the ge=1 constraint, so `pack_config {chemistry:
-    "NMC"}` behaves like REST's `{"chemistry": "NMC"}` (n_series defaults)."""
+    "NMC"}` behaves like REST's `{"chemistry": "NMC"}` (n_series defaults).
+    GH-67: capacity_ah=0.0 likewise means "not set" → None (no C-rate rescale,
+    and it would fail the gt=0 constraint otherwise)."""
     return {
         "n_series": pack_config.n_series or 1,
         "chemistry": pack_config.chemistry or None,
+        "capacity_ah": pack_config.capacity_ah or None,
     }
 
 
@@ -112,6 +115,9 @@ def _to_predict_response(
             n_series=metadata["n_series"],
             temperature_domain_distance=metadata["temperature_domain_distance"],
             is_temperature_ood=metadata["is_temperature_ood"],
+            # GH-67: None → proto3 defaults ("" / 0.0) = NASA/NMC defaults applied
+            chemistry=metadata["chemistry"] or "",
+            capacity_ah=metadata["capacity_ah"] or 0.0,
         ),
         # Flat backward-compat fields — identical to the REST payload
         soh_percent=result["soh_percent"],
@@ -213,10 +219,14 @@ class AiServiceServicer(ai_service_pb2_grpc.AiServiceServicer):
         if request.HasField("pack_config"):
             payload["pack_config"] = _pack_config_dict(request.pack_config)
         parsed = _validate(PredictRequest, payload, context)
-        n_series = parsed.pack_config.n_series if parsed.pack_config else 1
+        pack = parsed.pack_config
         try:
             result = run_inference(
-                parsed.readings, n_series=n_series, battery_id=parsed.battery_id
+                parsed.readings,
+                n_series=pack.n_series if pack else 1,
+                chemistry=pack.chemistry if pack else None,
+                capacity_ah=pack.capacity_ah if pack else None,
+                battery_id=parsed.battery_id,
             )
         except Exception as exc:
             logger.exception("Predict failed")

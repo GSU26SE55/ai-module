@@ -123,6 +123,8 @@ FIXED_PREDICT_RESULT = {
         "input_features": INPUT_FEATURES,
         "inference_ms": 12.3,
         "n_series": 1,  # GH-65
+        "chemistry": None,  # GH-67
+        "capacity_ah": None,  # GH-67
         "temperature_domain_distance": 1.0,  # GH-91
         "is_temperature_ood": False,  # GH-91
     },
@@ -518,6 +520,12 @@ def test_predict_parity_with_rest(servicer, rest_client):
             elif isinstance(value, dict):
                 # proto map fields (GH-86 stage_probabilities) → plain dict
                 rpc_value = dict(rpc_value)
+            elif value is None:
+                # GH-67: proto3 scalars have no null — chemistry/capacity_ah use
+                # ""/0.0 as the "not set" sentinel (same convention as
+                # PackConfig.n_series=0 meaning "unset" in _pack_config_dict).
+                assert rpc_value in ("", 0.0), f"{field}.{key}"
+                continue
             assert rpc_value == value, f"{field}.{key}"
     # warnings + feature_summary (flat and nested)
     for rpc_w, rest_w in zip(rpc.warnings, rest["warnings"], strict=True):
@@ -867,3 +875,65 @@ def test_prescribe_forwards_pack_config(servicer):
             None,
         )
     assert mock_rx.call_args.kwargs["n_series"] == 3
+
+
+# ── pack_config chemistry profile + capacity_ah C-rate (GH-67) ───────────
+
+# 4S LFP 50 Ah pack: voltage ×4 (≈3.5-4.1 V/cell after division — VALID_READINGS
+# is NMC-shaped; the point here is transport plumbing, not LFP realism),
+# current ×25 = same C-rate as the NASA 2 Ah cell.
+_LFP_PACK_READINGS = [
+    pb.Reading(
+        values=[r.values[0] * 4, r.values[1] * 25, r.values[2], r.values[3]]
+    )
+    for r in VALID_READINGS
+]
+
+
+def test_predict_chemistry_capacity_traced_in_metadata(servicer):
+    resp = servicer.Predict(
+        pb.PredictRequest(
+            battery_id="LFP-PACK",
+            readings=_LFP_PACK_READINGS,
+            pack_config=pb.PackConfig(n_series=4, chemistry="lifepo4", capacity_ah=50.0),
+        ),
+        None,
+    )
+    # chemistry canonicalized by the shared Pydantic schema; both traced
+    assert resp.metadata.chemistry == "LFP"
+    assert resp.metadata.capacity_ah == 50.0
+    assert resp.metadata.n_series == 4
+    # C-rate rescale keeps current in range → no OVERCURRENT false alarm
+    assert not any("OVERCURRENT" in w.code for w in resp.evidence.warnings)
+
+
+def test_predict_defaults_trace_empty_chemistry_capacity(servicer):
+    """proto3 defaults: no pack_config → chemistry "" / capacity_ah 0.0 (= NASA)."""
+    resp = servicer.Predict(
+        pb.PredictRequest(battery_id="B0005", readings=VALID_READINGS), None
+    )
+    assert resp.metadata.chemistry == ""
+    assert resp.metadata.capacity_ah == 0.0
+
+
+def test_predict_high_current_without_capacity_parity_with_rest(
+    grpc_stub, rest_client
+):
+    """GH-67 parity: 10 A on a pack without capacity_ah → REST 422 and gRPC
+    INVALID_ARGUMENT, both hinting at pack_config.capacity_ah."""
+    rows = [
+        [r.values[0], -10.0, r.values[2], r.values[3]] for r in VALID_READINGS
+    ]
+    rest_resp = rest_client.post(
+        "/predict/", json={"battery_id": "B0005", "readings": rows}
+    )
+    assert rest_resp.status_code == 422
+    assert "capacity_ah" in str(rest_resp.json())
+    with pytest.raises(grpc.RpcError) as exc_info:
+        grpc_stub.Predict(
+            pb.PredictRequest(
+                battery_id="B0005", readings=[pb.Reading(values=r) for r in rows]
+            )
+        )
+    assert exc_info.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    assert "capacity_ah" in exc_info.value.details()

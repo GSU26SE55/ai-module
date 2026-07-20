@@ -22,6 +22,20 @@ TEMP_CRITICAL         = 45.0   # °C
 CURRENT_WARNING       = -2.0   # A (negative = discharge; 1C for 2Ah cell)
 CURRENT_CRITICAL      = -3.0   # A (1.5C)
 
+# GH-67: per-cell voltage warning profiles by chemistry —
+# (critical_low, warning_low, warning_high, critical_high) in V/cell.
+# "NMC" = the NASA 18650 limits above (default for None/unknown chemistry).
+# "LFP": LiFePO4 sits on a flat 3.2-3.3 V plateau, so the NMC profile both
+# spams false VOLTAGE_LOW below 3.2 V and misses real overcharge (LFP full
+# charge is 3.65 V, far under 4.15). Values per the A123 ANR26650M1-B
+# datasheet (the Severson et al. 2019 cell): recommended discharge cutoff
+# 2.5 V, charge cutoff 3.65 V; 2.8 V = end-of-discharge knee onset, 3.8 V =
+# cell-damage risk threshold.
+CHEMISTRY_VOLTAGE_PROFILES = {
+    "NMC": (VOLTAGE_CRITICAL_LOW, VOLTAGE_WARNING_LOW, VOLTAGE_WARNING_HIGH, VOLTAGE_CRITICAL_HIGH),
+    "LFP": (2.5, 2.8, 3.65, 3.8),
+}
+
 
 _ANOMALY_TIERS = ["Normal", "Degrading", "Failed"]
 
@@ -300,7 +314,9 @@ def temperature_domain_distance(temps: np.ndarray) -> float:
     return float(max(distances))
 
 
-def generate_warnings(raw: np.ndarray, soh: float, classification: str) -> list[dict]:
+def generate_warnings(
+    raw: np.ndarray, soh: float, classification: str, chemistry: str | None = None
+) -> list[dict]:
     """
     Rule-based threshold checks on raw (unscaled) sensor readings.
 
@@ -309,12 +325,18 @@ def generate_warnings(raw: np.ndarray, soh: float, classification: str) -> list[
              Column order: [voltage, current, temperature, ...]
         soh: SOH% predicted by Mamba model
         classification: "Normal" | "Degrading" | "Failed"
+        chemistry: GH-67 — selects the per-cell voltage profile from
+             CHEMISTRY_VOLTAGE_PROFILES ("LFP" for LiFePO4 packs); None or an
+             unknown value keeps the NASA/NMC thresholds (legacy behavior).
 
     Returns:
         List of {code, severity, message} dicts ordered by severity (critical first).
     """
     warnings = []
     n_features = raw.shape[1]
+    v_crit_lo, v_warn_lo, v_warn_hi, v_crit_hi = CHEMISTRY_VOLTAGE_PROFILES.get(
+        chemistry or "NMC", CHEMISTRY_VOLTAGE_PROFILES["NMC"]
+    )
 
     # ── SOH-based ─────────────────────────────────────────────────────────
     if soh < EOL_SOH:
@@ -343,39 +365,39 @@ def generate_warnings(raw: np.ndarray, soh: float, classification: str) -> list[
     v = raw[:, 0]
     v_min, v_max = float(v.min()), float(v.max())
 
-    if v_min < VOLTAGE_CRITICAL_LOW:
+    if v_min < v_crit_lo:
         warnings.append({
             "code": "VOLTAGE_CRITICAL",
             "severity": "critical",
             "message": (
                 f"Minimum voltage {v_min:.3f}V is below safe cutoff "
-                f"({VOLTAGE_CRITICAL_LOW}V) — risk of cell damage."
+                f"({v_crit_lo}V) — risk of cell damage."
             ),
         })
-    elif v_min < VOLTAGE_WARNING_LOW:
+    elif v_min < v_warn_lo:
         warnings.append({
             "code": "VOLTAGE_LOW",
             "severity": "warning",
             "message": (
                 f"Minimum voltage {v_min:.3f}V is approaching cutoff "
-                f"({VOLTAGE_WARNING_LOW}V)."
+                f"({v_warn_lo}V)."
             ),
         })
 
-    if v_max > VOLTAGE_CRITICAL_HIGH:
+    if v_max > v_crit_hi:
         warnings.append({
             "code": "OVERVOLTAGE_CRITICAL",
             "severity": "critical",
             "message": (
                 f"Maximum voltage {v_max:.3f}V exceeds safe limit "
-                f"({VOLTAGE_CRITICAL_HIGH}V) — overcharge risk."
+                f"({v_crit_hi}V) — overcharge risk."
             ),
         })
-    elif v_max > VOLTAGE_WARNING_HIGH:
+    elif v_max > v_warn_hi:
         warnings.append({
             "code": "OVERVOLTAGE",
             "severity": "warning",
-            "message": f"Maximum voltage {v_max:.3f}V is elevated (>{VOLTAGE_WARNING_HIGH}V).",
+            "message": f"Maximum voltage {v_max:.3f}V is elevated (>{v_warn_hi}V).",
         })
 
     # ── Current (index 1) — negative convention for discharge ─────────────

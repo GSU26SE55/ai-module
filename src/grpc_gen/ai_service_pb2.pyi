@@ -29,12 +29,14 @@ class ReadingFields(_message.Message):
     def __init__(self, voltage: _Optional[float] = ..., current: _Optional[float] = ..., temperature: _Optional[float] = ..., time: _Optional[float] = ..., cycle_count: _Optional[float] = ..., soc_percent: _Optional[float] = ...) -> None: ...
 
 class PackConfig(_message.Message):
-    __slots__ = ("n_series", "chemistry")
+    __slots__ = ("n_series", "chemistry", "capacity_ah")
     N_SERIES_FIELD_NUMBER: _ClassVar[int]
     CHEMISTRY_FIELD_NUMBER: _ClassVar[int]
+    CAPACITY_AH_FIELD_NUMBER: _ClassVar[int]
     n_series: int
     chemistry: str
-    def __init__(self, n_series: _Optional[int] = ..., chemistry: _Optional[str] = ...) -> None: ...
+    capacity_ah: float
+    def __init__(self, n_series: _Optional[int] = ..., chemistry: _Optional[str] = ..., capacity_ah: _Optional[float] = ...) -> None: ...
 
 class PredictRequest(_message.Message):
     __slots__ = ("battery_id", "readings", "reading_objects", "pack_config")
@@ -141,7 +143,7 @@ class EvidenceInfo(_message.Message):
     def __init__(self, warnings: _Optional[_Iterable[_Union[WarningItem, _Mapping]]] = ..., feature_summary: _Optional[_Mapping[str, FeatureStat]] = ...) -> None: ...
 
 class ResponseMetadata(_message.Message):
-    __slots__ = ("model_version", "window_size", "input_features", "inference_ms", "n_series", "temperature_domain_distance", "is_temperature_ood")
+    __slots__ = ("model_version", "window_size", "input_features", "inference_ms", "n_series", "temperature_domain_distance", "is_temperature_ood", "chemistry", "capacity_ah")
     MODEL_VERSION_FIELD_NUMBER: _ClassVar[int]
     WINDOW_SIZE_FIELD_NUMBER: _ClassVar[int]
     INPUT_FEATURES_FIELD_NUMBER: _ClassVar[int]
@@ -149,6 +151,8 @@ class ResponseMetadata(_message.Message):
     N_SERIES_FIELD_NUMBER: _ClassVar[int]
     TEMPERATURE_DOMAIN_DISTANCE_FIELD_NUMBER: _ClassVar[int]
     IS_TEMPERATURE_OOD_FIELD_NUMBER: _ClassVar[int]
+    CHEMISTRY_FIELD_NUMBER: _ClassVar[int]
+    CAPACITY_AH_FIELD_NUMBER: _ClassVar[int]
     model_version: str
     window_size: int
     input_features: int
@@ -156,7 +160,9 @@ class ResponseMetadata(_message.Message):
     n_series: int
     temperature_domain_distance: float
     is_temperature_ood: bool
-    def __init__(self, model_version: _Optional[str] = ..., window_size: _Optional[int] = ..., input_features: _Optional[int] = ..., inference_ms: _Optional[float] = ..., n_series: _Optional[int] = ..., temperature_domain_distance: _Optional[float] = ..., is_temperature_ood: _Optional[bool] = ...) -> None: ...
+    chemistry: str
+    capacity_ah: float
+    def __init__(self, model_version: _Optional[str] = ..., window_size: _Optional[int] = ..., input_features: _Optional[int] = ..., inference_ms: _Optional[float] = ..., n_series: _Optional[int] = ..., temperature_domain_distance: _Optional[float] = ..., is_temperature_ood: _Optional[bool] = ..., chemistry: _Optional[str] = ..., capacity_ah: _Optional[float] = ...) -> None: ...
 
 class PredictResponse(_message.Message):
     __slots__ = ("battery_id", "prediction", "anomaly", "risk", "evidence", "metadata", "soh_percent", "classification", "confidence", "inference_ms", "rul_cycles_estimate", "degradation_rate_per_cycle", "soh_trend", "cycles_to_maintenance", "soh_trajectory", "anomaly_score", "recommended_action", "warnings", "feature_summary")

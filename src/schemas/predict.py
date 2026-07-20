@@ -7,6 +7,7 @@ from src.core.config import (
     CURRENT_RANGE,
     FEATURES,
     INPUT_FEATURES,
+    NOMINAL_CAPACITY_AH,
     SOC_RANGE,
     TEMPERATURE_RANGE,
     VOLTAGE_CELL_RANGE,
@@ -41,17 +42,40 @@ class ReadingObject(BaseModel):
 
 
 class PackConfig(BaseModel):
-    """GH-65: pack-to-cell normalization for multi-cell packs (e.g. 12V ≈ 3S NMC).
+    """GH-65/GH-67: pack-to-cell normalization for multi-cell packs
+    (e.g. 12V ≈ 3S NMC, or 12.8V ≈ 4S LFP).
 
     voltage_cell = voltage_pack / n_series is applied BEFORE the scaler and BEFORE
-    warning thresholds (current is unchanged — series pack; temperature unchanged).
-    chemistry is trace metadata only: LiFePO4's flat 3.2-3.3V curve differs from the
-    NMC 18650 cells the model was trained on — accuracy validation is GH-67."""
+    warning thresholds (temperature unchanged). GH-67: a series pack does NOT
+    divide current, but the scaler and current thresholds were fit on the NASA
+    2 Ah cell's amp scale — when capacity_ah is set, current is rescaled to the
+    same C-rate on that cell (current × 2.0 / capacity_ah), also before the
+    scaler/range guard/thresholds. chemistry selects the per-cell voltage
+    warning profile (anomaly_detector.CHEMISTRY_VOLTAGE_PROFILES); prediction
+    accuracy on LFP curves is still unvalidated — that is GH-67 itself."""
 
     n_series: int = Field(
         1, ge=1, description="cells in series; 1 = single cell (default, legacy behavior)"
     )
     chemistry: str | None = None
+    capacity_ah: float | None = Field(
+        None,
+        gt=0,
+        description=(
+            "pack nominal capacity (Ah); enables C-rate current normalization "
+            "(None = no rescale, NASA 2 Ah behavior)"
+        ),
+    )
+
+    @field_validator("chemistry")
+    @classmethod
+    def normalize_chemistry(cls, v: str | None) -> str | None:
+        """Canonicalize the common spellings so the profile lookup and the
+        metadata trace agree; unknown strings pass through unchanged (they get
+        the default NMC voltage profile downstream)."""
+        if v is None:
+            return v
+        return {"lfp": "LFP", "lifepo4": "LFP", "nmc": "NMC"}.get(v.strip().lower(), v)
 
 
 class PredictRequest(BaseModel):
@@ -130,9 +154,14 @@ class PredictRequest(BaseModel):
 
         Voltage is checked PER-CELL, i.e. after dividing by pack_config.n_series
         (GH-65) — so a 12V pack with n_series=3 passes, while 12V without
-        pack_config is rejected with a hint. Ranges: src/core/config.py.
+        pack_config is rejected with a hint. GH-67: current is checked on the
+        NASA-2Ah C-rate equivalent (current × 2.0 / pack_config.capacity_ah) —
+        a 50 Ah pack discharging 10 A (0.2C) passes, while 10 A without
+        capacity_ah is rejected. Ranges: src/core/config.py.
         `time` has no range (finite-checked above); cycle_count keeps GH-59 clip."""
         n_series = self.pack_config.n_series if self.pack_config else 1
+        capacity_ah = self.pack_config.capacity_ah if self.pack_config else None
+        i_scale = NOMINAL_CAPACITY_AH / capacity_ah if capacity_ah else 1.0
         v_lo, v_hi = VOLTAGE_CELL_RANGE
         i_lo, i_hi = CURRENT_RANGE
         t_lo, t_hi = TEMPERATURE_RANGE
@@ -141,8 +170,9 @@ class PredictRequest(BaseModel):
             v_cell = row[0] / n_series
             if not v_lo <= v_cell <= v_hi:
                 hint = (
-                    " — if this is a multi-cell pack (e.g. 12V ~ 3S), send "
-                    "pack_config.n_series so voltage can be normalized per-cell"
+                    " — if this is a multi-cell pack (e.g. 12V ~ 3S NMC or "
+                    "12.8V ~ 4S LFP), send pack_config.n_series so voltage can "
+                    "be normalized per-cell"
                     if n_series == 1
                     else f" (pack voltage {row[0]} / n_series {n_series})"
                 )
@@ -150,10 +180,18 @@ class PredictRequest(BaseModel):
                     f"readings[{i}].voltage: per-cell value {v_cell:.3f} V outside "
                     f"allowed range [{v_lo}, {v_hi}] V{hint}"
                 )
-            if not i_lo <= row[1] <= i_hi:
+            i_equiv = row[1] * i_scale
+            if not i_lo <= i_equiv <= i_hi:
+                hint = (
+                    " — if this pack's capacity differs from the NASA 2 Ah cell, "
+                    "send pack_config.capacity_ah so current can be normalized "
+                    "by C-rate"
+                    if i_scale == 1.0
+                    else f" (current {row[1]} A × {NOMINAL_CAPACITY_AH} / capacity_ah {capacity_ah})"
+                )
                 raise ValueError(
-                    f"readings[{i}].current={row[1]} A outside allowed range "
-                    f"[{i_lo}, {i_hi}] A"
+                    f"readings[{i}].current: NASA-equivalent value {i_equiv:.3f} A "
+                    f"outside allowed range [{i_lo}, {i_hi}] A{hint}"
                 )
             if not t_lo <= row[2] <= t_hi:
                 raise ValueError(
@@ -222,6 +260,10 @@ class ResponseMetadata(BaseModel):
     input_features: int
     inference_ms: float
     n_series: int = 1  # GH-65: pack→cell divisor applied to voltage (1 = single cell)
+    # GH-67: which voltage-warning profile / C-rate divisor were applied —
+    # trace for the real-battery validation logs (None = NASA/NMC defaults).
+    chemistry: str | None = None
+    capacity_ah: float | None = None
     # GH-91: distance (°C) from the window's temperature to the nearest NASA
     # training chamber setpoint (4/24/44°C); is_temperature_ood flags when it
     # exceeds TEMPERATURE_OOD_THRESHOLD, i.e. the prediction is extrapolating.
