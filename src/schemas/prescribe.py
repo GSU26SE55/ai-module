@@ -4,7 +4,7 @@ Request/response schemas for POST /prescribe endpoint.
 from typing import Literal
 
 from pydantic import BaseModel
-from src.schemas.predict import PredictRequest
+from src.schemas.predict import AnomalyInfo, PredictionInfo, PredictRequest, RiskInfo
 
 
 class PrescribeRequest(PredictRequest):
@@ -34,7 +34,8 @@ class RetrievedDoc(BaseModel):
 class PrescribeResponse(BaseModel):
     battery_id: str
 
-    # Prediction context (from /predict)
+    # Prediction context (from /predict). GH-87: deprecated — kept for backward
+    # compat, superseded by the nested prediction/anomaly/risk blocks below.
     soh_percent: float
     risk_level: str       # Critical / High / Medium / Low
     priority: str         # P1 / P2 / P3 / None
@@ -76,6 +77,15 @@ class PrescribeResponse(BaseModel):
     # enrich=true and the write succeeded; "" on the rule-only path (enrich=false)
     # or if the history store is unavailable. Pass this to POST /prescribe/feedback.
     prescription_id: str = ""
+
+    # GH-87: nested prediction/anomaly/risk context — reuses the same schemas as
+    # PredictResponse, so GH-86 uncertainty (health_stage, stage_probabilities,
+    # stage_confidence, is_borderline, soh_confidence, soh_std) reaches BE via
+    # Prescribe (the last output). Always populated — run_inference() runs
+    # unconditionally as step 1 of run_prescription(), regardless of enrich.
+    prediction: PredictionInfo
+    anomaly: AnomalyInfo
+    risk: RiskInfo
 
 
 class PrescriptionFeedbackRequest(BaseModel):

@@ -149,6 +149,37 @@ FIXED_PRESCRIBE_RESULT = {
     "risk_level": "High",
     "priority": "P2",
     "action_code": "SCHEDULE_REPLACEMENT",
+    # GH-87: nested prediction/anomaly/risk — mirrors FIXED_PREDICT_RESULT shape.
+    "prediction": {
+        "soh_percent": 82.0,
+        "soh_confidence": 0.88,
+        "soh_std": 1.6,
+        "rul_cycles_estimate": 40,
+        "degradation_rate_per_cycle": 0.22,
+        "soh_trend": "accelerating",
+        "cycles_to_maintenance": 0,
+        "soh_trajectory": [82.0, 81.7, 81.4, 81.1, 80.8],
+        "health_stage": "Maintenance Required",
+        "stage_probabilities": {
+            "End Of Life": 0.05,
+            "Maintenance Required": 0.65,
+            "Degrading": 0.3,
+            "Healthy": 0.0,
+        },
+        "stage_confidence": 0.65,
+        "is_borderline": True,
+    },
+    "anomaly": {
+        "anomaly_score": -0.18,
+        "anomaly_status": "Degrading",
+        "anomaly_confidence": 0.18,
+    },
+    "risk": {
+        "risk_level": "High",
+        "priority": "P2",
+        "action_code": "SCHEDULE_REPLACEMENT",
+        "reasons": ["SOH below maintenance threshold"],
+    },
     "prescription": "Schedule replacement within 2 weeks.",
     "action_steps": ["Isolate string", "Order replacement"],
     "escalation_conditions": ["SOH < 80%"],
@@ -627,6 +658,23 @@ def test_prescribe_parity_with_rest(servicer, rest_client):
     rpc_doc, rest_doc = rpc.maintenance_docs[0], rest["maintenance_docs"][0]
     for field in ("title", "content", "source", "relevance_score", "retrieved_via"):
         assert getattr(rpc_doc, field) == rest_doc[field], field
+
+    # GH-87: nested prediction/anomaly/risk parity — including GH-86 uncertainty
+    for field in (
+        "soh_percent",
+        "soh_confidence",
+        "soh_std",
+        "health_stage",
+        "stage_confidence",
+        "is_borderline",
+    ):
+        assert getattr(rpc.prediction, field) == rest["prediction"][field], field
+    assert dict(rpc.prediction.stage_probabilities) == rest["prediction"]["stage_probabilities"]
+    for field in ("anomaly_score", "anomaly_status", "anomaly_confidence"):
+        assert getattr(rpc.anomaly, field) == rest["anomaly"][field], field
+    for field in ("risk_level", "priority", "action_code"):
+        assert getattr(rpc.risk, field) == rest["risk"][field], field
+    assert list(rpc.risk.reasons) == rest["risk"]["reasons"]
 
 
 def test_prescribe_forwards_optional_context(servicer):

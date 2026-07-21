@@ -282,7 +282,7 @@ class PredictResponse(BaseModel):
     # Backward-compatible flat fields. Keep until BE migrates to nested response.
     soh_percent: float
     classification: str  # "Normal" | "Degrading" | "Failed"
-    confidence: float  # |IsolationForest score|, range [0, 1]
+    confidence: float  # MC Dropout soh_confidence [0,1] — NOT the IsolationForest score
     inference_ms: float
 
     # ── RUL & Degradation Trend ───────────────────────────────────────────
