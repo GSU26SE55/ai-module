@@ -152,7 +152,8 @@ message PredictResponse {
   // Backward-compatible flat fields. Keep until BE migrates to nested response.
   double soh_percent = 7;
   string classification = 8;  // "Normal" | "Degrading" | "Failed"
-  double confidence = 9;      // |IsolationForest score|, range [0, 1]
+  double confidence = 9;      // MC Dropout soh_confidence, range [0, 1] — NOT the
+                               // IsolationForest score (see anomaly.anomaly_confidence for that)
   double inference_ms = 10;
 
   int32 rul_cycles_estimate = 11;
@@ -201,7 +202,8 @@ message RetrievedDoc {
 message PrescribeResponse {
   string battery_id = 1;
 
-  // Prediction context (from /predict)
+  // Prediction context (from /predict). GH-87: deprecated — kept for backward
+  // compat, superseded by the nested prediction/anomaly/risk blocks below.
   double soh_percent = 2;
   string risk_level = 3;  // Critical / High / Medium / Low
   string priority = 4;    // P1 / P2 / P3 / None
@@ -247,6 +249,16 @@ message PrescribeResponse {
   // enrich=true and the write succeeded; "" on the rule-only path or if the
   // history store is unavailable. Pass this to POST /prescribe/feedback (REST-only).
   string prescription_id = 23;
+
+  // GH-87: nested prediction/anomaly/risk context — reuses the same messages
+  // as PredictResponse, so GH-86 uncertainty (health_stage, stage_probabilities,
+  // stage_confidence, is_borderline, soh_confidence, soh_std) reaches BE via
+  // Prescribe (the last output) instead of being lost behind the flat fields
+  // above. Always populated — run_inference() runs unconditionally as step 1
+  // of run_prescription(), regardless of enrich.
+  PredictionInfo prediction = 24;
+  AnomalyInfo anomaly = 25;
+  RiskInfo risk = 26;
 }
 
 // ── Health ─────────────────────────────────────────────────────────────

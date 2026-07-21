@@ -409,6 +409,12 @@ def run_prescription(
         "priority":     risk.get("priority", "None"),
         "action_code":  risk.get("action_code", "MONITOR"),
 
+        # GH-87: nested prediction/anomaly/risk — same dicts run_inference()
+        # already computed above, forwarded as-is (no extra forward pass).
+        "prediction":   prediction,
+        "anomaly":      anomaly,
+        "risk":         risk,
+
         "prescription":          enriched["prescription"],
         "action_steps":          gate["action_steps"],   # post-validation (GH-81 injection)
         "escalation_conditions": escalation,

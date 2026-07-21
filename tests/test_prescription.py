@@ -131,6 +131,51 @@ class TestPrescriptionPipeline:
         assert out["action_code"] == "REPLACE_IMMEDIATELY"
         assert out["human_verification_required"] is True  # P1
 
+    def test_response_nests_prediction_anomaly_risk_verbatim(self):
+        """GH-87: run_prescription() must forward run_inference()'s prediction/
+        anomaly/risk dicts unchanged (no recompute) — including GH-86 uncertainty
+        fields, which the flat context fields never carried."""
+        from src.services.prescription import orchestrator as prescription
+
+        inference_result = {
+            "prediction": {
+                "soh_percent": 81.0,
+                "soh_confidence": 0.7,
+                "soh_std": 2.1,
+                "rul_cycles_estimate": 30,
+                "degradation_rate_per_cycle": 0.25,
+                "soh_trend": "accelerating",
+                "cycles_to_maintenance": 0,
+                "soh_trajectory": [81.0, 80.7, 80.4],
+                "health_stage": "Maintenance Required",
+                "stage_probabilities": {"Maintenance Required": 0.65, "Degrading": 0.35},
+                "stage_confidence": 0.65,
+                "is_borderline": True,
+            },
+            "anomaly": {
+                "anomaly_score": -0.15,
+                "anomaly_status": "Degrading",
+                "anomaly_confidence": 0.15,
+            },
+            "risk": {
+                "risk_level": "High",
+                "priority": "P2",
+                "action_code": "SCHEDULE_REPLACEMENT",
+                "reasons": ["SOH below maintenance threshold"],
+            },
+            "evidence": {"warnings": []},
+            "metadata": {"inference_ms": 12.3},
+        }
+        with patch.object(prescription, "run_inference", return_value=inference_result):
+            out = prescription.run_prescription(
+                make_dummy_readings(), "B0005", enrich=False
+            )
+        assert out["prediction"] == inference_result["prediction"]
+        assert out["anomaly"] == inference_result["anomaly"]
+        assert out["risk"] == inference_result["risk"]
+        assert out["prediction"]["is_borderline"] is True
+        assert out["prediction"]["stage_confidence"] == 0.65
+
     def test_enrich_success_uses_llm_output(self):
         from src.services.prescription import orchestrator as prescription
 

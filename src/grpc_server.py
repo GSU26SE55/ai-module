@@ -154,6 +154,9 @@ def _to_retrieved_docs(docs: list[dict]) -> list[ai_service_pb2.RetrievedDoc]:
 
 
 def _to_prescribe_response(result: dict) -> ai_service_pb2.PrescribeResponse:
+    prediction = result["prediction"]
+    anomaly = result["anomaly"]
+    risk = result["risk"]
     return ai_service_pb2.PrescribeResponse(
         battery_id=result["battery_id"],
         soh_percent=result["soh_percent"],
@@ -178,6 +181,32 @@ def _to_prescribe_response(result: dict) -> ai_service_pb2.PrescribeResponse:
         query_gen_ms=result.get("query_gen_ms", 0.0),
         generated_queries=result.get("generated_queries", []),
         prescription_id=result.get("prescription_id", ""),
+        # GH-87: nested prediction/anomaly/risk — same mapping as _to_predict_response.
+        prediction=ai_service_pb2.PredictionInfo(
+            soh_percent=prediction["soh_percent"],
+            soh_confidence=prediction["soh_confidence"],
+            soh_std=prediction["soh_std"],
+            rul_cycles_estimate=prediction["rul_cycles_estimate"],
+            degradation_rate_per_cycle=prediction["degradation_rate_per_cycle"],
+            soh_trend=prediction["soh_trend"],
+            cycles_to_maintenance=prediction["cycles_to_maintenance"],
+            soh_trajectory=prediction["soh_trajectory"],
+            health_stage=prediction["health_stage"],
+            stage_probabilities=prediction["stage_probabilities"],
+            stage_confidence=prediction["stage_confidence"],
+            is_borderline=prediction["is_borderline"],
+        ),
+        anomaly=ai_service_pb2.AnomalyInfo(
+            anomaly_score=anomaly["anomaly_score"],
+            anomaly_status=anomaly["anomaly_status"],
+            anomaly_confidence=anomaly["anomaly_confidence"],
+        ),
+        risk=ai_service_pb2.RiskInfo(
+            risk_level=risk["risk_level"],
+            priority=risk["priority"],
+            action_code=risk["action_code"],
+            reasons=risk["reasons"],
+        ),
     )
 
 

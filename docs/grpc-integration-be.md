@@ -12,6 +12,14 @@ AI module expose **2 transport song song** trên cùng pipeline:
 
 Cả hai trả **cùng payload** (đã có parity test field-by-field) — BE migrate dần không cần remap.
 
+**Flow khuyến nghị (GH-87):** gọi **`Prescribe` duy nhất** cho use-case tạo/enrich ticket — `Predict`
+chạy nội bộ trong `Prescribe` nên response đã có đủ block `prediction`/`anomaly`/`risk` (bao gồm
+uncertainty GH-86: `health_stage`, `stage_probabilities`, `stage_confidence`, `is_borderline`,
+`soh_confidence`, `soh_std`). Gọi riêng `Predict`/`PredictStream` chỉ dành cho dashboard giám sát
+real-time (không cần prescription text/RAG). **Không** gọi cả `Predict` lẫn `Prescribe` trên cùng
+một windows readings để lấy context — mỗi lần gọi chạy MC Dropout riêng nên 2 response có thể lệch
+nhau (stage flip gần ngưỡng); dùng nested block trong `Prescribe` làm nguồn duy nhất.
+
 ---
 
 ## 1. Lấy proto & gen C# client
