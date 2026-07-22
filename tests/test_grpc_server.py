@@ -501,6 +501,53 @@ def test_prescribe_via_channel_returns_valid_response(grpc_stub):
     assert len(response.maintenance_docs) == 0  # empty unless enriched
 
 
+def test_prescribe_anomaly_event_contract_for_ticket_mapping(grpc_stub):
+    """GH-23 — contract for the BatteryAnomalyDetectedEvent -> Prescribe ->
+    auto-ticket flow (docs/ai-be-integration.md). BE calls Prescribe ONCE
+    (enrich=False) per event/window and maps the response straight to a
+    ticket — this asserts every field that mapping depends on is present
+    and well-formed, and that the rule-only call stays within the SLA
+    batch budget (<500ms, ai.md)."""
+    start = time.perf_counter()
+    response = grpc_stub.Prescribe(
+        pb.PrescribeRequest(
+            battery_id="B-IOT-001",
+            readings=_LFP_PACK_READINGS,
+            pack_config=pb.PackConfig(n_series=4, chemistry="lifepo4", capacity_ah=50.0),
+            enrich=False,
+        )
+    )
+    elapsed_ms = (time.perf_counter() - start) * 1000
+
+    # Decision field: whether BE should create a ticket at all.
+    assert response.anomaly.anomaly_status in ("Normal", "Warning", "Anomaly")
+
+    # Fields the ticket-mapping table in docs/ai-be-integration.md relies on.
+    assert response.risk.priority in ("P1", "P2", "P3", "None")
+    assert response.risk.risk_level in ("Critical", "High", "Medium", "Low")
+    assert response.risk.action_code in (
+        "MONITOR",
+        "SCHEDULE_MAINTENANCE",
+        "SCHEDULE_REPLACEMENT",
+        "REPLACE_IMMEDIATELY",
+    )
+    assert len(response.action_steps) > 0
+    assert isinstance(response.human_verification_required, bool)
+    assert isinstance(list(response.ppe_required), list)
+    assert isinstance(list(response.safety_warnings), list)
+
+    # enrich=False path: no LLM/RAG content, never blocked.
+    assert response.enriched is False
+    assert response.blocked is False
+
+    # GH-87 nested context must be populated (BE reads health_stage/SOH from here).
+    assert response.prediction.health_stage != ""
+    assert len(response.prediction.stage_probabilities) > 0
+
+    # SLA `ai.md`: batch/event-driven path < 500ms.
+    assert elapsed_ms < 500, f"Prescribe(enrich=False) took {elapsed_ms:.1f}ms > 500ms SLA"
+
+
 # ── Parity with REST ───────────────────────────────────────────────────
 # Both transports call the same pipeline; with run_inference patched to a
 # fixed dict, gRPC and REST must serve identical payloads field-by-field.

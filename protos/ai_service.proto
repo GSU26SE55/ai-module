@@ -114,6 +114,10 @@ message AnomalyInfo {
 
 message RiskInfo {
   string risk_level = 1;
+  // P1 / P2 / P3 / None — GH-23: suggested Urgency signal from battery severity
+  // only (no ImpactScope here), NOT the final ticket Priority. BE combines this
+  // with its own ImpactScope via the Impact x Urgency Priority Matrix
+  // (design.md) — see docs/ai-be-integration.md §4.
   string priority = 2;
   string action_code = 3;
   repeated string reasons = 4;
@@ -206,7 +210,11 @@ message PrescribeResponse {
   // compat, superseded by the nested prediction/anomaly/risk blocks below.
   double soh_percent = 2;
   string risk_level = 3;  // Critical / High / Medium / Low
-  string priority = 4;    // P1 / P2 / P3 / None
+  // P1 / P2 / P3 / None — GH-23: suggested Urgency signal from battery severity
+  // only (no ImpactScope here), NOT the final ticket Priority. BE combines this
+  // with its own ImpactScope via the Impact x Urgency Priority Matrix
+  // (design.md) — see docs/ai-be-integration.md §4.
+  string priority = 4;
   string action_code = 5;
 
   // Prescription (rule-based by default; LLM-generated when enriched=true)

@@ -243,6 +243,12 @@ class AnomalyInfo(BaseModel):
 class RiskInfo(BaseModel):
     risk_level: str
     priority: str
+    """P1/P2/P3/None — computed purely from battery severity (health_stage,
+    anomaly_status, critical warnings). NOT the final ticket Priority: this
+    module has no ImpactScope (Site/SingleAsset/MultiSite). GH-23: BE must
+    treat this as a suggested Urgency signal and combine it with its own
+    ImpactScope via the Impact x Urgency Priority Matrix (design.md) to get
+    the ticket's actual Priority — see docs/ai-be-integration.md §4."""
     action_code: str
     reasons: list[str]
 
