@@ -38,7 +38,10 @@ class PrescribeResponse(BaseModel):
     # compat, superseded by the nested prediction/anomaly/risk blocks below.
     soh_percent: float
     risk_level: str       # Critical / High / Medium / Low
-    priority: str         # P1 / P2 / P3 / None
+    # P1 / P2 / P3 / None — suggested Urgency signal from battery severity only,
+    # NOT the final ticket Priority (no ImpactScope here). GH-23: BE combines
+    # this with ImpactScope via the Priority Matrix — see docs/ai-be-integration.md §4.
+    priority: str
     action_code: str
 
     # Prescription (rule-based by default; LLM-generated when enriched=True)
