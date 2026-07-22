@@ -24,6 +24,8 @@ service AiService {
   rpc Health(HealthRequest) returns (HealthResponse);
   // Bidirectional streaming variant of Predict (server impl lands in GH-41)
   rpc PredictStream(stream PredictRequest) returns (stream PredictResponse);
+  // Mirror of POST /verify-ticket — chấm điểm ticket thủ công thật/rác + dò trùng mô tả.
+  rpc VerifyTicket(VerifyTicketRequest) returns (VerifyTicketResponse);
 }
 
 // ── Predict ────────────────────────────────────────────────────────────
@@ -91,7 +93,7 @@ message FeatureStat {
 
 message PredictionInfo {
   double soh_percent = 1;
-  double soh_confidence = 2;               // MC Dropout uncertainty [0,1]
+  double soh_confidence = 2;               // MC Dropout, exp(-soh_std/5) in (0,1]
   double soh_std = 3;                      // MC Dropout std in % SOH
   int32 rul_cycles_estimate = 4;
   double degradation_rate_per_cycle = 5;
@@ -279,4 +281,44 @@ message HealthResponse {
   bool scaler_loaded = 3;
   bool mamba_loaded = 4;
   bool isolation_forest_loaded = 5;
+}
+
+// ── VerifyTicket ───────────────────────────────────────────────────────
+// Chấm điểm ticket thủ công (thật/rác) + dò trùng mô tả với ticket đang mở.
+// Human-in-the-loop: AI chỉ gắn nhãn + lý do, Manager quyết định cuối.
+
+// Snapshot sensor pin tại thời điểm phát hiện — để AI đối chiếu mô tả với thực tế.
+message TicketSensorSnapshot {
+  double soh_percent = 1;
+  double voltage = 2;
+  double current = 3;
+  double temperature = 4;
+  double soc_percent = 5;
+  bool has_active_alert = 6;   // pin có alert đang mở tại thời điểm đó
+}
+
+// 1 ticket ứng viên để so trùng (đang mở, cùng pin).
+message DuplicateCandidate {
+  string ticket_id = 1;
+  string description = 2;
+  int32 category = 3;          // TicketCategoryEnum (khớp BE) — cùng category → nghi trùng cao hơn
+}
+
+message VerifyTicketRequest {
+  string title = 1;
+  string description = 2;
+  string detected_at = 3;                        // ISO UTC, optional ("" nếu không có)
+  int32 category = 4;                             // TicketCategoryEnum ticket mới
+  TicketSensorSnapshot sensor_snapshot = 5;      // optional
+  bool has_sensor_snapshot = 6;                  // false → bỏ qua đối chiếu sensor
+  repeated DuplicateCandidate candidates = 7;    // ticket đang mở cùng pin để so trùng
+}
+
+message VerifyTicketResponse {
+  string verdict = 1;              // "legitimate" | "suspicious"
+  double score = 2;                // [0..1] — độ hợp lệ (1 = chắc chắn thật)
+  string reason = 3;               // lý do (tiếng Việt, cho Manager đọc)
+  string duplicate_of_ticket_id = 4;  // "" nếu không nghi trùng
+  double duplicate_score = 5;      // [0..1] độ tương đồng cao nhất với candidate
+  string duplicate_reason = 6;     // lý do nghi trùng
 }

@@ -320,3 +320,63 @@ class HealthResponse(_message.Message):
     mamba_loaded: bool
     isolation_forest_loaded: bool
     def __init__(self, status: _Optional[str] = ..., model_version: _Optional[str] = ..., scaler_loaded: _Optional[bool] = ..., mamba_loaded: _Optional[bool] = ..., isolation_forest_loaded: _Optional[bool] = ...) -> None: ...
+
+class TicketSensorSnapshot(_message.Message):
+    __slots__ = ("soh_percent", "voltage", "current", "temperature", "soc_percent", "has_active_alert")
+    SOH_PERCENT_FIELD_NUMBER: _ClassVar[int]
+    VOLTAGE_FIELD_NUMBER: _ClassVar[int]
+    CURRENT_FIELD_NUMBER: _ClassVar[int]
+    TEMPERATURE_FIELD_NUMBER: _ClassVar[int]
+    SOC_PERCENT_FIELD_NUMBER: _ClassVar[int]
+    HAS_ACTIVE_ALERT_FIELD_NUMBER: _ClassVar[int]
+    soh_percent: float
+    voltage: float
+    current: float
+    temperature: float
+    soc_percent: float
+    has_active_alert: bool
+    def __init__(self, soh_percent: _Optional[float] = ..., voltage: _Optional[float] = ..., current: _Optional[float] = ..., temperature: _Optional[float] = ..., soc_percent: _Optional[float] = ..., has_active_alert: _Optional[bool] = ...) -> None: ...
+
+class DuplicateCandidate(_message.Message):
+    __slots__ = ("ticket_id", "description", "category")
+    TICKET_ID_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    CATEGORY_FIELD_NUMBER: _ClassVar[int]
+    ticket_id: str
+    description: str
+    category: int
+    def __init__(self, ticket_id: _Optional[str] = ..., description: _Optional[str] = ..., category: _Optional[int] = ...) -> None: ...
+
+class VerifyTicketRequest(_message.Message):
+    __slots__ = ("title", "description", "detected_at", "category", "sensor_snapshot", "has_sensor_snapshot", "candidates")
+    TITLE_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    DETECTED_AT_FIELD_NUMBER: _ClassVar[int]
+    CATEGORY_FIELD_NUMBER: _ClassVar[int]
+    SENSOR_SNAPSHOT_FIELD_NUMBER: _ClassVar[int]
+    HAS_SENSOR_SNAPSHOT_FIELD_NUMBER: _ClassVar[int]
+    CANDIDATES_FIELD_NUMBER: _ClassVar[int]
+    title: str
+    description: str
+    detected_at: str
+    category: int
+    sensor_snapshot: TicketSensorSnapshot
+    has_sensor_snapshot: bool
+    candidates: _containers.RepeatedCompositeFieldContainer[DuplicateCandidate]
+    def __init__(self, title: _Optional[str] = ..., description: _Optional[str] = ..., detected_at: _Optional[str] = ..., category: _Optional[int] = ..., sensor_snapshot: _Optional[_Union[TicketSensorSnapshot, _Mapping]] = ..., has_sensor_snapshot: _Optional[bool] = ..., candidates: _Optional[_Iterable[_Union[DuplicateCandidate, _Mapping]]] = ...) -> None: ...
+
+class VerifyTicketResponse(_message.Message):
+    __slots__ = ("verdict", "score", "reason", "duplicate_of_ticket_id", "duplicate_score", "duplicate_reason")
+    VERDICT_FIELD_NUMBER: _ClassVar[int]
+    SCORE_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    DUPLICATE_OF_TICKET_ID_FIELD_NUMBER: _ClassVar[int]
+    DUPLICATE_SCORE_FIELD_NUMBER: _ClassVar[int]
+    DUPLICATE_REASON_FIELD_NUMBER: _ClassVar[int]
+    verdict: str
+    score: float
+    reason: str
+    duplicate_of_ticket_id: str
+    duplicate_score: float
+    duplicate_reason: str
+    def __init__(self, verdict: _Optional[str] = ..., score: _Optional[float] = ..., reason: _Optional[str] = ..., duplicate_of_ticket_id: _Optional[str] = ..., duplicate_score: _Optional[float] = ..., duplicate_reason: _Optional[str] = ...) -> None: ...

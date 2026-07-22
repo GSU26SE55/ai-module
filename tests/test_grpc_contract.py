@@ -42,11 +42,17 @@ def test_stub_modules_importable():
 def test_service_defines_expected_methods():
     service = pb.DESCRIPTOR.services_by_name["AiService"]
     methods = {m.name: m for m in service.methods}
-    assert set(methods) == {"Predict", "Prescribe", "Health", "PredictStream"}
+    assert set(methods) == {
+        "Predict",
+        "Prescribe",
+        "Health",
+        "PredictStream",
+        "VerifyTicket",
+    }
 
     stream = methods["PredictStream"]
     assert stream.client_streaming and stream.server_streaming
-    for name in ("Predict", "Prescribe", "Health"):
+    for name in ("Predict", "Prescribe", "Health", "VerifyTicket"):
         assert not methods[name].client_streaming
         assert not methods[name].server_streaming
 
