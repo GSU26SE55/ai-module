@@ -8,12 +8,17 @@ prediction pipeline already returns.
 """
 from src.services.prescription.rule_prescription import _ACTION_TEMPLATES, _DEFAULT_ACTION
 
+# GH-105: cap on how many ticket_history entries are folded into the
+# statement — keeps prompt/llm_ms bounded if BE sends a long history.
+TICKET_HISTORY_MAX_LINES = 5
+
 
 def build_diagnosis_statement(
     prediction: dict,
     anomaly: dict,
     risk: dict,
     warnings: list[dict],
+    ticket_history: list[str] | None = None,
 ) -> str:
     """
     Args:
@@ -23,9 +28,14 @@ def build_diagnosis_statement(
                     anomaly_confidence) — pass {} if unavailable.
         risk:       "risk" block (risk_level, priority, action_code).
         warnings:   evidence.warnings list of {"code": str, ...}.
+        ticket_history: GH-105 — past repair/maintenance summaries for this
+                    battery, oldest-first (assumed BE ordering). Only the
+                    last TICKET_HISTORY_MAX_LINES entries are used. None/[]
+                    omits the section entirely.
 
     Returns:
-        3-line statement: Diagnosis / Inference evidence / Description.
+        3-line statement (Diagnosis / Inference evidence / Description), plus
+        a 4th "Past repairs" line when ticket_history is non-empty.
     """
     soh = prediction.get("soh_percent", 0.0)
     soh_std = prediction.get("soh_std", 0.0)
@@ -38,7 +48,7 @@ def build_diagnosis_statement(
     action_code = risk.get("action_code", _DEFAULT_ACTION)
     template = _ACTION_TEMPLATES.get(action_code, _ACTION_TEMPLATES[_DEFAULT_ACTION])
 
-    return (
+    statement = (
         f"Diagnosis: {status} lithium-ion battery, health stage {stage}.\n"
         f"Inference evidence: SOH {soh:.1f}% (± {soh_std:.1f}), "
         f"anomaly score {score:.3f} (confidence {confidence:.2f}), "
@@ -47,3 +57,9 @@ def build_diagnosis_statement(
         f"Risk {risk.get('risk_level', 'Low')}, priority {risk.get('priority', 'None')}, "
         f"recommended action {action_code}."
     )
+
+    if ticket_history:
+        recent = ticket_history[-TICKET_HISTORY_MAX_LINES:]
+        statement += f"\nPast repairs on this battery: {'; '.join(recent)}."
+
+    return statement

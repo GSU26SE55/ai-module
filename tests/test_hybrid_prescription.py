@@ -159,6 +159,35 @@ class TestEnrichFallback:
         fake_store.retrieve_similar_accepted.assert_called_once()
         assert mock_gen.call_args[0][3] == past_cases
 
+    def test_enrich_forwards_ticket_history_into_diagnosis(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            out = _enrich(
+                {"soh_percent": 90.0, "health_stage": "Degrading"},
+                {"risk_level": "Medium", "priority": "P3", "action_code": "SCHEDULE_MAINTENANCE"},
+                [],
+                self._RULE,
+                ticket_history=["2026-06-10: replaced BMS fuse"],
+            )
+        assert "Past repairs on this battery: 2026-06-10: replaced BMS fuse." in out["diagnosis"]
+
+    def test_enrich_forwards_battery_id_to_history_retrieval(self):
+        fake_store = mock.Mock()
+        fake_store.retrieve_similar_accepted.return_value = []
+        llm_out = {
+            "prescription": "LLM TEXT", "action_steps": ["s"], "ppe_required": [],
+            "provider": "deepseek",
+        }
+        with mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "sk-test"}, clear=True), \
+                mock.patch.object(chain, "is_available", return_value=True), \
+                mock.patch.object(chain, "generate_prescription", return_value=llm_out), \
+                mock.patch.object(orchestrator, "_get_history_store", return_value=fake_store):
+            _enrich(
+                {"soh_percent": 90.0}, {"action_code": "SCHEDULE_MAINTENANCE"}, [], self._RULE,
+                battery_id="B0001",
+            )
+
+        assert fake_store.retrieve_similar_accepted.call_args.kwargs["battery_id"] == "B0001"
+
 
 class TestHistoryFewShotIntegration:
     """

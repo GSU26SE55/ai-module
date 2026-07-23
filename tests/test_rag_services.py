@@ -257,6 +257,28 @@ class TestDiagnosisStatement:
     def test_deterministic(self):
         assert self._build() == self._build()
 
+    # ── GH-105: ticket_history ──────────────────────────────────────────
+    def test_no_ticket_history_omits_past_repairs_line(self):
+        out = self._build(ticket_history=None)
+        assert "Past repairs" not in out
+
+    def test_empty_ticket_history_omits_past_repairs_line(self):
+        out = self._build(ticket_history=[])
+        assert "Past repairs" not in out
+
+    def test_ticket_history_renders_past_repairs_line(self):
+        out = self._build(ticket_history=["2026-06-10: replaced BMS fuse"])
+        assert "Past repairs on this battery: 2026-06-10: replaced BMS fuse." in out
+
+    def test_ticket_history_capped_to_last_five(self):
+        history = [f"entry-{i}" for i in range(8)]
+        out = self._build(ticket_history=history)
+        past_repairs_line = [line for line in out.split("\n") if line.startswith("Past repairs")][0]
+        for i in range(3):
+            assert f"entry-{i}" not in past_repairs_line
+        for i in range(3, 8):
+            assert f"entry-{i}" in past_repairs_line
+
 
 # ── GH-82: retriever chunk_id for multi-query dedup ─────────────────────
 class TestRetrieverFormat:

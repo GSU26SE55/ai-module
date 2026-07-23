@@ -89,6 +89,42 @@ class TestFifoEviction:
         assert ids[4] in remaining
 
 
+class TestBatteryScopedRetrieval:
+    """GH-105 — battery_id filter on retrieve_similar_accepted()."""
+
+    def test_battery_scoped_case_preferred_over_other_battery(self, store):
+        id_a = _save(store, battery_id="B0001")
+        id_b = _save(store, battery_id="B0002")
+        store.update_feedback(id_a, "accepted")
+        store.update_feedback(id_b, "accepted")
+
+        cases = store.retrieve_similar_accepted(
+            "SOH 78% degrading", battery_id="B0001", top_k=2
+        )
+        assert len(cases) == 1
+        assert cases[0]["battery_id"] == "B0001"
+
+    def test_falls_back_to_global_when_battery_has_no_accepted_case(self, store):
+        prescription_id = _save(store, battery_id="B0001")
+        store.update_feedback(prescription_id, "accepted")
+
+        # B0999 has no record at all — must fall back to the global query
+        # instead of returning [].
+        cases = store.retrieve_similar_accepted(
+            "SOH 78% degrading", battery_id="B0999", top_k=2
+        )
+        assert len(cases) == 1
+        assert cases[0]["battery_id"] == "B0001"
+
+    def test_no_battery_id_keeps_old_behavior(self, store):
+        prescription_id = _save(store, battery_id="B0001")
+        store.update_feedback(prescription_id, "accepted")
+
+        cases = store.retrieve_similar_accepted("SOH 78% degrading B0001", top_k=2)
+        assert len(cases) == 1
+        assert cases[0]["battery_id"] == "B0001"
+
+
 class TestGracefulDegradation:
     def test_unavailable_when_chromadb_missing(self, monkeypatch, tmp_path):
         monkeypatch.setitem(sys.modules, "chromadb", None)

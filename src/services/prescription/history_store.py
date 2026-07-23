@@ -111,17 +111,35 @@ class PrescriptionHistoryStore:
         self._evict_if_over_cap()
         return prescription_id
 
-    def retrieve_similar_accepted(self, context: str, top_k: int = 2) -> list[dict]:
+    def retrieve_similar_accepted(
+        self, context: str, battery_id: str | None = None, top_k: int = 2
+    ) -> list[dict]:
         """
         Top-k most similar past cases with feedback_status == "accepted", for
         use as few-shot context. Returns [] if the store is unavailable, empty,
         or the query fails — callers must treat that as "no past cases", never
         as an error.
+
+        GH-105: when battery_id is given, cases from that battery are tried
+        first; if none exist yet, falls back to the global (any battery)
+        query — a binary fallback, not a top-k top-up.
         """
         if not self._ready:
             return []
         try:
             embedding = self._encoder.encode([context]).tolist()
+            if battery_id:
+                scoped = self._collection.query(
+                    query_embeddings=embedding,
+                    n_results=top_k,
+                    where={"$and": [
+                        {"feedback_status": "accepted"},
+                        {"battery_id": battery_id},
+                    ]},
+                )
+                parsed = self._parse(scoped)
+                if parsed:
+                    return parsed
             results = self._collection.query(
                 query_embeddings=embedding,
                 n_results=top_k,

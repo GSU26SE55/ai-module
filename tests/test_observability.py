@@ -68,6 +68,16 @@ class TestCache:
         assert k1 != k3
         assert k1 != k4
 
+    def test_cache_key_distinguishes_ticket_history(self):
+        readings = make_dummy_readings()
+        k1 = observability.cache_key("B0005", readings, True, False, ["ticket A"])
+        k2 = observability.cache_key("B0005", readings, True, False, ["ticket B"])
+        k3 = observability.cache_key("B0005", readings, True, False, None)
+        k4 = observability.cache_key("B0005", readings, True, False, [])
+        assert k1 != k2
+        assert k1 != k3
+        assert k3 == k4  # None and [] are equivalent (no history)
+
     def test_set_then_get_returns_value(self):
         key = observability.cache_key("B0005", make_dummy_readings(), False, False)
         assert observability.cache_get(key) is None
@@ -189,6 +199,32 @@ class TestRunPrescriptionCaching:
         assert out1["cached"] is False
         assert out2["cached"] is False  # blocked → never served from cache
         assert mock_gen.call_count == 2  # re-evaluated every time
+
+    def test_different_ticket_history_not_cached_together(self):
+        # GH-105: ticket_history is part of the cache key — a changed repair
+        # history must never be served the other request's stale response.
+        from src.services.prescription import orchestrator as prescription
+
+        with (
+            patch.object(prescription, "run_inference", return_value=fake_inference_result()),
+            patch.object(prescription, "_get_retriever", return_value=FakeEmptyRetriever()),
+            patch("src.services.prescription.llm.chain.is_available", return_value=True),
+            patch(
+                "src.services.prescription.llm.chain.generate_prescription",
+                return_value=CLEAN_LLM_OUT,
+            ) as mock_gen,
+        ):
+            readings = make_dummy_readings()
+            out1 = prescription.run_prescription(
+                readings, "B0005", enrich=True, ticket_history=["ticket A"]
+            )
+            out2 = prescription.run_prescription(
+                readings, "B0005", enrich=True, ticket_history=["ticket B"]
+            )
+
+        assert mock_gen.call_count == 2
+        assert out1["cached"] is False
+        assert out2["cached"] is False
 
     def test_budget_exhausted_falls_back_to_rule_based(self, monkeypatch):
         from src.services.prescription import orchestrator as prescription
