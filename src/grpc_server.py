@@ -178,6 +178,7 @@ def _to_prescribe_response(result: dict) -> ai_service_pb2.PrescribeResponse:
         llm_ms=result["llm_ms"],
         llm_provider=result["llm_provider"],
         blocked=result.get("blocked", False),
+        cached=result.get("cached", False),
         query_gen_ms=result.get("query_gen_ms", 0.0),
         generated_queries=result.get("generated_queries", []),
         prescription_id=result.get("prescription_id", ""),

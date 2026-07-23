@@ -55,15 +55,19 @@ def generate_prescription(
 ) -> dict:
     """
     Try each provider in LLM_PROVIDER_CHAIN order. Returns the first successful
-    result with an added "provider" key. Raises RuntimeError if every provider
-    is unavailable or fails — caller (orchestrator.py::_enrich) falls back to
-    the rule-based prescription, exactly as it did for the single-provider path.
+    result with an added "provider" key plus "chain_attempted" (GH-84) — the
+    ordered list of providers whose network call was actually tried (skipped
+    providers with no key configured are excluded), last entry = the one that
+    succeeded. Raises RuntimeError if every provider is unavailable or fails —
+    caller (orchestrator.py::_enrich) falls back to the rule-based
+    prescription, exactly as it did for the single-provider path.
 
     past_cases (GH-83): accepted past prescriptions retrieved as few-shot
     context, forwarded unchanged to every provider tried.
     """
     start = time.perf_counter()
     errors: list[str] = []
+    attempted: list[str] = []
 
     for name in _chain_order():
         provider_cls = _PROVIDERS.get(name)
@@ -79,9 +83,11 @@ def generate_prescription(
         if not provider.is_available():
             continue
 
+        attempted.append(name)
         try:
             out = provider.generate_prescription(context, maintenance_docs, safety_docs, past_cases)
             out["provider"] = name
+            out["chain_attempted"] = attempted
             return out
         except Exception as exc:  # provider's own RuntimeError, or anything unexpected
             logger.warning("LLM provider %r failed: %s", name, exc)

@@ -7,6 +7,7 @@ from src.models.anomaly_detector import (
     classify_anomaly_status,
     classify_health_stage,
     classify_health_stage_probabilistic,
+    compute_degradation_metrics,
     compute_risk_profile,
     estimate_rul,
     generate_warnings,
@@ -362,6 +363,34 @@ class TestEstimateRul:
     def test_below_eol(self):
         assert estimate_rul(70.0) == 0
         assert estimate_rul(0.0) == 0
+
+
+class TestComputeDegradationMetrics:
+    """Regression test for the window=30 RUL bug: a sub-cycle window (L <
+    _STEPS_PER_CYCLE=285) used to extrapolate voltage noise by ~19x (285/15),
+    saturating the 2%/cycle clip ceiling and collapsing rul_cycles_estimate
+    toward 0 even for a healthy battery (verified real case: SOH 93.3% -> 6
+    cycles instead of ~88). Must fall back to the population-average rate."""
+
+    def test_short_window_falls_back_to_population_average(self):
+        raw = np.tile([3.85, 1.0, 25.0], (30, 1)).astype(float)
+        result = compute_degradation_metrics(raw, soh_current=93.3)
+        assert result["degradation_rate_per_cycle"] == 0.15
+        assert result["rul_cycles_estimate"] == int((93.3 - 80.0) / 0.15)
+        assert result["soh_trend"] == "stable"
+
+    def test_short_window_healthy_battery_not_reported_as_near_eol(self):
+        raw = np.tile([3.85, 1.0, 25.0], (30, 1)).astype(float)
+        raw[:, 0] += np.linspace(-0.02, 0.02, 30)  # small sensor-noise slope
+        result = compute_degradation_metrics(raw, soh_current=93.3)
+        assert result["rul_cycles_estimate"] > 50  # far from the buggy value of 6
+
+    def test_long_window_still_uses_segment_regression(self):
+        L = 285 * 3
+        raw = np.tile([3.85, 1.0, 25.0], (L, 1)).astype(float)
+        raw[:, 0] -= np.linspace(0, 0.05, L)  # real fade across the window
+        result = compute_degradation_metrics(raw, soh_current=88.0)
+        assert result["degradation_rate_per_cycle"] != 0.15
 
 
 class TestGetRecommendedAction:

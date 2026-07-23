@@ -21,6 +21,7 @@ import os
 import time
 
 from src.services.inference import run_inference
+from src.services.prescription import observability
 from src.services.prescription.diagnosis import build_diagnosis_statement
 from src.services.prescription.rule_prescription import build_rule_prescription
 from src.services.prescription.safety_gate import apply_safety_gate
@@ -194,6 +195,7 @@ def _enrich(
         "llm_ms":         0.0,
         "query_gen_ms":   0.0,
         "generated_queries": [],
+        "chain_attempted": [],
         "diagnosis":      diagnosis,
     }
 
@@ -243,6 +245,13 @@ def _enrich(
         logger.info("No LLM provider key configured — returning rule-based prescription.")
         return result
 
+    # GH-84: reserve 1 concurrency slot + 1 hourly-budget unit for the main
+    # generate call — never queue, degrade to rule-based immediately if the
+    # budget is exhausted or both concurrency slots are already in use.
+    if not observability.try_acquire_llm_slot():
+        logger.warning("LLM rate-limit/budget exhausted — returning rule-based prescription.")
+        return result
+
     # 2a. Past-case retrieval (GH-83): accepted cases only, reference-only
     #     few-shot context. retrieve_similar_accepted() is itself best-effort
     #     (returns [] on any failure) — no extra try/except needed here.
@@ -252,6 +261,7 @@ def _enrich(
     try:
         context = _build_maintenance_query(prediction, risk)
         llm_out = chain.generate_prescription(context, maint_docs, safety_docs, past_cases)
+        result["chain_attempted"] = llm_out.get("chain_attempted", [])
         if not llm_out.get("action_steps"):
             # GH-81 edge case: empty steps from the LLM → keep the rule-based output.
             logger.warning("LLM returned empty action_steps — keeping rule-based prescription.")
@@ -264,11 +274,13 @@ def _enrich(
             result["llm_provider"] = llm_out.get("provider", "none")
     except Exception as exc:
         logger.warning("LLM enrichment failed, using rule-based prescription: %s", exc)
+    finally:
+        observability.release_llm_slot()
     result["llm_ms"] = round((time.perf_counter() - t_llm) * 1000, 2)
     return result
 
 
-def run_prescription(
+def _run_prescription_uncached(
     readings: list[list[float]],
     battery_id: str,
     enrich: bool = False,
@@ -436,7 +448,67 @@ def run_prescription(
         "llm_ms":       enriched["llm_ms"],
         "query_gen_ms": enriched["query_gen_ms"],
         "generated_queries": enriched["generated_queries"],
+        "chain_attempted":   enriched.get("chain_attempted", []),
     }
+
+
+def run_prescription(
+    readings: list[list[float]],
+    battery_id: str,
+    enrich: bool = False,
+    n_series: int = 1,
+    agentic: bool = False,
+    **context_kwargs,
+) -> dict:
+    """
+    GH-84: idempotency-cached wrapper around _run_prescription_uncached().
+
+    Same signature/return shape, plus a "cached" bool field. A hit within the
+    TTL (key = hash of battery_id/readings/enrich/agentic) short-circuits
+    inference/RAG/LLM entirely and returns the exact prior response. A
+    blocked=True result is never cached — it must be re-evaluated every call.
+    """
+    observability.record_prescribe()
+    key = observability.cache_key(battery_id, readings, enrich, agentic)
+    t_total = time.perf_counter()
+
+    cached = observability.cache_get(key)
+    if cached is not None:
+        observability.record_cache_hit()
+        response = {**cached, "cached": True}
+    else:
+        observability.record_cache_miss()
+        response = _run_prescription_uncached(
+            readings,
+            battery_id,
+            enrich=enrich,
+            n_series=n_series,
+            agentic=agentic,
+            **context_kwargs,
+        )
+        response["cached"] = False
+        if response["blocked"]:
+            observability.record_blocked()
+        else:
+            observability.cache_set(key, response)
+        if response["enriched"]:
+            observability.record_enrich_success()
+        observability.record_fallback_tiers(response["chain_attempted"])
+
+    logger.info(
+        "prescribe battery_id=%s enrich=%s llm_provider=%s chain_attempted=%s "
+        "rag_ms=%s llm_ms=%s total_ms=%s cached=%s blocked=%s",
+        battery_id,
+        enrich,
+        response["llm_provider"],
+        response["chain_attempted"],
+        response["rag_ms"],
+        response["llm_ms"],
+        round((time.perf_counter() - t_total) * 1000, 2),
+        response["cached"],
+        response["blocked"],
+    )
+    return response
 
 
 def submit_prescription_feedback(

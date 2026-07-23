@@ -16,10 +16,12 @@ BatteryAnomalyDetectedEvent { batteryId, readings (30×window) }
 TicketService consumer → gRPC Prescribe(battery_id, readings, pack_config?, enrich=false)
         │
         ▼
-PrescribeResponse.anomaly.anomaly_status
-   "Normal"            → bỏ qua, KHÔNG tạo ticket
-   "Warning"/"Anomaly" → tạo ticket, map các field bên dưới
+PrescribeResponse.risk.action_code
+   "MONITOR"                                                    → bỏ qua, KHÔNG tạo ticket
+   "SCHEDULE_MAINTENANCE"/"SCHEDULE_REPLACEMENT"/"REPLACE_IMMEDIATELY" → tạo ticket, map các field bên dưới
 ```
+
+> ⚠️ **KHÔNG** dùng `anomaly.anomaly_status` làm điều kiện tạo ticket. `anomaly_status` (Normal/Warning/Anomaly) chỉ đo IsolationForest có thấy **hình dạng sóng cảm biến** bất thường không — độc lập với mức độ nghiêm trọng SOH (`health_stage`). Một pin xuống cấp đều đặn tới End-Of-Life vẫn có thể cho `anomaly_status = "Normal"` (sensor pattern hoàn toàn "mượt") trong khi `risk.action_code = "REPLACE_IMMEDIATELY"` — verify thật bằng dữ liệu held-out B0048 (SOH 57.9%): `anomaly_status="Normal"`, `action_code="REPLACE_IMMEDIATELY"`, `priority="P1"`. Gate đúng theo `risk.action_code` (hoặc tương đương `risk.priority != "None"`), KHÔNG theo `anomaly_status`.
 
 ## 2. Request — `Prescribe(PrescribeRequest)`
 
@@ -32,10 +34,10 @@ PrescribeResponse.anomaly.anomaly_status
 
 | `PrescribeResponse` field | Ý nghĩa | Dùng để |
 |---|---|---|
-| `anomaly.anomaly_status` | `"Normal"` / `"Warning"` / `"Anomaly"` | Quyết định có tạo ticket hay không |
+| `risk.action_code` | `MONITOR`/`SCHEDULE_MAINTENANCE`/`SCHEDULE_REPLACEMENT`/`REPLACE_IMMEDIATELY` | **Quyết định có tạo ticket hay không** — `MONITOR` → không tạo, còn lại → tạo. Loại hành động đề xuất |
 | `risk.priority` | `"P1"`/`"P2"`/`"P3"`/`"None"` | **Tín hiệu urgency gợi ý** — xem mục 4, KHÔNG gán thẳng làm Priority ticket |
 | `risk.risk_level` | `"Critical"`/`"High"`/`"Medium"`/`"Low"` | Hiển thị mức độ nghiêm trọng trên ticket |
-| `risk.action_code` | `MONITOR`/`SCHEDULE_MAINTENANCE`/`SCHEDULE_REPLACEMENT`/`REPLACE_IMMEDIATELY` | Loại hành động đề xuất |
+| `anomaly.anomaly_status` | `"Normal"` / `"Warning"` / `"Anomaly"` | **KHÔNG dùng để quyết định tạo ticket** (chỉ đo bất thường sensor pattern qua IsolationForest, độc lập với SOH severity — xem cảnh báo ở mục 1). Chỉ tham khảo/hiển thị thêm |
 | `action_steps` | Danh sách bước bảo trì cụ thể | Nội dung maintenance log ban đầu của ticket |
 | `human_verification_required` | `bool` | Ticket cần kỹ thuật viên xác nhận trước khi đóng |
 | `ppe_required` | Danh sách PPE cần thiết | Cảnh báo an toàn hiển thị trên ticket |
@@ -66,9 +68,11 @@ risk.priority (AI, chỉ dựa severity pin)  +  ImpactScope (BE, biết Site/As
 
 Ticket tự động tạo từ event này vẫn cần qua bước xác định Priority theo đúng quy trình Manager triage / Priority Matrix hiện có — GH-23 (AI side) chỉ đảm bảo AI cấp đủ tín hiệu urgency, không tự quyết Priority thay BE.
 
-## 5. Idempotency — KHÔNG thuộc GH-23
+## 5. Idempotency — GH-84 (đã implement)
 
-Nếu cùng 1 bất thường bắn event trùng/burst (retry MassTransit, nhiều reading liên tiếp cùng trạng thái), gọi `Prescribe` nhiều lần với cùng input sẽ tốn lặp lại. Việc này thuộc **GH-84** (companion issue — idempotency cache theo `hash(battery_id, readings, enrich, agentic)`, TTL, response thêm `cached: bool`). GH-23 không thêm field/logic dedup — BE nên chờ GH-84 nếu cần dedup phía AI, hoặc tự dedup phía consumer (vd theo event ID của chính BE) trong lúc chờ.
+Nếu cùng 1 bất thường bắn event trùng/burst (retry MassTransit, nhiều reading liên tiếp cùng trạng thái), `Prescribe` tự động dedup: key = hash(`battery_id`, `readings`, `enrich`, `agentic`), TTL 10 phút, tối đa 256 entry (LRU). Lần gọi thứ 2 trở đi trong TTL với cùng input trả nguyên response đã sinh trước đó (field `cached=true`), không chạy lại inference/RAG/LLM — BE **không cần** tự dedup theo event ID trừ khi muốn dedup ở cửa sổ thời gian khác 10 phút. Response `blocked=true` không bao giờ được cache — luôn đánh giá lại.
+
+Ngoài ra, `enrich=true` có thêm rate-limit: tối đa 2 lượt LLM đồng thời + budget/giờ (env `LLM_HOURLY_BUDGET`, default 60) — vượt giới hạn thì tự động trả về rule-based (giống hệt trường hợp không có LLM API key), không lỗi 5xx. Counters (tổng request, tỉ lệ cache hit, tỉ lệ enrich thành công, budget còn lại...) xem tại `GET /health` (REST), field `prescription_metrics`.
 
 ## 6. Ví dụ payload
 
@@ -121,6 +125,5 @@ Path `enrich=false` phải đạt SLA batch `< 500ms` theo `.claude/rules/tech/a
 ## 8. Ngoài scope của GH-23
 
 - Code .NET phía `TicketService`/`BatteryService` (repo BE riêng).
-- Idempotency/rate-limit/observability cho `/prescribe` (GH-84).
 - LLM/RAG enrichment (`enrich=true`) trong luồng auto-ticket.
 - Logic ma trận Impact × Urgency (thuộc BE).

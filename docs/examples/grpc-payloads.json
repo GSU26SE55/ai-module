@@ -1,0 +1,432 @@
+{
+  "_readme": {
+    "purpose": "Ví dụ request/response cho AiService (gRPC :50051) — dùng để BE copy-paste test qua grpcurl/Postman gRPC, hoặc đối chiếu shape khi viết code .NET. Field name dùng snake_case khớp protos/ai_service.proto (protobuf JSON parser chấp nhận cả snake_case lẫn camelCase khi PARSE, chỉ khi SERIALIZE mặc định mới ra camelCase — nên dùng snake_case ở đây an toàn để làm input).",
+    "verification": "predict.* và prescribe.*_rule_based đã được verify bằng cách chạy TRỰC TIẾP code thật trong repo (src/models/anomaly_detector.py, src/services/prescription/rule_prescription.py, src/services/prescription/safety_gate.py) với soh/anomaly_score giả định làm input cố định — KHÔNG chạy qua model Mamba/IsolationForest thật (cần weights + torch), nên soh_percent/anomaly_score là số giả định do người viết chọn, nhưng MỌI field suy ra từ 2 số đó (health_stage, risk, action_code, warnings, prescription text, safety gate injection...) là output thật của code, không phải bịa tay.",
+    "not_verified": "prescribe.enriched_illustrative_C là ví dụ MINH HỌA duy nhất KHÔNG chạy qua code thật — cần LLM API key (deepseek/gemini/anthropic) để sinh prescription/maintenance_docs/safety_docs thật, môi trường viết tài liệu này không có key. Field shape (tên field, kiểu dữ liệu) đúng theo schema, nhưng nội dung text là viết tay minh họa.",
+    "see_also": "docs/overall.md §6-11 giải thích ý nghĩa từng field và các gotcha (đặc biệt §8.3 priority vs action_code, §9.1 rul_cycles_estimate không đáng tin ở window=30)."
+  },
+
+  "health": {
+    "request": {},
+    "response": {
+      "status": "ok",
+      "model_version": "1.6",
+      "scaler_loaded": true,
+      "mamba_loaded": true,
+      "isolation_forest_loaded": true
+    }
+  },
+
+  "predict": {
+    "request_examples": {
+      "A_healthy_6col_single_cell": {
+        "battery_id": "B0005",
+        "readings": [[4.05, -1.5, 24.0, 0.0, 40.0, 78.0], [4.043, -1.5, 24.05, 13.0, 40.0, 77.48], [4.036, -1.5, 24.1, 26.0, 40.0, 76.97], [4.029, -1.5, 24.16, 39.0, 40.0, 76.45], [4.022, -1.5, 24.21, 52.0, 40.0, 75.93], [4.016, -1.5, 24.26, 65.0, 40.0, 75.41], [4.009, -1.5, 24.31, 78.0, 40.0, 74.9], [4.002, -1.5, 24.36, 91.0, 40.0, 74.38], [3.995, -1.5, 24.41, 104.0, 40.0, 73.86], [3.988, -1.5, 24.47, 117.0, 40.0, 73.34], [3.981, -1.5, 24.52, 130.0, 40.0, 72.83], [3.974, -1.5, 24.57, 143.0, 40.0, 72.31], [3.967, -1.5, 24.62, 156.0, 40.0, 71.79], [3.96, -1.5, 24.67, 169.0, 40.0, 71.28], [3.953, -1.5, 24.72, 182.0, 40.0, 70.76], [3.947, -1.5, 24.78, 195.0, 40.0, 70.24], [3.94, -1.5, 24.83, 208.0, 40.0, 69.72], [3.933, -1.5, 24.88, 221.0, 40.0, 69.21], [3.926, -1.5, 24.93, 234.0, 40.0, 68.69], [3.919, -1.5, 24.98, 247.0, 40.0, 68.17], [3.912, -1.5, 25.03, 260.0, 40.0, 67.66], [3.905, -1.5, 25.09, 273.0, 40.0, 67.14], [3.898, -1.5, 25.14, 286.0, 40.0, 66.62], [3.891, -1.5, 25.19, 299.0, 40.0, 66.1], [3.884, -1.5, 25.24, 312.0, 40.0, 65.59], [3.878, -1.5, 25.29, 325.0, 40.0, 65.07], [3.871, -1.5, 25.34, 338.0, 40.0, 64.55], [3.864, -1.5, 25.4, 351.0, 40.0, 64.03], [3.857, -1.5, 25.45, 364.0, 40.0, 63.52], [3.85, -1.5, 25.5, 377.0, 40.0, 63.0]]
+      },
+      "B_maintenance_required_6col_single_cell": {
+        "battery_id": "B0012",
+        "readings": [[3.75, -1.8, 25.0, 0.0, 140.0, 55.0], [3.729, -1.8, 25.07, 13.0, 140.0, 54.48], [3.709, -1.8, 25.14, 26.0, 140.0, 53.97], [3.688, -1.8, 25.21, 39.0, 140.0, 53.45], [3.667, -1.8, 25.28, 52.0, 140.0, 52.93], [3.647, -1.8, 25.34, 65.0, 140.0, 52.41], [3.626, -1.8, 25.41, 78.0, 140.0, 51.9], [3.605, -1.8, 25.48, 91.0, 140.0, 51.38], [3.584, -1.8, 25.55, 104.0, 140.0, 50.86], [3.564, -1.8, 25.62, 117.0, 140.0, 50.34], [3.543, -1.8, 25.69, 130.0, 140.0, 49.83], [3.522, -1.8, 25.76, 143.0, 140.0, 49.31], [3.502, -1.8, 25.83, 156.0, 140.0, 48.79], [3.481, -1.8, 25.9, 169.0, 140.0, 48.28], [3.46, -1.8, 25.97, 182.0, 140.0, 47.76], [3.44, -1.8, 26.03, 195.0, 140.0, 47.24], [3.419, -1.8, 26.1, 208.0, 140.0, 46.72], [3.398, -1.8, 26.17, 221.0, 140.0, 46.21], [3.378, -1.8, 26.24, 234.0, 140.0, 45.69], [3.357, -1.8, 26.31, 247.0, 140.0, 45.17], [3.336, -1.8, 26.38, 260.0, 140.0, 44.66], [3.316, -1.8, 26.45, 273.0, 140.0, 44.14], [3.295, -1.8, 26.52, 286.0, 140.0, 43.62], [3.274, -1.8, 26.59, 299.0, 140.0, 43.1], [3.253, -1.8, 26.66, 312.0, 140.0, 42.59], [3.233, -1.8, 26.72, 325.0, 140.0, 42.07], [3.212, -1.8, 26.79, 338.0, 140.0, 41.55], [3.191, -1.8, 26.86, 351.0, 140.0, 41.03], [3.171, -1.8, 26.93, 364.0, 140.0, 40.52], [3.15, -1.8, 27.0, 377.0, 140.0, 40.0]]
+      },
+      "C_critical_4S_LFP_pack": {
+        "battery_id": "B-IOT-001",
+        "readings": [[13.2, -2.2, 40.0, 0.0, 190.0, 20.0], [13.124, -2.214, 40.34, 13.0, 190.0, 19.59], [13.048, -2.228, 40.69, 26.0, 190.0, 19.17], [12.972, -2.241, 41.03, 39.0, 190.0, 18.76], [12.897, -2.255, 41.38, 52.0, 190.0, 18.34], [12.821, -2.269, 41.72, 65.0, 190.0, 17.93], [12.745, -2.283, 42.07, 78.0, 190.0, 17.52], [12.669, -2.297, 42.41, 91.0, 190.0, 17.1], [12.593, -2.31, 42.76, 104.0, 190.0, 16.69], [12.517, -2.324, 43.1, 117.0, 190.0, 16.28], [12.441, -2.338, 43.45, 130.0, 190.0, 15.86], [12.366, -2.352, 43.79, 143.0, 190.0, 15.45], [12.29, -2.366, 44.14, 156.0, 190.0, 15.03], [12.214, -2.379, 44.48, 169.0, 190.0, 14.62], [12.138, -2.393, 44.83, 182.0, 190.0, 14.21], [12.062, -2.407, 45.17, 195.0, 190.0, 13.79], [11.986, -2.421, 45.52, 208.0, 190.0, 13.38], [11.91, -2.434, 45.86, 221.0, 190.0, 12.97], [11.834, -2.448, 46.21, 234.0, 190.0, 12.55], [11.759, -2.462, 46.55, 247.0, 190.0, 12.14], [11.683, -2.476, 46.9, 260.0, 190.0, 11.72], [11.607, -2.49, 47.24, 273.0, 190.0, 11.31], [11.531, -2.503, 47.59, 286.0, 190.0, 10.9], [11.455, -2.517, 47.93, 299.0, 190.0, 10.48], [11.379, -2.531, 48.28, 312.0, 190.0, 10.07], [11.303, -2.545, 48.62, 325.0, 190.0, 9.66], [11.228, -2.559, 48.97, 338.0, 190.0, 9.24], [11.152, -2.572, 49.31, 351.0, 190.0, 8.83], [11.076, -2.586, 49.66, 364.0, 190.0, 8.41], [11.0, -2.6, 50.0, 377.0, 190.0, 8.0]],
+        "pack_config": { "n_series": 4, "chemistry": "LFP", "capacity_ah": 2.5 },
+        "_note": "voltage/current ở trên là giá trị PACK (chưa chia n_series/rescale) — đây là cái BE thực sự gửi lên; server tự chia/rescale trước khi vào scaler/warnings (xem docs/overall.md §7.2)."
+      },
+      "D_legacy_4col_minimal": {
+        "battery_id": "B-LEGACY-01",
+        "readings": [[4.1, -1.2, 24.0, 0.0], [4.095, -1.2, 24.03, 13.0], [4.09, -1.2, 24.06, 26.0], [4.084, -1.2, 24.08, 39.0], [4.079, -1.2, 24.11, 52.0], [4.074, -1.2, 24.14, 65.0], [4.069, -1.2, 24.17, 78.0], [4.064, -1.2, 24.19, 91.0], [4.059, -1.2, 24.22, 104.0], [4.053, -1.2, 24.25, 117.0], [4.048, -1.2, 24.28, 130.0], [4.043, -1.2, 24.3, 143.0], [4.038, -1.2, 24.33, 156.0], [4.033, -1.2, 24.36, 169.0], [4.028, -1.2, 24.39, 182.0], [4.022, -1.2, 24.41, 195.0], [4.017, -1.2, 24.44, 208.0], [4.012, -1.2, 24.47, 221.0], [4.007, -1.2, 24.5, 234.0], [4.002, -1.2, 24.52, 247.0], [3.997, -1.2, 24.55, 260.0], [3.991, -1.2, 24.58, 273.0], [3.986, -1.2, 24.61, 286.0], [3.981, -1.2, 24.63, 299.0], [3.976, -1.2, 24.66, 312.0], [3.971, -1.2, 24.69, 325.0], [3.966, -1.2, 24.72, 338.0], [3.96, -1.2, 24.74, 351.0], [3.955, -1.2, 24.77, 364.0], [3.95, -1.2, 24.8, 377.0]],
+        "_note": "4 cột — server tự tính cycle_count (=0, không có cycle_idx trong gRPC) + soc_percent (window-local Coulomb counting) phía server."
+      }
+    },
+
+    "response_examples": {
+      "A_healthy": {
+        "battery_id": "B0005",
+        "prediction": {
+          "soh_percent": 93.3,
+          "soh_confidence": 0.947,
+          "soh_std": 0.266,
+          "rul_cycles_estimate": 6,
+          "degradation_rate_per_cycle": 2.0,
+          "soh_trend": "stable",
+          "cycles_to_maintenance": 4,
+          "soh_trajectory": [91.3, 89.3, 87.3, 85.3, 83.3],
+          "health_stage": "Healthy",
+          "stage_probabilities": { "End Of Life": 0.0, "Maintenance Required": 0.0, "Degrading": 0.0, "Healthy": 1.0 },
+          "stage_confidence": 1.0,
+          "is_borderline": false,
+          "_note": "rul_cycles_estimate=6 trên 1 pin 'Healthy' KHÔNG cảnh báo gì — đây chính là gotcha §9.1 trong docs/overall.md, đừng hiểu là pin sắp hỏng."
+        },
+        "anomaly": { "anomaly_score": -0.04, "anomaly_status": "Normal", "anomaly_confidence": 0.04 },
+        "risk": { "risk_level": "Low", "priority": "None", "action_code": "MONITOR", "reasons": ["Battery readings are within normal operating range"] },
+        "evidence": {
+          "warnings": [],
+          "feature_summary": {
+            "voltage": { "mean": 3.95, "min": 3.85, "max": 4.05 },
+            "current": { "mean": -1.5, "min": -1.5, "max": -1.5 },
+            "temperature": { "mean": 24.75, "min": 24.0, "max": 25.5 },
+            "time": { "mean": 188.5, "min": 0.0, "max": 377.0 },
+            "cycle_count": { "mean": 40.0, "min": 40.0, "max": 40.0 },
+            "soc_percent": { "mean": 70.5, "min": 63.0, "max": 78.0 }
+          }
+        },
+        "metadata": {
+          "model_version": "1.6", "window_size": 30, "input_features": 6, "inference_ms": 64.8,
+          "n_series": 1, "chemistry": null, "capacity_ah": null,
+          "temperature_domain_distance": 1.5, "is_temperature_ood": false
+        },
+        "soh_percent": 93.3, "classification": "Normal", "confidence": 0.947, "inference_ms": 64.8,
+        "rul_cycles_estimate": 6, "degradation_rate_per_cycle": 2.0, "soh_trend": "stable",
+        "cycles_to_maintenance": 4, "soh_trajectory": [91.3, 89.3, 87.3, 85.3, 83.3],
+        "anomaly_score": -0.04, "recommended_action": "MONITOR", "warnings": [],
+        "feature_summary": {
+          "voltage": { "mean": 3.95, "min": 3.85, "max": 4.05 },
+          "current": { "mean": -1.5, "min": -1.5, "max": -1.5 },
+          "temperature": { "mean": 24.75, "min": 24.0, "max": 25.5 },
+          "time": { "mean": 188.5, "min": 0.0, "max": 377.0 },
+          "cycle_count": { "mean": 40.0, "min": 40.0, "max": 40.0 },
+          "soc_percent": { "mean": 70.5, "min": 63.0, "max": 78.0 }
+        }
+      },
+
+      "B_maintenance_required_p1_quirk": {
+        "battery_id": "B0012",
+        "prediction": {
+          "soh_percent": 82.13, "soh_confidence": 0.752, "soh_std": 1.24,
+          "rul_cycles_estimate": 1, "degradation_rate_per_cycle": 2.0, "soh_trend": "stable",
+          "cycles_to_maintenance": 0, "soh_trajectory": [80.1, 78.1, 76.1, 74.1, 72.1],
+          "health_stage": "Maintenance Required",
+          "stage_probabilities": { "End Of Life": 0.1, "Maintenance Required": 0.9, "Degrading": 0.0, "Healthy": 0.0 },
+          "stage_confidence": 0.9, "is_borderline": false
+        },
+        "anomaly": { "anomaly_score": -0.18, "anomaly_status": "Warning", "anomaly_confidence": 0.18 },
+        "risk": {
+          "risk_level": "Critical", "priority": "P1", "action_code": "SCHEDULE_REPLACEMENT",
+          "reasons": [
+            "SOH 82.1% is below 85% maintenance threshold",
+            "Sensor anomaly status is Warning",
+            "Battery is already at or below maintenance planning threshold",
+            "SOH 82.1% is critically low — plan replacement soon.",
+            "Minimum voltage 3.150V is approaching cutoff (3.2V)."
+          ],
+          "_note": "priority=P1 nhưng action_code=SCHEDULE_REPLACEMENT (không phải REPLACE_IMMEDIATELY) — xem docs/overall.md §8.3, mọi SOH 80-85% đều kèm cảnh báo severity=critical nên luôn đội priority lên P1."
+        },
+        "evidence": {
+          "warnings": [
+            { "code": "SOH_CRITICAL", "severity": "critical", "message": "SOH 82.1% is critically low — plan replacement soon." },
+            { "code": "VOLTAGE_LOW", "severity": "warning", "message": "Minimum voltage 3.150V is approaching cutoff (3.2V)." }
+          ],
+          "feature_summary": {
+            "voltage": { "mean": 3.45, "min": 3.15, "max": 3.75 },
+            "current": { "mean": -1.8, "min": -1.8, "max": -1.8 },
+            "temperature": { "mean": 26.0, "min": 25.0, "max": 27.0 },
+            "time": { "mean": 188.5, "min": 0.0, "max": 377.0 },
+            "cycle_count": { "mean": 140.0, "min": 140.0, "max": 140.0 },
+            "soc_percent": { "mean": 47.5, "min": 40.0, "max": 55.0 }
+          }
+        },
+        "metadata": {
+          "model_version": "1.6", "window_size": 30, "input_features": 6, "inference_ms": 71.5,
+          "n_series": 1, "chemistry": null, "capacity_ah": null,
+          "temperature_domain_distance": 3.0, "is_temperature_ood": false
+        },
+        "soh_percent": 82.13, "classification": "Degrading", "confidence": 0.752, "inference_ms": 71.5,
+        "rul_cycles_estimate": 1, "degradation_rate_per_cycle": 2.0, "soh_trend": "stable",
+        "cycles_to_maintenance": 0, "soh_trajectory": [80.1, 78.1, 76.1, 74.1, 72.1],
+        "anomaly_score": -0.18, "recommended_action": "SCHEDULE_REPLACEMENT",
+        "warnings": [
+          { "code": "SOH_CRITICAL", "severity": "critical", "message": "SOH 82.1% is critically low — plan replacement soon." },
+          { "code": "VOLTAGE_LOW", "severity": "warning", "message": "Minimum voltage 3.150V is approaching cutoff (3.2V)." }
+        ],
+        "feature_summary": {
+          "voltage": { "mean": 3.45, "min": 3.15, "max": 3.75 },
+          "current": { "mean": -1.8, "min": -1.8, "max": -1.8 },
+          "temperature": { "mean": 26.0, "min": 25.0, "max": 27.0 },
+          "time": { "mean": 188.5, "min": 0.0, "max": 377.0 },
+          "cycle_count": { "mean": 140.0, "min": 140.0, "max": 140.0 },
+          "soc_percent": { "mean": 47.5, "min": 40.0, "max": 55.0 }
+        }
+      },
+
+      "C_critical_eol_lfp": {
+        "battery_id": "B-IOT-001",
+        "prediction": {
+          "soh_percent": 67.36, "soh_confidence": 0.504, "soh_std": 2.48,
+          "rul_cycles_estimate": 0, "degradation_rate_per_cycle": 2.0, "soh_trend": "stable",
+          "cycles_to_maintenance": 0, "soh_trajectory": [65.4, 63.4, 61.4, 59.4, 57.4],
+          "health_stage": "End Of Life",
+          "stage_probabilities": { "End Of Life": 1.0, "Maintenance Required": 0.0, "Degrading": 0.0, "Healthy": 0.0 },
+          "stage_confidence": 1.0, "is_borderline": false
+        },
+        "anomaly": { "anomaly_score": -0.41, "anomaly_status": "Anomaly", "anomaly_confidence": 0.41 },
+        "risk": {
+          "risk_level": "Critical", "priority": "P1", "action_code": "REPLACE_IMMEDIATELY",
+          "reasons": [
+            "SOH 67.4% is below 80% end-of-life threshold",
+            "Sensor anomaly status is Anomaly",
+            "Battery is already at or below maintenance planning threshold",
+            "SOH 67.4% is below end-of-life threshold (80%) — battery should be replaced.",
+            "Peak temperature 50.0°C exceeds critical threshold (45.0°C).",
+            "Minimum voltage 2.750V is approaching cutoff (2.8V)."
+          ]
+        },
+        "evidence": {
+          "warnings": [
+            { "code": "BATTERY_EOL", "severity": "critical", "message": "SOH 67.4% is below end-of-life threshold (80%) — battery should be replaced." },
+            { "code": "TEMP_CRITICAL", "severity": "critical", "message": "Peak temperature 50.0°C exceeds critical threshold (45.0°C)." },
+            { "code": "VOLTAGE_LOW", "severity": "warning", "message": "Minimum voltage 2.750V is approaching cutoff (2.8V)." },
+            { "code": "OVERCURRENT", "severity": "warning", "message": "Discharge current 2.08A exceeds recommended limit (2.0A)." },
+            { "code": "TEMP_OOD", "severity": "warning", "message": "Temperature 6.0°C from nearest training cluster (4/24/44°C) — prediction may be extrapolated." }
+          ],
+          "feature_summary": {
+            "voltage": { "mean": 3.025, "min": 2.75, "max": 3.3 },
+            "current": { "mean": -1.92, "min": -2.08, "max": -1.76 },
+            "temperature": { "mean": 45.0, "min": 40.0, "max": 50.0 },
+            "time": { "mean": 188.5, "min": 0.0, "max": 377.0 },
+            "cycle_count": { "mean": 190.0, "min": 190.0, "max": 190.0 },
+            "soc_percent": { "mean": 14.0, "min": 8.0, "max": 20.0 }
+          },
+          "_note": "feature_summary.voltage/current là giá trị SAU KHI chia n_series=4 và rescale capacity_ah=2.5 (per-cell 2.75-3.3V, current-equivalent -2.08..-1.76A) — KHÔNG phải giá trị pack BE đã gửi (13.2-11.0V, -2.2..-2.6A)."
+        },
+        "metadata": {
+          "model_version": "1.6", "window_size": 30, "input_features": 6, "inference_ms": 78.3,
+          "n_series": 4, "chemistry": "LFP", "capacity_ah": 2.5,
+          "temperature_domain_distance": 6.0, "is_temperature_ood": true
+        },
+        "soh_percent": 67.36, "classification": "Failed", "confidence": 0.504, "inference_ms": 78.3,
+        "rul_cycles_estimate": 0, "degradation_rate_per_cycle": 2.0, "soh_trend": "stable",
+        "cycles_to_maintenance": 0, "soh_trajectory": [65.4, 63.4, 61.4, 59.4, 57.4],
+        "anomaly_score": -0.41, "recommended_action": "REPLACE_IMMEDIATELY",
+        "warnings": [
+          { "code": "BATTERY_EOL", "severity": "critical", "message": "SOH 67.4% is below end-of-life threshold (80%) — battery should be replaced." },
+          { "code": "TEMP_CRITICAL", "severity": "critical", "message": "Peak temperature 50.0°C exceeds critical threshold (45.0°C)." },
+          { "code": "VOLTAGE_LOW", "severity": "warning", "message": "Minimum voltage 2.750V is approaching cutoff (2.8V)." },
+          { "code": "OVERCURRENT", "severity": "warning", "message": "Discharge current 2.08A exceeds recommended limit (2.0A)." },
+          { "code": "TEMP_OOD", "severity": "warning", "message": "Temperature 6.0°C from nearest training cluster (4/24/44°C) — prediction may be extrapolated." }
+        ],
+        "feature_summary": {
+          "voltage": { "mean": 3.025, "min": 2.75, "max": 3.3 },
+          "current": { "mean": -1.92, "min": -2.08, "max": -1.76 },
+          "temperature": { "mean": 45.0, "min": 40.0, "max": 50.0 },
+          "time": { "mean": 188.5, "min": 0.0, "max": 377.0 },
+          "cycle_count": { "mean": 190.0, "min": 190.0, "max": 190.0 },
+          "soc_percent": { "mean": 14.0, "min": 8.0, "max": 20.0 }
+        }
+      }
+    },
+
+    "error_examples": {
+      "wrong_window_size": {
+        "request": {
+          "battery_id": "B0000",
+          "readings": [[4.05, -1.5, 24.0, 0.0, 40.0, 78.0], [4.043, -1.5, 24.05, 13.0, 40.0, 77.48], [4.036, -1.5, 24.1, 26.0, 40.0, 76.97], [4.029, -1.5, 24.16, 39.0, 40.0, 76.45], [4.022, -1.5, 24.21, 52.0, 40.0, 75.93], [4.016, -1.5, 24.26, 65.0, 40.0, 75.41], [4.009, -1.5, 24.31, 78.0, 40.0, 74.9], [4.002, -1.5, 24.36, 91.0, 40.0, 74.38], [3.995, -1.5, 24.41, 104.0, 40.0, 73.86], [3.988, -1.5, 24.47, 117.0, 40.0, 73.34], [3.981, -1.5, 24.52, 130.0, 40.0, 72.83], [3.974, -1.5, 24.57, 143.0, 40.0, 72.31], [3.967, -1.5, 24.62, 156.0, 40.0, 71.79], [3.96, -1.5, 24.67, 169.0, 40.0, 71.28], [3.953, -1.5, 24.72, 182.0, 40.0, 70.76], [3.947, -1.5, 24.78, 195.0, 40.0, 70.24], [3.94, -1.5, 24.83, 208.0, 40.0, 69.72], [3.933, -1.5, 24.88, 221.0, 40.0, 69.21], [3.926, -1.5, 24.93, 234.0, 40.0, 68.69], [3.919, -1.5, 24.98, 247.0, 40.0, 68.17], [3.912, -1.5, 25.03, 260.0, 40.0, 67.66], [3.905, -1.5, 25.09, 273.0, 40.0, 67.14], [3.898, -1.5, 25.14, 286.0, 40.0, 66.62], [3.891, -1.5, 25.19, 299.0, 40.0, 66.1], [3.884, -1.5, 25.24, 312.0, 40.0, 65.59]],
+          "_note": "chỉ 25 hàng thay vì 30 — cố tình để minh họa lỗi validation."
+        },
+        "grpc_error": { "status_code": "INVALID_ARGUMENT", "message": "1 validation error for PredictRequest\nreadings\n  Value error, readings must have 30 timesteps, got 25 [type=value_error, ...]" },
+        "rest_error_for_reference": { "http_status": 422, "detail": "readings must have 30 timesteps, got 25" }
+      },
+      "voltage_out_of_range_missing_pack_config": {
+        "request": {
+          "battery_id": "B-BAD-01",
+          "readings": [[12.0, -1.5, 25.0, 0.0, 10.0, 50.0], [12.0, -1.5, 25.0, 13.0, 10.0, 50.0], [12.0, -1.5, 25.0, 26.0, 10.0, 50.0], [12.0, -1.5, 25.0, 39.0, 10.0, 50.0], [12.0, -1.5, 25.0, 52.0, 10.0, 50.0], [12.0, -1.5, 25.0, 65.0, 10.0, 50.0], [12.0, -1.5, 25.0, 78.0, 10.0, 50.0], [12.0, -1.5, 25.0, 91.0, 10.0, 50.0], [12.0, -1.5, 25.0, 104.0, 10.0, 50.0], [12.0, -1.5, 25.0, 117.0, 10.0, 50.0], [12.0, -1.5, 25.0, 130.0, 10.0, 50.0], [12.0, -1.5, 25.0, 143.0, 10.0, 50.0], [12.0, -1.5, 25.0, 156.0, 10.0, 50.0], [12.0, -1.5, 25.0, 169.0, 10.0, 50.0], [12.0, -1.5, 25.0, 182.0, 10.0, 50.0], [12.0, -1.5, 25.0, 195.0, 10.0, 50.0], [12.0, -1.5, 25.0, 208.0, 10.0, 50.0], [12.0, -1.5, 25.0, 221.0, 10.0, 50.0], [12.0, -1.5, 25.0, 234.0, 10.0, 50.0], [12.0, -1.5, 25.0, 247.0, 10.0, 50.0], [12.0, -1.5, 25.0, 260.0, 10.0, 50.0], [12.0, -1.5, 25.0, 273.0, 10.0, 50.0], [12.0, -1.5, 25.0, 286.0, 10.0, 50.0], [12.0, -1.5, 25.0, 299.0, 10.0, 50.0], [12.0, -1.5, 25.0, 312.0, 10.0, 50.0], [12.0, -1.5, 25.0, 325.0, 10.0, 50.0], [12.0, -1.5, 25.0, 338.0, 10.0, 50.0], [12.0, -1.5, 25.0, 351.0, 10.0, 50.0], [12.0, -1.5, 25.0, 364.0, 10.0, 50.0], [12.0, -1.5, 25.0, 377.0, 10.0, 50.0]],
+          "_note": "voltage=12.0 gửi như single-cell (không có pack_config) — thực chất là pack voltage của 1 pin nhiều cell chưa được khai báo n_series."
+        },
+        "grpc_error": { "status_code": "INVALID_ARGUMENT", "message": "1 validation error for PredictRequest\n  Value error, readings[0].voltage: per-cell value 12.000 V outside allowed range [2.0, 4.5] V — if this is a multi-cell pack (e.g. 12V ~ 3S NMC or 12.8V ~ 4S LFP), send pack_config.n_series so voltage can be normalized per-cell" },
+        "fix": "Thêm pack_config: { n_series: 3, chemistry: \"NMC\" } (12V ≈ 3S NMC → per-cell 4.0V, hợp lệ)."
+      }
+    }
+  },
+
+  "prescribe": {
+    "request_examples": {
+      "rule_based_B": {
+        "battery_id": "B0012",
+        "readings": [[3.75, -1.8, 25.0, 0.0, 140.0, 55.0], [3.729, -1.8, 25.07, 13.0, 140.0, 54.48], [3.709, -1.8, 25.14, 26.0, 140.0, 53.97], [3.688, -1.8, 25.21, 39.0, 140.0, 53.45], [3.667, -1.8, 25.28, 52.0, 140.0, 52.93], [3.647, -1.8, 25.34, 65.0, 140.0, 52.41], [3.626, -1.8, 25.41, 78.0, 140.0, 51.9], [3.605, -1.8, 25.48, 91.0, 140.0, 51.38], [3.584, -1.8, 25.55, 104.0, 140.0, 50.86], [3.564, -1.8, 25.62, 117.0, 140.0, 50.34], [3.543, -1.8, 25.69, 130.0, 140.0, 49.83], [3.522, -1.8, 25.76, 143.0, 140.0, 49.31], [3.502, -1.8, 25.83, 156.0, 140.0, 48.79], [3.481, -1.8, 25.9, 169.0, 140.0, 48.28], [3.46, -1.8, 25.97, 182.0, 140.0, 47.76], [3.44, -1.8, 26.03, 195.0, 140.0, 47.24], [3.419, -1.8, 26.1, 208.0, 140.0, 46.72], [3.398, -1.8, 26.17, 221.0, 140.0, 46.21], [3.378, -1.8, 26.24, 234.0, 140.0, 45.69], [3.357, -1.8, 26.31, 247.0, 140.0, 45.17], [3.336, -1.8, 26.38, 260.0, 140.0, 44.66], [3.316, -1.8, 26.45, 273.0, 140.0, 44.14], [3.295, -1.8, 26.52, 286.0, 140.0, 43.62], [3.274, -1.8, 26.59, 299.0, 140.0, 43.1], [3.253, -1.8, 26.66, 312.0, 140.0, 42.59], [3.233, -1.8, 26.72, 325.0, 140.0, 42.07], [3.212, -1.8, 26.79, 338.0, 140.0, 41.55], [3.191, -1.8, 26.86, 351.0, 140.0, 41.03], [3.171, -1.8, 26.93, 364.0, 140.0, 40.52], [3.15, -1.8, 27.0, 377.0, 140.0, 40.0]],
+        "enrich": false,
+        "_note": "enrich=false (default) — path BE nên dùng cho luồng auto-ticket event-driven, rule-based <100ms."
+      },
+      "enriched_agentic_C": {
+        "battery_id": "B-IOT-001",
+        "readings": [[13.2, -2.2, 40.0, 0.0, 190.0, 20.0], [13.124, -2.214, 40.34, 13.0, 190.0, 19.59], [13.048, -2.228, 40.69, 26.0, 190.0, 19.17], [12.972, -2.241, 41.03, 39.0, 190.0, 18.76], [12.897, -2.255, 41.38, 52.0, 190.0, 18.34], [12.821, -2.269, 41.72, 65.0, 190.0, 17.93], [12.745, -2.283, 42.07, 78.0, 190.0, 17.52], [12.669, -2.297, 42.41, 91.0, 190.0, 17.1], [12.593, -2.31, 42.76, 104.0, 190.0, 16.69], [12.517, -2.324, 43.1, 117.0, 190.0, 16.28], [12.441, -2.338, 43.45, 130.0, 190.0, 15.86], [12.366, -2.352, 43.79, 143.0, 190.0, 15.45], [12.29, -2.366, 44.14, 156.0, 190.0, 15.03], [12.214, -2.379, 44.48, 169.0, 190.0, 14.62], [12.138, -2.393, 44.83, 182.0, 190.0, 14.21], [12.062, -2.407, 45.17, 195.0, 190.0, 13.79], [11.986, -2.421, 45.52, 208.0, 190.0, 13.38], [11.91, -2.434, 45.86, 221.0, 190.0, 12.97], [11.834, -2.448, 46.21, 234.0, 190.0, 12.55], [11.759, -2.462, 46.55, 247.0, 190.0, 12.14], [11.683, -2.476, 46.9, 260.0, 190.0, 11.72], [11.607, -2.49, 47.24, 273.0, 190.0, 11.31], [11.531, -2.503, 47.59, 286.0, 190.0, 10.9], [11.455, -2.517, 47.93, 299.0, 190.0, 10.48], [11.379, -2.531, 48.28, 312.0, 190.0, 10.07], [11.303, -2.545, 48.62, 325.0, 190.0, 9.66], [11.228, -2.559, 48.97, 338.0, 190.0, 9.24], [11.152, -2.572, 49.31, 351.0, 190.0, 8.83], [11.076, -2.586, 49.66, 364.0, 190.0, 8.41], [11.0, -2.6, 50.0, 377.0, 190.0, 8.0]],
+        "pack_config": { "n_series": 4, "chemistry": "LFP", "capacity_ah": 2.5 },
+        "enrich": true,
+        "agentic": true,
+        "_note": "enrich=true + agentic=true — CHỈ dùng cho tương tác thủ công (vd nút 'AI gợi ý chi tiết'), KHÔNG dùng cho luồng event-driven vì chậm (giây, không phải ms)."
+      }
+    },
+
+    "response_examples": {
+      "rule_based_B": {
+        "battery_id": "B0012",
+        "soh_percent": 82.13, "risk_level": "Critical", "priority": "P1", "action_code": "SCHEDULE_REPLACEMENT",
+        "prescription": "Battery is degrading — schedule replacement within 7 days. Current SOH 82.1%, risk Critical, priority P1. Active warnings: SOH_CRITICAL, VOLTAGE_LOW.",
+        "action_steps": [
+          "Plan a replacement window within 7 days and order a matching unit.",
+          "Run a full capacity test to confirm remaining usable capacity.",
+          "Monitor SOH and temperature trend until replacement.",
+          "Open or update the maintenance ticket with the scheduled date."
+        ],
+        "escalation_conditions": ["If SOH drops below 80% before the scheduled date, escalate to immediate replacement."],
+        "ppe_required": ["Insulated gloves (>=500V)", "Safety glasses (ANSI Z87.1)"],
+        "sop_references": ["battery_maintenance_sop §1, §3"],
+        "enriched": false,
+        "llm_provider": "none",
+        "maintenance_docs": [],
+        "safety_docs": [],
+        "human_verification_required": true,
+        "safety_warnings": [],
+        "blocked": false,
+        "inference_ms": 71.5, "rag_ms": 0.0, "llm_ms": 0.0, "query_gen_ms": 0.0,
+        "generated_queries": [],
+        "prescription_id": "",
+        "prediction": {
+          "soh_percent": 82.13, "soh_confidence": 0.752, "soh_std": 1.24,
+          "rul_cycles_estimate": 1, "degradation_rate_per_cycle": 2.0, "soh_trend": "stable",
+          "cycles_to_maintenance": 0, "soh_trajectory": [80.1, 78.1, 76.1, 74.1, 72.1],
+          "health_stage": "Maintenance Required",
+          "stage_probabilities": { "End Of Life": 0.1, "Maintenance Required": 0.9, "Degrading": 0.0, "Healthy": 0.0 },
+          "stage_confidence": 0.9, "is_borderline": false
+        },
+        "anomaly": { "anomaly_score": -0.18, "anomaly_status": "Warning", "anomaly_confidence": 0.18 },
+        "risk": {
+          "risk_level": "Critical", "priority": "P1", "action_code": "SCHEDULE_REPLACEMENT",
+          "reasons": [
+            "SOH 82.1% is below 85% maintenance threshold",
+            "Sensor anomaly status is Warning",
+            "Battery is already at or below maintenance planning threshold",
+            "SOH 82.1% is critically low — plan replacement soon.",
+            "Minimum voltage 3.150V is approaching cutoff (3.2V)."
+          ]
+        }
+      },
+
+      "rule_based_C_lfp": {
+        "battery_id": "B-IOT-001",
+        "soh_percent": 67.36, "risk_level": "Critical", "priority": "P1", "action_code": "REPLACE_IMMEDIATELY",
+        "prescription": "Battery has reached end-of-life — immediate replacement required. Current SOH 67.4%, risk Critical, priority P1. Active warnings: BATTERY_EOL, TEMP_CRITICAL, VOLTAGE_LOW, OVERCURRENT, TEMP_OOD.",
+        "action_steps": [
+          "Isolate the battery from the system using the Lockout/Tagout procedure.",
+          "Measure open-circuit voltage and surface temperature before removal.",
+          "Replace with a unit of identical specification per the maintenance SOP §3.",
+          "Record final SOH, anomaly status, and replacement reason in the ticket.",
+          "Critical temperature: stop operation, follow the thermal runaway response SOP (evacuate, 50m exclusion, do NOT use water)."
+        ],
+        "escalation_conditions": [
+          "Immediate replacement required — notify manager within 1 hour.",
+          "Critical thermal warning — escalate to P1 immediately.",
+          "Critical thermal warning: escalate to P1 immediately",
+          "Immediate replacement required — notify manager within 1 hour"
+        ],
+        "_escalation_note": "4 câu gần-trùng lặp — dedup theo string tuyệt đối giữa rule engine và safety gate không bắt được câu khác dấu câu. Xem docs/overall.md §9.2.",
+        "ppe_required": ["Insulated gloves (>=500V)", "Safety glasses (ANSI Z87.1)", "Steel-toed footwear"],
+        "sop_references": ["battery_maintenance_sop §3 (Replacement Criteria)", "electrical_safety_sop (LOTO + isolation)"],
+        "enriched": false,
+        "llm_provider": "none",
+        "maintenance_docs": [],
+        "safety_docs": [],
+        "human_verification_required": true,
+        "safety_warnings": [
+          "Critical thermal risk — follow thermal runaway SOP before any work",
+          "Mandatory PPE missing from generated output — enforced per PPE matrix: Steel-toed footwear"
+        ],
+        "blocked": false,
+        "inference_ms": 78.3, "rag_ms": 0.0, "llm_ms": 0.0, "query_gen_ms": 0.0,
+        "generated_queries": [],
+        "prescription_id": "",
+        "prediction": {
+          "soh_percent": 67.36, "soh_confidence": 0.504, "soh_std": 2.48,
+          "rul_cycles_estimate": 0, "degradation_rate_per_cycle": 2.0, "soh_trend": "stable",
+          "cycles_to_maintenance": 0, "soh_trajectory": [65.4, 63.4, 61.4, 59.4, 57.4],
+          "health_stage": "End Of Life",
+          "stage_probabilities": { "End Of Life": 1.0, "Maintenance Required": 0.0, "Degrading": 0.0, "Healthy": 0.0 },
+          "stage_confidence": 1.0, "is_borderline": false
+        },
+        "anomaly": { "anomaly_score": -0.41, "anomaly_status": "Anomaly", "anomaly_confidence": 0.41 },
+        "risk": {
+          "risk_level": "Critical", "priority": "P1", "action_code": "REPLACE_IMMEDIATELY",
+          "reasons": [
+            "SOH 67.4% is below 80% end-of-life threshold",
+            "Sensor anomaly status is Anomaly",
+            "Battery is already at or below maintenance planning threshold",
+            "SOH 67.4% is below end-of-life threshold (80%) — battery should be replaced.",
+            "Peak temperature 50.0°C exceeds critical threshold (45.0°C).",
+            "Minimum voltage 2.750V is approaching cutoff (2.8V)."
+          ]
+        }
+      },
+
+      "enriched_illustrative_C": {
+        "_illustrative_only": "Nội dung prescription/maintenance_docs/safety_docs bên dưới là VIẾT TAY minh họa shape — không chạy qua LLM thật (không có API key trong môi trường viết tài liệu). prediction/anomaly/risk/action_code giữ NGUYÊN từ rule_based_C_lfp vì run_inference() luôn chạy y hệt bất kể enrich.",
+        "battery_id": "B-IOT-001",
+        "soh_percent": 67.36, "risk_level": "Critical", "priority": "P1", "action_code": "REPLACE_IMMEDIATELY",
+        "prescription": "Pin B-IOT-001 (pack 4S LFP) đã đạt ngưỡng end-of-life với SOH 67.4%, kèm nhiệt độ đỉnh 50°C vượt ngưỡng an toàn — cần cô lập và thay thế khẩn cấp trong vòng 1 giờ theo SOP thay pin và quy trình an toàn nhiệt.",
+        "action_steps": [
+          "Isolate the battery from the system using the Lockout/Tagout procedure.",
+          "Immediately reduce load and allow the pack to cool below 45°C before further handling.",
+          "Measure per-cell voltage — do not proceed if any cell reads below 2.5V.",
+          "Replace with a matched 4S LFP pack per battery_maintenance_sop §3.",
+          "Log final SOH, peak temperature, and replacement reason in the ticket."
+        ],
+        "escalation_conditions": [
+          "Immediate replacement required — notify manager within 1 hour.",
+          "If peak temperature exceeds 60°C at any point, treat as thermal runaway and evacuate per SAFETY-LI-003."
+        ],
+        "ppe_required": ["Insulated gloves (>=500V)", "Safety glasses (ANSI Z87.1)", "Steel-toed footwear", "Infrared thermometer for standoff checks"],
+        "sop_references": ["battery_maintenance_sop §3 (Replacement Criteria)", "electrical_safety_sop (LOTO + isolation)", "thermal_runaway_response.md"],
+        "enriched": true,
+        "llm_provider": "deepseek",
+        "maintenance_docs": [
+          { "title": "Battery Replacement Criteria", "content": "(illustrative retrieved chunk — nội dung thật lấy từ knowledge/maintenance/battery_maintenance_sop.md)", "source": "maintenance/battery_maintenance_sop.md", "relevance_score": 0.82, "retrieved_via": "Battery SOH 67.4%, health stage End Of Life, degradation rate 2.00%/cycle, trend stable, estimated 0 cycles remaining, risk Critical, action REPLACE_IMMEDIATELY" }
+        ],
+        "safety_docs": [
+          { "title": "Thermal Runaway Response", "content": "(illustrative retrieved chunk)", "source": "safety/thermal_runaway_response.md", "relevance_score": 0.77, "retrieved_via": "battery safety BATTERY_EOL TEMP_CRITICAL VOLTAGE_LOW OVERCURRENT TEMP_OOD" },
+          { "title": "Electrical Safety SOP — LOTO", "content": "(illustrative retrieved chunk)", "source": "safety/electrical_safety_sop.md", "relevance_score": 0.74, "retrieved_via": "battery safety BATTERY_EOL TEMP_CRITICAL VOLTAGE_LOW OVERCURRENT TEMP_OOD" }
+        ],
+        "human_verification_required": true,
+        "safety_warnings": ["Critical thermal risk — follow thermal runaway SOP before any work"],
+        "blocked": false,
+        "inference_ms": 78.3, "rag_ms": 245.6, "llm_ms": 1180.4, "query_gen_ms": 410.2,
+        "generated_queries": [
+          "LFP battery end of life replacement procedure 4S pack",
+          "thermal runaway response overheating lithium iron phosphate",
+          "overcurrent discharge safety limit LFP pack"
+        ],
+        "prescription_id": "3f1c9b2a-8e35-4b1a-9c2d-1a2b3c4d5e6f",
+        "prediction": {
+          "soh_percent": 67.36, "soh_confidence": 0.504, "soh_std": 2.48,
+          "rul_cycles_estimate": 0, "degradation_rate_per_cycle": 2.0, "soh_trend": "stable",
+          "cycles_to_maintenance": 0, "soh_trajectory": [65.4, 63.4, 61.4, 59.4, 57.4],
+          "health_stage": "End Of Life",
+          "stage_probabilities": { "End Of Life": 1.0, "Maintenance Required": 0.0, "Degrading": 0.0, "Healthy": 0.0 },
+          "stage_confidence": 1.0, "is_borderline": false
+        },
+        "anomaly": { "anomaly_score": -0.41, "anomaly_status": "Anomaly", "anomaly_confidence": 0.41 },
+        "risk": {
+          "risk_level": "Critical", "priority": "P1", "action_code": "REPLACE_IMMEDIATELY",
+          "reasons": [
+            "SOH 67.4% is below 80% end-of-life threshold",
+            "Sensor anomaly status is Anomaly",
+            "Battery is already at or below maintenance planning threshold",
+            "SOH 67.4% is below end-of-life threshold (80%) — battery should be replaced.",
+            "Peak temperature 50.0°C exceeds critical threshold (45.0°C).",
+            "Minimum voltage 2.750V is approaching cutoff (2.8V)."
+          ]
+        }
+      }
+    }
+  },
+
+  "prescribe_feedback_REST_only": {
+    "_note": "KHÔNG có RPC tương ứng trong AiService — endpoint này CHỈ tồn tại ở REST (POST /prescribe/feedback). Nếu BE cần vòng feedback mà muốn tránh hoàn toàn FastAPI, đây là gap cần 1 ticket bổ sung RPC SubmitFeedback bên AI team. Xem docs/overall.md §9.3.",
+    "http_method": "POST",
+    "http_path": "/prescribe/feedback",
+    "request": {
+      "prescription_id": "3f1c9b2a-8e35-4b1a-9c2d-1a2b3c4d5e6f",
+      "status": "accepted",
+      "edited_steps": null,
+      "note": "Kỹ thuật viên xác nhận đã thay pin theo đúng các bước đề xuất."
+    },
+    "response": { "success": true }
+  }
+}

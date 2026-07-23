@@ -519,18 +519,21 @@ def test_prescribe_anomaly_event_contract_for_ticket_mapping(grpc_stub):
     )
     elapsed_ms = (time.perf_counter() - start) * 1000
 
-    # Decision field: whether BE should create a ticket at all.
-    assert response.anomaly.anomaly_status in ("Normal", "Warning", "Anomaly")
-
-    # Fields the ticket-mapping table in docs/ai-be-integration.md relies on.
-    assert response.risk.priority in ("P1", "P2", "P3", "None")
-    assert response.risk.risk_level in ("Critical", "High", "Medium", "Low")
+    # Decision field: whether BE should create a ticket at all. NOT
+    # anomaly.anomaly_status — that only flags IsolationForest sensor-pattern
+    # anomalies, independent of SOH severity (a battery can degrade smoothly
+    # to End-Of-Life with a perfectly "Normal"-looking sensor pattern).
     assert response.risk.action_code in (
         "MONITOR",
         "SCHEDULE_MAINTENANCE",
         "SCHEDULE_REPLACEMENT",
         "REPLACE_IMMEDIATELY",
     )
+
+    # Fields the ticket-mapping table in docs/ai-be-integration.md relies on.
+    assert response.anomaly.anomaly_status in ("Normal", "Warning", "Anomaly")
+    assert response.risk.priority in ("P1", "P2", "P3", "None")
+    assert response.risk.risk_level in ("Critical", "High", "Medium", "Low")
     assert len(response.action_steps) > 0
     assert isinstance(response.human_verification_required, bool)
     assert isinstance(list(response.ppe_required), list)
@@ -546,6 +549,23 @@ def test_prescribe_anomaly_event_contract_for_ticket_mapping(grpc_stub):
 
     # SLA `ai.md`: batch/event-driven path < 500ms.
     assert elapsed_ms < 500, f"Prescribe(enrich=False) took {elapsed_ms:.1f}ms > 500ms SLA"
+
+
+def test_prescribe_identical_calls_within_ttl_second_is_cached(grpc_stub):
+    """GH-84 — 2 identical Prescribe calls (retry/burst on the same anomaly
+    event) within the cache TTL: the second call must be served from the
+    idempotency cache (cached=true) with an otherwise identical response."""
+    request = pb.PrescribeRequest(
+        battery_id="B-CACHE-001", readings=VALID_READINGS, enrich=False
+    )
+    first = grpc_stub.Prescribe(request)
+    second = grpc_stub.Prescribe(request)
+
+    assert first.cached is False
+    assert second.cached is True
+    first.ClearField("cached")
+    second.ClearField("cached")
+    assert first == second
 
 
 # ── Parity with REST ───────────────────────────────────────────────────

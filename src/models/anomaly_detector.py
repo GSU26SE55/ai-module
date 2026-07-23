@@ -169,7 +169,11 @@ def compute_risk_profile(
         action_code = "REPLACE_IMMEDIATELY"
     elif health_stage == "Maintenance Required":
         action_code = "SCHEDULE_REPLACEMENT"
-    elif health_stage == "Degrading" or anomaly_status in {"Warning", "Anomaly"}:
+    elif health_stage == "Degrading" or anomaly_status in {"Warning", "Anomaly"} or has_warning:
+        # has_warning here mirrors the priority branch above (P3) — a non-critical
+        # warning on an otherwise healthy/normal battery must still result in an
+        # action_code other than MONITOR, or the priority/action_code fields
+        # disagree on whether any action is needed at all.
         action_code = "SCHEDULE_MAINTENANCE"
     elif has_critical_warning:
         # Critical sensor warning on healthy battery → escalate action to match P1 risk
@@ -236,37 +240,50 @@ def compute_degradation_metrics(
         soh_trend                   — "accelerating" | "stable" | "slowing"
         cycles_to_maintenance       — cycles until SOH < MAINTENANCE_SOH (85%)
         soh_trajectory              — predicted SOH for next 5 cycles
+
+    When the window doesn't span a full NASA cycle (L < _STEPS_PER_CYCLE — always
+    true for the production window=30), there isn't enough inter-cycle signal to
+    fit a per-cycle voltage-fade slope: splitting a sub-cycle window into 2
+    "segments" and extrapolating by _STEPS_PER_CYCLE/seg (~19x for L=30) amplifies
+    ordinary sensor noise into a degradation_rate that saturates the 2%/cycle clip
+    ceiling (13x the population average), collapsing rul_cycles_estimate toward 0
+    even for a healthy battery. Falls back to the population-average
+    DEGRADATION_RATE in that case instead of the unreliable extrapolation.
     """
     L = len(raw)
 
-    # Number of segments ≈ cycles covered by the window (min 2, max 10)
-    n_seg = max(2, min(10, L // _STEPS_PER_CYCLE))
-    seg   = L // n_seg
-    tail  = max(1, seg // 10)  # use last 10% of each segment (end-of-discharge)
-
-    # Mean end-of-discharge voltage per segment
-    voltages = [float(raw[i * seg : (i + 1) * seg, 0][-tail:].mean())
-                for i in range(n_seg)]
-
-    # Linear regression: voltage ~ segment_index
-    x      = np.arange(n_seg, dtype=np.float64)
-    slope  = float(np.polyfit(x, voltages, 1)[0])       # V / segment
-
-    # Convert slope → %SOH / cycle
-    cycles_per_seg   = seg / _STEPS_PER_CYCLE
-    v_per_cycle      = slope / max(cycles_per_seg, 1e-6) # V / cycle
-    degradation_rate = float(np.clip(abs(v_per_cycle) * _VOLT_TO_SOH_RATE, 0.0, 2.0))
-
-    # Trend: compare first-half vs second-half fade rate
-    mid         = n_seg // 2
-    rate_early  = abs(voltages[mid - 1] - voltages[0])         / max(mid, 1)
-    rate_late   = abs(voltages[-1]      - voltages[mid])        / max(n_seg - mid, 1)
-    if rate_late > rate_early * 1.2:
-        trend = "accelerating"
-    elif rate_late < rate_early * 0.8:
-        trend = "slowing"
-    else:
+    if L < _STEPS_PER_CYCLE:
+        degradation_rate = DEGRADATION_RATE
         trend = "stable"
+    else:
+        # Number of segments ≈ cycles covered by the window (min 2, max 10)
+        n_seg = max(2, min(10, L // _STEPS_PER_CYCLE))
+        seg   = L // n_seg
+        tail  = max(1, seg // 10)  # use last 10% of each segment (end-of-discharge)
+
+        # Mean end-of-discharge voltage per segment
+        voltages = [float(raw[i * seg : (i + 1) * seg, 0][-tail:].mean())
+                    for i in range(n_seg)]
+
+        # Linear regression: voltage ~ segment_index
+        x      = np.arange(n_seg, dtype=np.float64)
+        slope  = float(np.polyfit(x, voltages, 1)[0])       # V / segment
+
+        # Convert slope → %SOH / cycle
+        cycles_per_seg   = seg / _STEPS_PER_CYCLE
+        v_per_cycle      = slope / max(cycles_per_seg, 1e-6) # V / cycle
+        degradation_rate = float(np.clip(abs(v_per_cycle) * _VOLT_TO_SOH_RATE, 0.0, 2.0))
+
+        # Trend: compare first-half vs second-half fade rate
+        mid         = n_seg // 2
+        rate_early  = abs(voltages[mid - 1] - voltages[0])         / max(mid, 1)
+        rate_late   = abs(voltages[-1]      - voltages[mid])        / max(n_seg - mid, 1)
+        if rate_late > rate_early * 1.2:
+            trend = "accelerating"
+        elif rate_late < rate_early * 0.8:
+            trend = "slowing"
+        else:
+            trend = "stable"
 
     # Battery-specific RUL
     rul = estimate_rul(soh_current, rate=degradation_rate)
@@ -351,7 +368,12 @@ def generate_warnings(
     elif soh < 85.0:
         warnings.append({
             "code": "SOH_CRITICAL",
-            "severity": "critical",
+            # "warning", not "critical": this range is health_stage="Maintenance
+            # Required" (action_code=SCHEDULE_REPLACEMENT, not urgent) — a
+            # "critical" severity here fed into compute_risk_profile's
+            # has_critical_warning check and force-escalated priority to P1
+            # even though the action is only "plan replacement soon".
+            "severity": "warning",
             "message": f"SOH {soh:.1f}% is critically low — plan replacement soon.",
         })
     elif soh < 90.0:

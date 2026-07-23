@@ -1,1288 +1,532 @@
-# AI Module — Tài liệu tổng quan
+# AI Module — Tài liệu tổng quan (gRPC-first, cho BE tích hợp)
 
-> **Dự án:** Solar Lithium-ion Battery Maintenance Management System
-> **Nhóm:** GSU26SE55 | **GVHD:** Trương Long
-> **Cập nhật:** 2026-06-21
+> **Dự án:** Solar Lithium-ion Battery Maintenance Management System — GSU26SE55
+> **Cập nhật:** 2026-07-22 (thay bản cũ 2026-06-21 — đã lệch nhiều version/field)
+> **Đối tượng đọc:** BE dev (.NET) cần dựng gateway gọi sang AI module.
+> **Phạm vi:** Tài liệu này tập trung vào **gRPC (`aimodule.v1.AiService`, port 50051)** —
+> đây là transport BE dùng thật trong production (xem [[grpc-is-production-transport]]).
+> REST (`FastAPI`, port 8000) vẫn tồn tại và trả **cùng payload** (parity test field-by-field),
+> nhưng chỉ dùng cho dev/Swagger/local testing — **không phải đường tích hợp BE nên đi**,
+> ngoại trừ 1 endpoint chưa có ở gRPC (`POST /prescribe/feedback` — xem §11.4).
 
 ---
 
 ## Mục lục
 
-1. [Tổng quan dự án](#1-tổng-quan-dự-án)
-2. [Kiến trúc hệ thống](#2-kiến-trúc-hệ-thống)
-3. [AI Module — Chi tiết](#3-ai-module--chi-tiết)
-4. [Model Architecture](#4-model-architecture)
-5. [Feature Engineering](#5-feature-engineering)
-6. [Dataset & Training Pipeline](#6-dataset--training-pipeline)
-7. [API Endpoints](#7-api-endpoints)
-8. [Cấu trúc thư mục](#8-cấu-trúc-thư-mục)
-9. [Hướng dẫn chạy local](#9-hướng-dẫn-chạy-local)
-10. [Kế hoạch Sprint](#10-kế-hoạch-sprint)
-11. [Prescription Layer (Sắp triển khai)](#11-prescription-layer-sắp-triển-khai)
-12. [Quy ước phát triển](#12-quy-ước-phát-triển)
+1. [Tổng quan & Kiến trúc](#1-tổng-quan--kiến-trúc)
+2. [Stack & Version hiện tại](#2-stack--version-hiện-tại)
+3. [Model Architecture (tóm tắt)](#3-model-architecture-tóm-tắt)
+4. [Dataset & Split hiện tại](#4-dataset--split-hiện-tại)
+5. [Model Artifacts](#5-model-artifacts)
+6. [gRPC Service Contract — `AiService`](#6-grpc-service-contract--aiservice)
+7. [Request Semantics — Predict / Prescribe](#7-request-semantics--predict--prescribe)
+8. [Response Semantics — Prediction / Anomaly / Risk](#8-response-semantics--prediction--anomaly--risk)
+9. [⚠️ Giới hạn phải biết trước khi tích hợp](#9-️-giới-hạn-phải-biết-trước-khi-tích-hợp)
+10. [Prescription Pipeline (rule → enrich → agentic → safety gate)](#10-prescription-pipeline-rule--enrich--agentic--safety-gate)
+11. [Error handling & mã lỗi](#11-error-handling--mã-lỗi)
+12. [Latency benchmark hiện tại](#12-latency-benchmark-hiện-tại)
+13. [Setup client .NET (C#)](#13-setup-client-net-c)
+14. [File tham khảo](#14-file-tham-khảo)
 
 ---
 
-## 1. Tổng quan dự án
-
-### Mục tiêu
-
-Xây dựng nền tảng **giám sát và bảo trì pin lithium-ion** cho hệ thống năng lượng mặt trời, bao gồm:
-
-- Dự đoán **State of Health (SOH)** của pin theo thời gian thực
-- Ước tính **Remaining Useful Life (RUL)** — số chu kỳ còn lại đến End-of-Life
-- Phát hiện **bất thường** (anomaly) trước khi pin hỏng
-- Tự động tạo **ticket bảo trì** theo chuẩn ITIL với SLA P1/P2/P3
-- Cung cấp **prescription** — kế hoạch bảo trì từng bước có căn cứ khoa học
-
-### Hệ thống 3 lớp
+## 1. Tổng quan & Kiến trúc
 
 ```
-┌──────────────────────────────────────────────┐
-│  Mobile App (React Native / Expo)             │
-│  Customer xem trạng thái pin real-time        │
-├──────────────────────────────────────────────┤
-│  Web App (ReactJS)                            │
-│  Admin / Manager / Staff quản lý ticket       │
-├──────────────────────────────────────────────┤
-│  AI Module (FastAPI + PyTorch)                │  ← File này mô tả phần này
-│  SOH prediction · RUL · Anomaly detection    │
-└──────────────────────────────────────────────┘
+Pin lithium-ion (BMS / IoT sensor)
+        │  voltage, current, temperature, time (+ cycle_count, soc_percent nếu BE có)
+        ▼
+[BatteryService / TicketService (BE, .NET)]
+        │
+        │  gRPC :50051  (production — KHÔNG dùng REST :8000 cho luồng này)
+        ▼
+[AiService — ai-module]
+   Predict / Prescribe / Health / PredictStream
+        │
+        ▼  PrescribeResponse.anomaly.anomaly_status != "Normal"
+[TicketService] → tạo/enrich ticket P1/P2/P3 (Priority thật vẫn do BE tính — xem §8.3)
 ```
 
-### Thông tin nhóm
+**Vì sao gRPC, không phải REST, cho luồng production:** latency thấp hơn, có streaming
+(`PredictStream` cho sensor real-time), cùng pipeline/cùng validation với REST (parity test),
+nên migrate không cần remap field. REST giữ lại cho Swagger/dev vì dễ curl/test tay.
 
-| Tên | MSSV | Role chính | GitHub |
-|-----|------|------------|--------|
-| Nguyễn Phúc Duy | SE184821 | BE (phụ AI) | DuyNguyen-3006 |
-| Bùi Phước Thắng | SE180445 | BE (phụ AI) | — |
-| Mai Hồng Thái | SE183923 | BE (phụ AI) | — |
-| Trần Minh Trí | SE183109 | FE / Leader | — |
-| Nguyễn Nhật Minh | SE170310 | FE (phụ AI) | — |
+**Khuyến nghị gọi (GH-87):** BE chỉ cần gọi **`Prescribe`** cho mọi use-case tạo/enrich ticket.
+`Predict` chạy **nội bộ** trong `Prescribe` (bước 1), nên `PrescribeResponse` đã có đủ
+`prediction`/`anomaly`/`risk` (kể cả uncertainty GH-86). Gọi riêng `Predict` chỉ dành cho
+dashboard giám sát real-time không cần prescription text.
+**KHÔNG** gọi cả `Predict` lẫn `Prescribe` trên cùng 1 window để lấy 2 loại thông tin — mỗi
+lần gọi chạy MC Dropout độc lập (10 mẫu ngẫu nhiên mỗi lần), 2 response **có thể lệch nhau**
+gần ngưỡng 80/85/90 (`health_stage` bị flip). Dùng nested block trong `Prescribe` làm nguồn
+duy nhất.
 
 ---
 
-## 2. Kiến trúc hệ thống
+## 2. Stack & Version hiện tại
 
-### Luồng dữ liệu tổng thể
+| Thành phần | Version | File |
+|---|---|---|
+| Mamba SOH (production, L=30) | **v1.6** (GH-88 split rebalance) | `models/weights/soh_mamba_v1.6.pth` |
+| MinMaxScaler (6-feature) | v1.3 | `models/weights/scaler.pkl` |
+| Feature StandardScaler (57-dim) | v1.5 | `models/weights/feature_scaler.pkl` |
+| IsolationForest | v1.6 (theo Mamba) | `models/weights/isolation_forest_v1.6.pkl` |
+| Mamba SOH Long (L=4096) | v2.2 (feature ablation 6→4 base) | `models/weights/soh_mamba_long_v2.2.pth` |
+| RUL Predictor (cycle-axis) | v1.0 | `models/weights/soh_mamba_rul_v1.0.pth` |
+| gRPC contract | `protos/ai_service.proto` (GH-39, đang ở field 91 = GH-91) | `src/grpc_gen/` (generated, committed) |
+| grpcio / grpcio-tools / protobuf | 1.81.1 / 1.81.1 / 6.33.6 | `requirements.txt` |
 
-```
-Pin lithium-ion
-     │
-     │  (voltage, current, temperature, ... — mỗi ~13s/reading)
-     ▼
-[IoT Sensor] ──────────────────────────────────────────────────┐
-                                                               │
-                                              POST /predict    │
-[BatteryService (BE)] ────────────────────► [AI Module]       │
-                                              ◄────────────────┘
-                                              {soh_percent,
-                                               classification,
-                                               confidence,
-                                               rul_cycles_estimate,
-                                               recommended_action,
-                                               warnings, ...}
-                    │
-                    │  BatteryAnomalyDetectedEvent
-                    ▼
-            [TicketService (BE)]
-                    │
-                    ├─► Auto-tạo ticket P1/P2/P3
-                    ├─► Assign Staff
-                    └─► Notify Customer (Mobile)
-```
-
-### SLA Ticket theo priority
-
-| Priority | Trigger | SLA | Hành động khi breach |
-|----------|---------|-----|----------------------|
-| **P1 Critical** | SOH < 80% / nguy cơ an toàn / scope Site-MultiSite | **4h** | Reassign Senior + notify Admin |
-| **P2 High** | SOH 80–85% / anomaly score ≤ -0.3 | **24h** | Manager reassign |
-| **P3 Standard** | SOH 85–90% / anomaly warning | **72h** | Manager review |
+Version mismatch giữa `scaler.pkl`/`feature_scaler.pkl`/model checkpoint làm server **crash ngay
+lúc startup** (assertion trong `model_loader.py`) — không silent-fail, nên nếu gRPC server chạy
+được nghĩa là 3 artifact đang khớp nhau.
 
 ---
 
-## 3. AI Module — Chi tiết
+## 3. Model Architecture (tóm tắt)
 
-### Stack công nghệ
+- **MambaSOHPredictor (production, L=30):** `Linear(6→64) → MambaBlock×2(d_model=64, d_state=16) →
+  LayerNorm → last-token pooling → FiLM(feat_57) → Linear(64→32)+GELU+Dropout(0.2) → Linear(32→1)`.
+  Input 6 kênh = 4 base (`voltage, current, temperature, time`) + 2 derived server-side
+  (`cycle_count`, `soc_percent` — xem §7.1). MC Dropout **10 runs** (giảm từ 20, GH-63) → SOH% (mean)
+  + `soh_std` → `soh_confidence = 1 - soh_std/5.0`.
+- **MambaSOHPredictor Long (L=4096, d_state=32):** patch embedding P16S16 → 256 token, attention
+  pooling, single forward pass (không MC Dropout). Ngoài scope tài liệu này (không expose qua
+  `AiService` — chỉ REST `/predict-long`, không có RPC tương ứng).
+- **RULPredictor (cycle-axis):** input `(30, 57)` — 30 chu kỳ, mỗi token là feature 57-dim của
+  1 discharge cycle. Không expose qua `AiService` hiện tại.
+- **IsolationForest:** `contamination=0.1, n_estimators=100, random_state=42`, input = feature
+  57-dim đã `StandardScaler`. Output `decision_function` (âm hơn = bất thường hơn).
 
-| Quyết định | Lựa chọn | Ghi chú |
-|-----------|----------|---------|
-| Language | Python 3.11 | — |
-| ML Framework | PyTorch 2.3.1 | Pure-PyTorch SSM — không cần CUDA |
-| Anomaly Detection | scikit-learn 1.5.0 | Isolation Forest |
-| Signal Processing | scipy 1.13.1 | FFT-based spectral features |
-| Serving | FastAPI 0.111.1 | REST API cho BE gọi |
-| Dataset | NASA Ames Battery Dataset | 34 batteries, format CSV |
-
-### Pipeline inference — Production (window=30)
-
-```
-Sensor readings (30 timesteps × 6 features)
-  [voltage, current, temperature, current_load, voltage_load, time]
-  (legacy: 30 × 3 cũng được nhận, tự động align)
-         │
-         ▼
-[MinMaxScaler] — scale 6-feature về [0, 1]
-         │
-         ├──────────────────────────────────────────────────┐
-         ▼                                                  │
-[extract_window_features]                                   │
-  → 54-dim spectral + kurtosis (từ 3 channels đầu)         │
-         │                                                  │
-         ▼                                                  │
-[StandardScaler (feature_scaler)]                           │
-  → scale 54-dim về zero-mean unit-variance                 │
-         │                                                  ▼
-         ├────────────────────► [MambaSOHPredictor v1.2]
-         │  x_feat (FiLM)        × MC Dropout 20 runs
-         │                       → SOH% (mean) + soh_std
-         │                       → confidence = 1 - soh_std/5.0
-         │
-         ▼
-[IsolationForest v1.2] ← input: 54-dim (đã scale)
-  → anomaly_score (decision_function)
-  → anomaly_status: Normal / Warning / Anomaly
-         │
-         ▼
-[classify_anomaly(score, soh)]
-  SOH < 80%            → "Failed"
-  SOH 80–90%           → "Degrading"
-  SOH ≥ 90% & score < -0.1 → "Degrading"
-  SOH ≥ 90% & score ≥ -0.1 → "Normal"
-         │
-         ▼
-[compute_degradation_metrics] — RUL, trend, trajectory
-[compute_risk_profile]        — priority P1/P2/P3, action_code
-[generate_warnings]           — threshold-based sensor warnings
-         │
-         ▼
-Response: {soh_percent, classification, confidence,
-           rul_cycles_estimate, degradation_rate_per_cycle,
-           soh_trend, cycles_to_maintenance, soh_trajectory,
-           anomaly_score, recommended_action, warnings,
-           feature_summary, risk, ...}
-Latency : < 100ms (P1 SLA requirement)
-```
-
-### Pipeline inference — Long (L=4096, GH-10)
-
-```
-Sensor readings (L timesteps × 6 features), L ≤ 4096
-         │
-         ▼
-[compute_ic_feature + compute_phase_mask]
-  → 8 features: [V, I, T, I_load, V_load, time, dQ/dV, phase]
-         │
-         ▼
-[MinMaxScaler (scaler_long)] — 8-feature
-         │
-         ▼
-[extract_window_features] — 54-dim từ 3 channels đầu
-  → StandardScaler (long_feature_scaler)
-         │
-         ▼
-[MambaSOHPredictor v2.0 — long]
-  patch_size=16, stride=16 → 256 tokens từ 4096 raw
-  PatchDegradationEncoder: RMS/P2P/std/kurtosis per patch
-  Attention pooling
-  FiLM conditioning (x_feat)
-  → SOH% (single forward pass, không MC Dropout)
-         │
-         ▼
-Response: {soh_percent, seq_len, device, inference_ms}
-(Anomaly + RUL out of scope cho long pipeline)
-```
+> Pure PyTorch SSM — không cần CUDA, chạy Windows 11 native. `torch.compile()` được warm-up ở
+> cả eval/train mode lúc startup (MC Dropout cần train-mode graph) để tránh crash-on-request-#1.
 
 ---
 
-## 4. Model Architecture
+## 4. Dataset & Split hiện tại
 
-### 4.1. MambaSOHPredictor — Production (L=30)
+NASA Ames Battery Dataset (18650 Li-ion, 34 cells, nominal capacity 2.0 Ah).
 
-> **Pure PyTorch SSM** — không dùng `mamba-ssm` CUDA library, chạy Windows 11 native.
-> Artifact: `models/weights/soh_mamba_v1.2.pth`
+| Split | Battery IDs | Số pin |
+|---|---|---|
+| Train | B0005/06/07/18, B0025–B0032, B0033, B0034, B0042–B0044, B0041, B0045, B0053, B0054, B0055, B0056, **B0047** | 24 |
+| Val | B0046 (4°C) | 1 |
+| Test | B0048 (4°C) — held out hoàn toàn | 1 |
 
-```
-Input: (batch, 30, 6)   ← 30 timestep × [V, I, T, I_load, V_load, time]
-  │
-  ▼ Linear(6 → 64)                # Input projection
-  │
-  ▼ MambaBlock #1                 # Selective SSM layer 1
-  │   ├─ Pre-norm (LayerNorm)
-  │   ├─ in_proj: Linear(64 → 256, bias=True) → split (x_branch, z_gate)
-  │   ├─ Causal depthwise Conv1d(kernel=4, groups=d_inner)
-  │   ├─ Selective SSM scan (ZOH discretization, fp32 internal)
-  │   │   ├─ dt_rank = ceil(d_model/16) = 4
-  │   │   ├─ A: log-initialized, learnable (d_inner × d_state)
-  │   │   ├─ B, C, dt: input-dependent (selective)
-  │   │   └─ Sequential scan for L=30 (vectorized chunked scan for L>32)
-  │   ├─ Gate: output × SiLU(z_gate)
-  │   └─ out_proj + residual
-  │
-  ▼ MambaBlock #2                 # Selective SSM layer 2
-  │
-  ▼ LayerNorm(64)
-  │
-  ▼ h[:, -1, :]                   # Last timestep hidden state (pooling="last")
-  │
-  ▼ FiLM conditioning             # 2-layer MLP: feat_54 → γ + β
-  │   film_proj: Linear(54→54) → SiLU → Linear(54→128)
-  │   h = (sigmoid(γ)+0.5) × h + β
-  │
-  ▼ Linear(64 → 32) + GELU + Dropout(0.2)
-  │
-  ▼ Linear(32 → 1)
-  │
-Output: (batch,)                  # SOH raw → ×100 = SOH%
-```
+Chia **theo battery ID** (không theo timestep) — tránh data leakage. **B0047 chuyển từ Val
+sang Train ở GH-88** (2026-07-08): train 4°C cũ chỉ phủ SOH 0–67.2%, thiếu vùng 67–86% mà
+val/test cần → model ngoại suy lệch dưới ngưỡng EOL 80%. Chi tiết: `docs/adr/0002-split-rebalance-b0047.md`.
 
-**Tham số:**
-- Trainable params: **~66K–305K** (phụ thuộc version)
-- Inference: MC Dropout 20 runs → confidence từ std
-- Không cần CUDA — chạy Windows 11 native
+> Model headline bài báo NCKH (`soh_mamba_long_v2.2.pth`, LOBO) train **trước** đổi split này,
+> vẫn dùng split cũ 23/2/1 — xem `docs/nckh-paper-plan.md` §3.1 nếu cần đối chiếu.
 
-### 4.2. MambaSOHPredictor — Long Sequence (L=4096, GH-10)
+**Target metrics:** MAE < 2% SOH · RMSE < 3% · Anomaly F1 > 0.80.
+v1.6 đạt MAE 1.34% / RMSE 1.84% (`docs/GH-88` ablation report). Anomaly F1 trên window-shape
+đơn thuần **chưa đạt** 0.80 (GH-70/GH-95) — xem §9.6.
 
-> Artifact: `models/weights/soh_mamba_long_v2.0.pth`
-> Loaded lazily — không load khi startup, chỉ load khi gọi `/predict-long`
+---
 
-```
-Input: (batch, L, 8)   ← L ≤ 4096, 8 features (6 base + IC + phase)
-  │
-  ▼ Conv1d(8, 64, kernel=16, stride=16)   # Patch embedding
-    → (batch, 256, 64)                    # 4096 raw → 256 tokens (16× nén)
-  │
-  ▼ PatchDegradationEncoder              # Per-patch local degradation stats
-  │   RMS, peak-to-peak, std, kurtosis × 8 channels per patch
-  │   → Linear(32→64) → LayerNorm
-  │   → added vào patch token embeddings
-  │
-  ▼ MambaBlock × 2
-  │
-  ▼ LayerNorm(64)
-  │
-  ▼ Attention Pooling                    # pooling="attention"
-  │   score = Linear(64→1)
-  │   Discharge-bias: patch có phase=discharge được ưu tiên
-  │   h = Σ(softmax(score) × token)
-  │
-  ▼ FiLM conditioning (54-dim)           # same as production
-  │
-  ▼ Linear(64→32) + GELU + Dropout → Linear(32→1)
-  │
-Output: (batch,)   # SOH%
+## 5. Model Artifacts
+
+| File | Dùng cho | Commit vào Git |
+|---|---|---|
+| `scaler.pkl` | MinMaxScaler 6-feat | ✅ |
+| `feature_scaler.pkl` | StandardScaler 57-dim | ✅ |
+| `soh_mamba_v1.6.pth` | Production Mamba (L=30) | ✅ |
+| `isolation_forest_v1.6.pkl` | IsolationForest | ✅ |
+| `scaler_long.pkl`, `feature_scaler_long.pkl`, `soh_mamba_long_v2.2.pth` | Long model (L=4096, ngoài scope gRPC) | ✅ |
+| `feature_scaler_rul.pkl`, `soh_mamba_rul_v1.0.pth` | RUL Predictor (ngoài scope gRPC) | ✅ |
+
+`scaler.pkl`/`feature_scaler.pkl` KHÔNG được fit lại trên production data — load từ file lúc
+startup, mismatch version → server refuse to start (fail-fast, không silent wrong prediction).
+
+---
+
+## 6. gRPC Service Contract — `AiService`
+
+Contract nguồn: `protos/ai_service.proto` (package `aimodule.v1`, C# namespace `AiModule.V1`).
+Copy nguyên file này vào project BE — **mọi thay đổi contract phải qua repo `ai-module` trước**,
+chỉ **thêm** field number mới, không reuse/đổi số cũ (wire compatibility).
+
+```protobuf
+service AiService {
+  rpc Predict(PredictRequest) returns (PredictResponse);
+  rpc Prescribe(PrescribeRequest) returns (PrescribeResponse);
+  rpc Health(HealthRequest) returns (HealthResponse);
+  rpc PredictStream(stream PredictRequest) returns (stream PredictResponse);
+}
 ```
 
-**Kết quả training (Kaggle GPU, 2026-06-20):**
+Cả 4 RPC chạy trong **cùng process** với REST (`src/grpc_server.py`, `python -m src.grpc_server`,
+`GRPC_PORT` env, default 50051) — **cùng pipeline** `run_inference()` / `run_prescription()`,
+insecure channel (không TLS/auth — chỉ dùng nội bộ docker network, KHÔNG expose port 50051 ra
+ngoài).
 
-| Metric | Kết quả | Target |
-|--------|---------|--------|
-| Test MAE | **1.6293%** | < 2.0% ✅ |
-| Test RMSE | **2.0871%** | < 3.0% ✅ |
-| Early stop | epoch 41/50 | — |
+### 6.1. Message shapes chính
 
-**Config:**
-```
-seq_len=4096 | patch P16S16 → 256 tokens
-Warmup stages: [256, 512, 1024, 2048, 4096] × 3 epochs/stage
-Final stage: LR=5e-4, CosineAnnealingWarmRestarts T_0=25 T_mult=2
-Loss: SmoothL1(beta=0.02) | AMP fp16 | micro_batch=8 × accum=4 = eff_batch=32
-```
-
-### 4.3. RULPredictor — Cycle-axis Mamba (GH-13)
-
-> Artifact: `models/weights/soh_mamba_rul_v1.0.pth`
-
-```
-Input: (batch, 30, 54)   ← 30 chu kỳ × 54-dim per-cycle feature vector
-  │
-  ▼ Linear(54 → 64)
-  │
-  ▼ MambaBlock × 2
-  │
-  ▼ LayerNorm → pooling (last | attention)
-  │
-  ▼ Linear(64→32) + GELU + Dropout → Linear(32→1)
-  │
-Output: (batch,)   # normalized RUL × 200 = số chu kỳ còn lại
-```
-
-> Token hóa theo **chu kỳ** thay vì raw timestep. Mỗi token = 54-dim spectral+kurtosis của 1 discharge cycle. EOL threshold = 80% SOH.
-
-### 4.4. IsolationForest (Anomaly Detection)
-
-```python
-IsolationForest(
-    contamination = 0.1,    # 10% data ước tính bất thường (Liu et al. ICDM 2008)
-    n_estimators  = 100,    # variance hội tụ ≥ 100 trees
-    random_state  = 42,
-)
-
-# Input : 54-dim spectral+kurtosis features (StandardScaler'd)
-# Output: decision_function score (âm hơn = bất thường hơn)
+```protobuf
+message Reading { repeated double values = 1; }        // positional row — xem §7.1
+message ReadingFields {                                  // named-field alternative (GH-77)
+  double voltage = 1; double current = 2; double temperature = 3; double time = 4;
+  optional double cycle_count = 5; optional double soc_percent = 6;
+}
+message PackConfig {                                      // GH-65/67 — multi-cell pack
+  int32 n_series = 1; string chemistry = 2; double capacity_ah = 3;
+}
+message PredictRequest {
+  string battery_id = 1;
+  repeated Reading readings = 2;
+  repeated ReadingFields reading_objects = 3;   // nếu non-empty, ưu tiên hơn readings
+  PackConfig pack_config = 4;                   // omit = single-cell (legacy)
+}
+message PredictResponse {
+  PredictionInfo prediction = 2; AnomalyInfo anomaly = 3; RiskInfo risk = 4;
+  EvidenceInfo evidence = 5; ResponseMetadata metadata = 6;
+  // + flat backward-compat fields 7-19 (soh_percent, classification, confidence, ...)
+}
+message PrescribeRequest {          // "extends" PredictRequest theo convention field number
+  string battery_id = 1; repeated Reading readings = 2;
+  optional int32 age_cycles = 3; optional string last_maintenance_date = 4;
+  repeated string ticket_history = 5;
+  bool enrich = 6;             // default false — rule-based, <100ms hot-path
+  PackConfig pack_config = 7;
+  bool agentic = 8;            // chỉ có ý nghĩa khi enrich=true
+}
+message PrescribeResponse {
+  // fields 2-23: flat/legacy + prescription-specific (prescription, action_steps, ppe_required,
+  // sop_references, enriched, maintenance_docs, safety_docs, human_verification_required,
+  // safety_warnings, blocked, prescription_id, ...)
+  PredictionInfo prediction = 24; AnomalyInfo anomaly = 25; RiskInfo risk = 26;  // GH-87 nested
+}
 ```
 
-**Mapping score → anomaly_status:**
+Toàn bộ field + comment gốc: xem `protos/ai_service.proto` trực tiếp (đã inline giải thích từng
+GH ticket ngay trong file — đọc file đó khi cần chi tiết field-level thay vì tài liệu này).
 
-| Score | anomaly_status |
-|-------|---------------|
-| `score > -0.1` | **Normal** |
-| `-0.3 < score ≤ -0.1` | **Warning** |
-| `score ≤ -0.3` | **Anomaly** |
+### 6.2. Ví dụ JSON request/response
 
-**Mapping (score + SOH) → classification:**
+Xem file **`docs/examples/grpc-payloads.json`** — 3 kịch bản đầy đủ (Healthy/Normal,
+Maintenance-Required/Warning, Critical-EOL trên pack LFP 4S) cho cả `Predict` và `Prescribe`,
+đã verify bằng cách chạy trực tiếp `src/models/anomaly_detector.py` +
+`src/services/prescription/rule_prescription.py` + `safety_gate.py` thật (không phải số bịa) —
+BE có thể copy-paste field name (snake_case, khớp `.proto`) để test qua grpcurl/Postman gRPC.
 
-| Điều kiện | classification |
-|-----------|---------------|
-| `SOH < 80%` | **Failed** |
-| `SOH 80–90%` | **Degrading** |
-| `SOH ≥ 90%` AND `score < -0.1` | **Degrading** |
-| `SOH ≥ 90%` AND `score ≥ -0.1` | **Normal** |
+---
 
-**Health stage → Risk → Priority:**
+## 7. Request Semantics — Predict / Prescribe
 
-| Health Stage | Risk | Priority | Action |
+### 7.1. Shape của `readings` — 3 dạng được chấp nhận
+
+| Số cột | Cột | Khi dùng |
+|---|---|---|
+| **6 (khuyến nghị, GH-56)** | `voltage, current, temperature, time, cycle_count, soc_percent` | BE tự tính `cycle_count`/`soc_percent` từ lịch sử đầy đủ của pin (chính xác hơn AI tự đoán) — gửi thẳng, AI dùng nguyên (không tự derive lại). **Đây là default BE nên dùng** ([[be-predict-payload-6column-default]]). |
+| 4 | `voltage, current, temperature, time` | AI tự tính `cycle_count`/`soc_percent` phía server (window-local Coulomb counting; `cycle_count` mặc định 0 vì gRPC `PredictRequest` không có field `cycle_idx` riêng — chỉ REST có). |
+| 3 (legacy) | `voltage, current, temperature` | Chỉ dùng được với artifact rất cũ — tránh dùng cho payload mới. |
+
+- `reading_objects` (named-field, `ReadingFields`) là **alternative**, không phải bổ sung — nếu
+  gửi cả `readings` lẫn `reading_objects`, **`reading_objects` thắng** (giống REST Union-type).
+  Ưu điểm: tránh lỗi đảo cột (`[v, i, t, time]` vs `[i, v, t, time]`) vì named field không thể
+  đảo nhầm như positional array.
+- `cycle_count`/`soc_percent` trong `ReadingFields` dùng `optional` — phải set **cả 2 cùng lúc
+  hoặc không set cái nào** trên **toàn bộ** window (validator reject nếu window có readings vừa
+  có vừa thiếu 2 field này).
+- Window **PHẢI đúng 30 timestep** — khác 30 → `INVALID_ARGUMENT` (gRPC) / `422` (REST).
+
+### 7.2. `PackConfig` — pin nhiều cell (GH-65/67)
+
+```
+voltage_cell = voltage_pack / n_series        (áp dụng TRƯỚC scaler + TRƯỚC warning threshold)
+current_equiv = current_pack × (2.0 / capacity_ah)   (chỉ khi capacity_ah được set)
+```
+
+- `n_series` (mặc định 1 = single cell, legacy behavior). Ví dụ 12V ≈ 3S NMC, 12.8V ≈ 4S LFP.
+- `chemistry`: `"LFP"` chọn voltage warning profile riêng (LiFePO4 plateau phẳng 3.2-3.3V —
+  profile NMC mặc định sẽ spam `VOLTAGE_LOW` sai và bỏ sót overcharge thật). Unset/unknown =
+  NMC/NASA default. Tự động normalize `"lfp"/"lifepo4"` → `"LFP"`, `"nmc"` → `"NMC"`.
+- `capacity_ah`: rescale current về C-rate tương đương cell NASA 2Ah **trước** scaler/range-guard/
+  threshold. Không set = không rescale.
+- **Quan trọng:** `raw` (dùng cho `warnings` + `feature_summary` trong response) là giá trị
+  **SAU KHI** đã chia `n_series` / rescale `capacity_ah` — tức `evidence.feature_summary.voltage`
+  BE nhận về là **per-cell**, KHÔNG phải pack voltage BE gửi lên. Đừng hiểu nhầm đây là echo lại
+  giá trị gốc.
+- **Chưa validate độ chính xác dự đoán trên đường cong LFP thật** (GH-67 chỉ chỉnh threshold
+  cảnh báo, không phải retrain model cho LFP) — SOH% trên pin LFP vẫn suy ra từ model train trên
+  NASA NMC/18650.
+
+### 7.3. Value-range validation (GH-66) — reject trước khi vào scaler
+
+| Field | Khoảng hợp lệ | Kiểm tra SAU khi áp dụng `pack_config` |
+|---|---|---|
+| Voltage (per-cell) | `[2.0, 4.5]` V | |
+| Current (NASA-equivalent) | `[-5.0, 5.0]` A | |
+| Temperature | `[-10.0, 60.0]` °C | không chia n_series |
+| SOC percent | `[0.0, 100.0]` | chỉ check nếu gửi đủ 6 cột |
+
+Ngoài khoảng → `INVALID_ARGUMENT` kèm message gợi ý (vd "gửi thêm `pack_config.n_series`") —
+chặn silent garbage (12V pack chưa quy đổi bị coi là voltage-per-cell 12V → out of range ngay,
+thay vì lọt qua scaler và ra SOH vô nghĩa với confidence bình thường). `NaN`/`Inf` cũng bị reject
+tại đây (Pydantic `float` không tự chặn NaN).
+
+---
+
+## 8. Response Semantics — Prediction / Anomaly / Risk
+
+### 8.1. `PredictionInfo` — uncertainty staging (GH-86)
+
+`health_stage` không còn chỉ là 1 threshold trên `soh_percent` (mean) — được quyết định bằng
+**argmax trên phân phối 10 mẫu MC Dropout** (mỗi mẫu rơi vào 1 trong 4 bin:
+`End Of Life`(<80) / `Maintenance Required`(80-85) / `Degrading`(85-90) / `Healthy`(≥90)):
+
+```
+stage_probabilities: {"End Of Life": 0.1, "Maintenance Required": 0.9, ...}  // sums to 1.0
+stage_confidence:    0.9     // probability của stage được chọn (argmax)
+is_borderline:       false   // true khi stage_confidence < 0.7 — không stage nào áp đảo
+```
+
+BE nên hiển thị cảnh báo "kết quả chưa chắc chắn" khi `is_borderline=true`, thay vì chỉ tin
+`health_stage` như một nhãn chắc chắn.
+
+### 8.2. `AnomalyInfo` — 2 tầng phân loại độc lập
+
+- `anomaly.anomaly_status` (`Normal`/`Warning`/`Anomaly`) — thuần từ `IsolationForest score`.
+- `classification` (flat field, legacy 3-tier `Normal`/`Degrading`/`Failed`) — thuần từ `soh_percent`,
+  chỉ hạ cấp `Normal→Degrading` nếu score bất thường VÀ SOH khỏe (≥90%).
+- 2 field này **không phải cùng 1 taxonomy** — đừng map 1-1 giữa `anomaly_status` và `classification`.
+- `anomaly.anomaly_confidence` = `|score|` clip `[0,1]` — **không phải xác suất calibrated**, chỉ
+  là độ lớn tương đối của decision_function.
+
+### 8.3. `RiskInfo.priority` — tín hiệu Urgency, KHÔNG phải Priority ticket cuối cùng
+
+`risk.priority` (`P1`/`P2`/`P3`/`None`) tính **thuần từ severity kỹ thuật của pin**
+(`health_stage`, `anomaly_status`, cảnh báo critical) — AI **không biết** `ImpactScope`
+(Site/SingleAsset/MultiSite), chỉ BE có. Theo Priority Policy (`.claude/rules/design.md`):
+Priority ticket thật = **ma trận Impact × Urgency**, chốt lúc Manager triage, không role nào đổi
+sau đó.
+
+```
+risk.priority (AI, chỉ severity pin)  +  ImpactScope (BE)  →  Priority Matrix (BE)  →  Priority ticket thật
+```
+
+**⚠️ Gotcha đã verify bằng code thật — `priority` không tỉ lệ thuận với mức độ hành động:**
+Bất kỳ `soh_percent` nào rơi vào khoảng **80–85%** (`health_stage = "Maintenance Required"`)
+LUÔN kèm cảnh báo `SOH_CRITICAL` với `severity: "critical"` (ngưỡng trong
+`generate_warnings()`). `compute_risk_profile()` đọc thấy `has_critical_warning=True` nên gán
+`risk_level="Critical"`, `priority="P1"` — **NGAY CẢ KHI** `action_code` vẫn chỉ là
+`"SCHEDULE_REPLACEMENT"` (không phải `REPLACE_IMMEDIATELY`). Nói cách khác: SOH 82% → `priority
+P1` + `action_code SCHEDULE_REPLACEMENT` cùng lúc — nếu BE lỡ suy luận "P1 thì phải
+REPLACE_IMMEDIATELY" sẽ sai. Luôn đọc `action_code` để biết hành động cụ thể, đọc `priority` chỉ
+để biết mức urgency gợi ý cho Priority Matrix — 2 field độc lập, không suy ra field kia từ field này.
+
+### 8.4. `ResponseMetadata` — nhãn "extrapolation" (GH-91)
+
+`temperature_domain_distance` + `is_temperature_ood`: model chỉ từng train ở đúng 3 mốc nhiệt độ
+buồng NASA (4°C, 24°C, 44°C). Một giá trị PHÙ HỢP khoảng hợp lệ `[-10,60]` nhưng xa cả 3 mốc này
+(vd 15°C) **vẫn qua được range-guard §7.3** nhưng là extrapolation ngầm — field này bật cờ
+riêng để BE biết SOH lúc đó kém tin cậy hơn dù không có lỗi nào được raise.
+
+---
+
+## 9. ⚠️ Giới hạn phải biết trước khi tích hợp
+
+### 9.1. `rul_cycles_estimate` / `degradation_rate_per_cycle` / `cycles_to_maintenance` / `soh_trajectory` — KHÔNG đáng tin ở window=30 (phát hiện khi viết tài liệu này, verify bằng code thật)
+
+`compute_degradation_metrics()` chia window thành `n_seg = max(2, min(10, L // 285))` đoạn
+(`285` = độ dài trung bình 1 chu kỳ NASA thật). Với **window=30 (chuẩn production)**, `30 // 285
+= 0` → **luôn luôn đúng 2 đoạn**, bất kể window có thật sự trải dài nhiều chu kỳ hay không. Slope
+điện áp giữa 2 đoạn 15-bước này bị nhân với hệ số `285/15 = 19` rồi đổi sang `%SOH/cycle` (×37.5)
+để suy ra "tốc độ suy giảm mỗi chu kỳ" — chỉ cần độ dốc điện áp trong window **lớn hơn ~0.003V**
+(rất dễ xảy ra ngay cả ở pin khỏe mạnh, discharge bình thường) là kết quả bị **clip trần ở giá
+trị tối đa 2.0 %SOH/cycle**.
+
+Hệ quả verify thực tế trên 1 kịch bản pin **93.3% SOH, `health_stage="Healthy"`, không cảnh báo
+nào**: response vẫn trả `rul_cycles_estimate: 6`, `cycles_to_maintenance: 4`,
+`degradation_rate_per_cycle: 2.0` — đọc qua tưởng pin sắp hỏng trong 6 chu kỳ, dù thực tế
+`soh_percent` + `health_stage` + `risk` đều nói pin khỏe bình thường.
+
+**BE PHẢI:**
+- Coi `soh_percent`, `health_stage`, `risk.*` là nguồn authoritative.
+- Coi `rul_cycles_estimate`/`degradation_rate_per_cycle`/`cycles_to_maintenance`/
+  `soh_trajectory` là **thử nghiệm/không đáng tin cho window=30** — không hiển thị trực tiếp cho
+  Customer như 1 con số dự báo chính xác (vd "pin sẽ hỏng sau N chu kỳ") nếu chưa có cải thiện
+  từ phía AI team cho trường hợp 1-window request. Các field này chỉ có ý nghĩa khi window thật
+  sự trải dài ≥ nhiều trăm timestep (nhiều chu kỳ thật) — không phải trường hợp chuẩn 30-timestep
+  mà production đang gửi.
+
+### 9.2. Escalation/safety text có thể lặp gần-giống nhau
+
+`escalation_conditions` gộp từ `rule_prescription` (v1) và `safety_gate` (v2) bằng dedup **so
+khớp string tuyệt đối** — 2 tầng đôi khi tạo câu nói cùng ý nhưng khác dấu câu (vd "escalate to
+P1 immediately." vs "escalate to P1 immediately" không dấu chấm) nên **không bị dedup**, xuất
+hiện gần-trùng lặp trong list. Nếu BE hiển thị trực tiếp lên UI ticket, cân nhắc dedup thêm theo
+similarity ở phía BE, hoặc chỉ hiển thị `n` item đầu.
+
+### 9.3. `prescription_id` / feedback loop — REST-only, chưa có ở gRPC
+
+`PrescribeResponse.prescription_id` (GH-83, uuid4, chỉ set khi `enrich=true` và ghi history
+thành công) dùng để gọi **`POST /prescribe/feedback`** — endpoint này **CHỈ có ở REST**, `.proto`
+hiện KHÔNG có RPC tương ứng. Nếu BE cần vòng feedback (accepted/edited/rejected) mà muốn tránh
+hoàn toàn FastAPI, đây là khoảng trống cần 1 ticket bên AI team bổ sung RPC `SubmitFeedback` —
+hiện tại buộc phải gọi REST cho riêng bước này.
+
+### 9.4. Idempotency — chưa có (GH-84)
+
+Gọi `Prescribe` nhiều lần với cùng input (event trùng/burst, retry MassTransit) sẽ chạy MC
+Dropout + rule/LLM lại từ đầu mỗi lần — không có cache/dedup phía AI. BE nên tự dedup phía
+consumer (theo event ID của chính BE) trong lúc chờ GH-84.
+
+### 9.5. Causal degradation rate (GH-95) cần cùng `battery_id` xuyên suốt
+
+`classify_anomaly()` có thể escalate 1 bậc severity (`Normal→Degrading→Failed`) dựa trên xu
+hướng SOH của **chính pin đó qua các lần gọi trước** (`src/services/battery_history.py`, in-
+memory, key theo `battery_id`, giữ tối đa 8 điểm gần nhất). Điều này **CHỈ hoạt động nếu BE luôn
+gửi cùng `battery_id`** cho cùng 1 pin vật lý qua các lần gọi, và **cùng gửi `cycle_count`** (4
+hoặc 6-cột đều được, miễn có). History **mất khi restart server** và **không share giữa nhiều
+replica** (single-process, in-memory) — nếu deploy nhiều instance sau load balancer, causal-rate
+escalation sẽ không nhất quán giữa các request của cùng 1 pin tùy request rơi vào replica nào.
+
+### 9.6. Anomaly F1 trên window-shape đơn thuần chưa đạt target 0.80
+
+`IsolationForest` trên feature 57-dim của 1 window đơn lẻ có AUC ~0.5 cho early/gradual
+degradation (GH-70/GH-95) — đây là lý do GH-95 thêm causal rate (§9.5) làm tín hiệu bổ sung.
+Đừng kỳ vọng `anomaly_score`/`anomaly_status` một mình phát hiện tốt degradation từ từ; chúng
+mạnh hơn ở phát hiện **bất thường đột ngột trong 1 window** (sensor spike, nhiễu) hơn là trend
+dài hạn.
+
+---
+
+## 10. Prescription Pipeline (rule → enrich → agentic → safety gate)
+
+```
+run_prescription(readings, battery_id, enrich, agentic, pack_config, ...)
+  1. run_inference()                     → prediction/anomaly/risk/warnings (LUÔN chạy, kể cả enrich=false)
+  2. build_rule_prescription()           → baseline rule-based (<100ms, không mạng, LUÔN chạy)
+  3. NẾU enrich=true:
+       agentic=false → RAG template query (2 query cố định) → LLM sinh prescription
+       agentic=true  → LLM sinh 3-5 query từ diagnosis statement → multi-query RAG (dedup theo relevance)
+     LLM fail bất kỳ bước nào → fallback về rule-based, KHÔNG lỗi ra ngoài
+  4. apply_safety_gate()                 → LUÔN chạy (cả 2 path):
+       - P1/REPLACE_IMMEDIATELY luôn set human_verification_required=true
+       - Cảnh báo thermal/electrical critical → inject LOTO/thermal step nếu thiếu trong action_steps
+       - PPE bắt buộc theo hazard (union vào ppe_required, kể cả path rule-based)
+       - Blocklist forbidden-action CHỈ áp dụng cho text LLM sinh (llm_generated=true) — rule text luôn an toàn
+  4b. LLM-as-judge (optional, env SAFETY_LLM_JUDGE=1) — chỉ chạy khi enrich=true và chưa bị block
+  4c. Nếu blocked → discard LLM output, fallback rule-based, re-run gate 1 lần, ghi audit log
+  5. NẾU enrich=true → lưu history (best-effort) → prescription_id (uuid4) cho feedback loop
+  6. return PrescribeResponse dict
+```
+
+**`enrich=false` là default và là path BE nên dùng cho luồng auto-ticket event-driven**
+(`BatteryAnomalyDetectedEvent` → `Prescribe`) — rule-based, cùng hot-path budget với `Predict`
+(benchmark thật `enrich=false`: avg 54.1ms, p95 72.4ms — artifacts v1.6, `n=50`). `enrich=true`
+(RAG+LLM, có thể mất vài giây) chỉ dùng cho tương tác thủ công (vd nút "AI gợi ý chi tiết" trên
+UI kỹ thuật viên), KHÔNG thuộc luồng event-driven.
+
+**LLM provider chain:** `deepseek` → `gemini` → `anthropic` (fallback tuần tự nếu key trước lỗi/thiếu),
+`llm_provider: "none"` khi không có key nào hoặc path rule-based. Xem `docs/adr/0003-llm-provider-chain.md`.
+
+---
+
+## 11. Error handling & mã lỗi
+
+| Tình huống | gRPC | REST (tham khảo, không phải path BE nên dùng) |
+|---|---|---|
+| Input sai (window≠30, feature count sai, out-of-range, NaN) | `INVALID_ARGUMENT` (message = Pydantic validation error, dùng chung validator với REST) | `422` |
+| Lỗi pipeline nội bộ (exception trong `run_inference`/`run_prescription`) | `INTERNAL` | `500` |
+| Server chưa sẵn sàng | `UNAVAILABLE` | connection refused |
+| Stream lỗi giữa chừng (`PredictStream`) | Không có per-message error — window lỗi thứ k → client đã nhận đủ k-1 response trước đó, rồi cả stream abort bằng `RpcException(INVALID_ARGUMENT)`. Client nên catch → reconnect → gửi tiếp từ window k+1. | N/A |
+| Có kết quả nhưng "mềm" (chưa reject) | Không có — validate chỉ reject range/shape/NaN; giá trị hợp lệ nhưng bất thường (vd nhiệt độ OOD) trả về BÌNH THƯỜNG kèm cờ cảnh báo trong response (§8.4), không phải lỗi | (giống) |
+
+Không có khái niệm "200 OK kèm lỗi trong body" ở gRPC (khác REST's `CommonResponse.isSuccess=false`)
+— input sai luôn là `INVALID_ARGUMENT`, BE nên catch theo status code chuẩn gRPC, không parse message
+để suy lỗi.
+
+---
+
+## 12. Latency benchmark hiện tại
+
+Máy dev CPU, dummy weights trừ khi ghi chú khác (`scripts/benchmark_grpc.py`):
+
+| RPC | avg | p95 | Ghi chú |
 |---|---|---|---|
-| End Of Life (SOH < 80%) | Critical | **P1** | REPLACE_IMMEDIATELY |
-| Maintenance Required (SOH 80–85%) | High | **P2** | SCHEDULE_REPLACEMENT |
-| Degrading (SOH 85–90%) | Medium | **P3** | SCHEDULE_MAINTENANCE |
-| Healthy (SOH ≥ 90%) | Low | None | MONITOR |
+| `Predict` unary | ~114ms | — | dummy weights |
+| `PredictStream` (per window) | ~116ms | — | không tốn thêm so với unary |
+| `Prescribe` (`enrich=false`) | ~116ms (dummy) / **54.1ms (real weights v1.6, n=50)** | 72.4ms (real) | Đạt cả SLA batch <500ms lẫn P1 hot-path <100ms |
+| Transport overhead (gRPC thêm so với gọi hàm trực tiếp) | ~1–28ms | — | budget <50ms — PASS |
 
-> Critical sensor warning (voltage/temp) override: luôn đẩy lên P1 bất kể SOH.
-
-### 4.5. Training Configuration
-
-| Tham số | Production (L=30) | Long (L=4096) |
-|---------|-------------------|---------------|
-| Optimizer | Adam | Adam |
-| Learning rate | 1e-3 | 5e-4 (final stage) |
-| Loss | SmoothL1(beta=0.02) | SmoothL1(beta=0.02) |
-| Batch size (eff.) | 32 | 32 (micro=8 × accum=4) |
-| Max epochs | 50 | 50 (final stage) |
-| Early stopping patience | 30 | 30 |
-| LR scheduler | CosineAnnealingWarmRestarts T_0=25 T_mult=2 | CosineAnnealingWarmRestarts T_0=25 T_mult=2 |
-| Random seed | **42** | **42** |
-| Warmup | — | stages [256, 512, 1024, 2048, 4096] × 3 epochs |
-| AMP | — | fp16 (GPU) |
-
-### 4.6. Target Metrics
-
-| Metric | Target | Đạt được |
-|--------|--------|---------|
-| MAE (production L=30) | **< 2.0%** SOH | 1.87% ✅ |
-| RMSE (production L=30) | **< 3.0%** SOH | 2.31% ✅ |
-| MAE (long L=4096) | **< 2.0%** SOH | **1.6293%** ✅ |
-| RMSE (long L=4096) | **< 3.0%** SOH | **2.0871%** ✅ |
-| Anomaly F1 | **> 0.80** | — |
-| Inference latency | **< 100ms** | CPU, batch_size=1 |
+SLA `<100ms` (P1) enforce trên môi trường deploy với weights thật; số dev CPU chỉ tham khảo
+tương đối. Chạy lại: `python scripts/benchmark_grpc.py --real-weights`.
 
 ---
 
-## 5. Feature Engineering
+## 13. Setup client .NET (C#)
 
-### 5.1. Spectral + Kurtosis Features (54-dim)
-
-Module `src/features/extractor.py` — trích xuất từ window sau khi scale, dùng cho **FiLM conditioning** (MambaSOHPredictor) và **IsolationForest** (anomaly detection).
-
-Input: chuỗi đã scale, lấy 3 channels đầu (voltage, current, temperature).
-
-**Spectral features (9 per channel — FFT-based):**
-
-| Feature | Mô tả |
-|---------|-------|
-| `centroid` | Trung tâm năng lượng phổ tần số |
-| `entropy` | Entropy phổ — đo độ phân tán tần số |
-| `peak_freq` | Tần số có năng lượng cao nhất |
-| `peak_power_db` | Công suất đỉnh (dB) |
-| `flatness` | Spectral flatness (nhiễu trắng ≈ 1) |
-| `rolloff` | Tần số chứa 85% tổng năng lượng |
-| `band_low/mid/high` | Phân bổ năng lượng 3 dải tần |
-
-**Statistical features (9 per channel — time-domain):**
-
-| Feature | Mô tả |
-|---------|-------|
-| `mean`, `std` | Trung bình, độ lệch chuẩn |
-| `skewness` | Độ lệch phân phối |
-| `kurtosis` | "Đuôi nặng" — nhạy với spike dị thường |
-| `crest_factor` | Peak / RMS — đo xung đột |
-| `waveform_factor` | RMS / mean |
-| `pulse_factor` | Peak / mean |
-| `margin_factor` | Peak / RMS² |
-| `peak_to_peak` | Biên độ dao động |
-
-**Tổng:** `(9 spectral + 9 statistical) × 3 channels = 54 features`
-
-### 5.2. Per-patch Degradation Stats — PatchDegradationEncoder (Long model)
-
-Trong long model (L=4096), mỗi patch 16-step được bổ sung local stats:
-
-| Stat | Ý nghĩa |
-|------|---------|
-| RMS | Năng lượng trung bình trong patch |
-| Peak-to-peak | Biên độ dao động trong patch |
-| Std | Độ biến động tín hiệu |
-| Excess kurtosis | Chỉ số xung — cao khi gần EOL / fault |
-
-`4 stats × input_features channels = 32-dim` → project to d_model, add vào patch token.
-
-> Overcomes bottleneck của global FiLM averaging khi L=4096 spans 100+ discharge cycles. Inspired by DualMamba (Frontiers CS 2026) và BatteryML (arXiv 2310.14714).
-
-### 5.3. IC Curve + Phase Mask (Long model only)
-
-`src/features/extractor.py`: `compute_ic_feature` + `compute_phase_mask`
-
-| Feature | Ý nghĩa vật lý |
-|---------|----------------|
-| `dQ/dV` (IC curve) | Incremental Capacity — phát hiện phase transition pin |
-| `phase_mask` | 0=rest, 1=charge, 2=discharge — giúp attention focus vào discharge |
-
-> IC curve nhạy cảm với degradation cơ học (lithium plating, particle cracking). Dubarry & Liaw, 2009.
-
----
-
-## 6. Dataset & Training Pipeline
-
-### 6.1. NASA Ames Battery Dataset
-
-| Thông tin | Chi tiết |
-|-----------|---------|
-| Cell type | 18650 Lithium-ion |
-| Tổng batteries | 34 cells (B0005 → B0056) |
-| Format gốc | `.mat` (MATLAB) — đã convert sang CSV |
-| Nominal capacity | **2.0 Ah** |
-| Features | Voltage_measured, Current_measured, Temperature_measured, Current_load, Voltage_load, Time |
-| SOH formula | `capacity_current / 2.0 × 100` |
-
-**Train/Val/Test split (cố định, không thay đổi):**
-
-| Split | Battery IDs | Windows (L=30) | SOH Range |
-|-------|-------------|----------------|-----------|
-| **Train** | B0005, B0006, B0007 | 4,812 | 57.7% – 101.8% |
-| **Val** | B0018 (70% đầu) | 767 | 72.0% – 92.8% |
-| **Test** | B0018 (30% cuối) | 329 | 67.1% – 73.5% |
-
-**Long model split (L=4096):**
-
-| Split | Samples | Ghi chú |
-|-------|---------|---------|
-| Train | 4,411 | stride=64 trên B0005/06/07 |
-| Val | 622 | B0018 (70% đầu) |
-| Test | 311 | B0018 (30% cuối) |
-
-> **Tại sao chia theo battery ID?** Chia theo timestep gây **data leakage** — model thấy cùng 1 pin trong cả train và test → accuracy ảo. Chia theo battery ID đảm bảo generalization thực sự.
-
-### 6.2. Preprocessing Pipeline
-
-```
-data/raw/nasa/cleaned_dataset/
-├── metadata.csv          ← battery_id, type, filename, Capacity
-└── data/
-    ├── 00001.csv         ← 1 cycle/file: V, I, T, I_load, V_load, Time
-    └── ...
-
-─── scripts/preprocess.py ───────────────────────────────── (L=30, production)
-1. Đọc metadata.csv → filter discharge cycles có Capacity
-2. Mỗi cycle: đọc CSV → lấy 6 features
-3. Sliding windows: window=30, stride=30 (non-overlapping)
-4. SOH = Capacity / 2.0 × 100
-5. Fit MinMaxScaler(6-feat) trên TRAIN → transform val/test
-6. Fit StandardScaler(54-feat) trên TRAIN spectral features
-7. Lưu scaler.pkl + feature_scaler.pkl + {train,val,test}.pt
-
-─── scripts/preprocess_long.py ──────────────────────────── (L=4096, GH-10)
-v2: 8-feature data: [V, I, T, I_load, V_load, time, dQ/dV, phase]
-Sliding windows: window=4096, stride=64
-→ scaler_long.pkl + feature_scaler_long.pkl + long_{train,val,test}.pt
+```xml
+<!-- ServiceName.Infrastructure.csproj -->
+<ItemGroup>
+  <PackageReference Include="Google.Protobuf" Version="3.27.*" />
+  <PackageReference Include="Grpc.Net.Client" Version="2.63.*" />
+  <PackageReference Include="Grpc.Tools" Version="2.63.*" PrivateAssets="All" />
+</ItemGroup>
+<ItemGroup>
+  <Protobuf Include="Protos\ai_service.proto" GrpcServices="Client" />
+</ItemGroup>
 ```
 
-### 6.3. Training Pipeline
+```csharp
+using AiModule.V1;
+using Grpc.Net.Client;
 
-```bash
-# Production model (L=30)
-python scripts/preprocess.py --data-dir data/raw/nasa/cleaned_dataset
-python scripts/train.py --data-dir data/processed --epochs 50
+// Channel tạo 1 lần, tái dùng (DI singleton) — KHÔNG tạo per-request
+var channel = GrpcChannel.ForAddress("http://ai-module:50051");   // insecure, nội bộ docker network
+var client  = new AiService.AiServiceClient(channel);
 
-# Output:
-# models/weights/scaler.pkl                    ← 6-feat MinMaxScaler
-# models/weights/feature_scaler.pkl            ← 54-dim StandardScaler
-# models/weights/soh_mamba_v1.2.pth            ← Mamba weights
-# models/weights/isolation_forest_v1.2.pkl     ← IsolationForest
-
-# Long model (L=4096) — chạy trên Kaggle GPU
-python scripts/preprocess_long.py
-python scripts/train.py --long --epochs 50
-
-# Output:
-# models/weights/scaler_long.pkl               ← 8-feat MinMaxScaler
-# models/weights/feature_scaler_long.pkl       ← 54-dim StandardScaler
-# models/weights/soh_mamba_long_v2.0.pth       ← Long Mamba weights
-```
-
-**Log format — Long model (Kaggle 2026-06-20):**
-```
-INFO  Train 4411 | Val 622 | Test 311 | seq_len=4096
-INFO  Patch: size=16 stride=16 → 256 tokens (16× compression)
-INFO  Warmup stages: [256, 512, 1024, 2048, 4096] | micro_batch=8 accum=4
-INFO  [stage 1/5] L=256  epochs=3
-...
-INFO  Final stage: LR=0.0005, CAWR T_0=25 T_mult=2 eta_min=1e-5
-INFO  Early stopping at epoch 41 (patience=30)
-INFO  Test MAE : 1.6293%  ✅
-INFO  Test RMSE: 2.0871%  ✅
-```
-
-### 6.4. Scripts tổng quan
-
-| Script | Mục đích |
-|--------|---------|
-| `preprocess.py` | NASA CSV → `data/processed/*.pt` (6-feature, L=30) |
-| `preprocess_long.py` | NASA CSV → long-context data (8-feature, L=4096) |
-| `preprocess_rul.py` | NASA CSV → RUL dataset (per-cycle 54-dim features) |
-| `preprocess_forecast.py` | NASA CSV → multi-step SOH forecast dataset |
-| `train.py` | Train MambaSOHPredictor + IsolationForest (cả short lẫn long) |
-| `experiment_nowcast_lobo.py` | LOBO cross-validation cho multi-battery |
-| `experiment_nowcast_multi.py` | Multi-battery nowcast experiment |
-| `create_dummy_artifacts.py` | Gen dummy weights cho dev (không cần real data) |
-| `benchmark_tokens.py` | Benchmark inference latency |
-
-### 6.5. Model Artifacts
-
-| File | Size | Dùng cho | Phải commit |
-|------|------|---------|-------------|
-| `scaler.pkl` | ~1 KB | MinMaxScaler 6-feat (production) | ✅ |
-| `feature_scaler.pkl` | ~2 KB | StandardScaler 54-dim (production) | ✅ |
-| `soh_mamba_v1.2.pth` | ~306 KB | Production Mamba (L=30) | ✅ |
-| `isolation_forest_v1.2.pkl` | ~1.75 MB | IsolationForest (production) | ✅ |
-| `scaler_long.pkl` | ~1 KB | MinMaxScaler 8-feat (long model) | ✅ |
-| `feature_scaler_long.pkl` | ~2 KB | StandardScaler 54-dim (long model) | ✅ |
-| `soh_mamba_long_v2.0.pth` | ~306 KB | Long Mamba (L=4096) | ✅ |
-| `feature_scaler_rul.pkl` | ~2 KB | StandardScaler 54-dim (RUL model) | ✅ |
-| `soh_mamba_rul_v1.0.pth` | ~290 KB | RUL Predictor | ✅ |
-
-> **QUAN TRỌNG:** Tất cả artifacts phải **commit vào Git** cùng 1 commit khi update. Không fit lại scaler/IF trên production data.
-
----
-
-## 7. API Endpoints
-
-### Base URL
-```
-http://localhost:8000
-```
-
-### GET /health
-
-```json
+var request = new PrescribeRequest { BatteryId = "B0005", Enrich = false };
+foreach (var row in windowRows)              // 30 hàng, mỗi hàng 4 hoặc 6 double
 {
-  "status": "ok",
-  "model_version": "1.2",
-  "scaler_loaded": true,
-  "lstm_loaded": true,
-  "isolation_forest_loaded": true
+    var reading = new Reading();
+    reading.Values.AddRange(row);
+    request.Readings.Add(reading);
 }
+// Đa cell: request.PackConfig = new PackConfig { NSeries = 4, Chemistry = "LFP", CapacityAh = 2.5 };
+
+var response = await client.PrescribeAsync(request);
+// response.Prediction.SohPercent, response.Prediction.HealthStage,
+// response.Risk.Priority ("P1".."P3"|"None"), response.ActionCode(?) -- xem §6.1 cho field đúng
+// response.ActionSteps, response.PpeRequired, response.HumanVerificationRequired
 ```
 
----
+Streaming (`PredictStream`):
 
-### POST /predict
+```csharp
+using var call = client.PredictStream();
+foreach (var window in windows)
+    await call.RequestStream.WriteAsync(window);
+await call.RequestStream.CompleteAsync();
 
-Dự đoán SOH và phân loại trạng thái pin từ 30 timestep sensor data.
-
-**Request:**
-```json
-{
-  "battery_id": "B0005",
-  "readings": [
-    [3.92, -0.99, 25.3, -1.00, 3.90, 0.0],
-    "... (30 rows: [voltage, current, temperature, current_load, voltage_load, time])"
-  ]
-}
+await foreach (var response in call.ResponseStream.ReadAllAsync())
+    Console.WriteLine($"{response.BatteryId}: {response.SohPercent}%");
 ```
 
-> Legacy 3-feature `[voltage, current, temperature]` vẫn được nhận — tự động align.
-
-**Response (đầy đủ):**
-```json
-{
-  "battery_id": "B0005",
-
-  "prediction": {
-    "soh_percent": 84.5,
-    "health_stage": "Degrading",
-    "rul_cycles_estimate": 30,
-    "degradation_rate_per_cycle": 0.15,
-    "soh_trend": "stable",
-    "cycles_to_maintenance": 0,
-    "soh_trajectory": [84.35, 84.20, 84.05, 83.90, 83.75]
-  },
-
-  "anomaly": {
-    "anomaly_score": -0.12,
-    "anomaly_status": "Warning",
-    "anomaly_confidence": 0.12
-  },
-
-  "risk": {
-    "risk_level": "Medium",
-    "priority": "P3",
-    "action_code": "SCHEDULE_MAINTENANCE",
-    "reasons": ["SOH 84.5% indicates degradation below 90%"]
-  },
-
-  "evidence": {
-    "warnings": [
-      {"code": "SOH_LOW", "severity": "warning", "message": "SOH 84.5% is below 90%..."}
-    ],
-    "feature_summary": {
-      "voltage": {"mean": 3.52, "min": 3.05, "max": 3.92},
-      "current": {"mean": -0.99, "min": -1.00, "max": -0.99},
-      "temperature": {"mean": 27.1, "min": 25.3, "max": 29.1}
-    }
-  },
-
-  "metadata": {
-    "model_version": "1.2",
-    "window_size": 30,
-    "input_features": 6,
-    "inference_ms": 87.4
-  },
-
-  "soh_percent": 84.5,
-  "classification": "Degrading",
-  "confidence": 0.82,
-  "inference_ms": 87.4,
-
-  "rul_cycles_estimate": 30,
-  "degradation_rate_per_cycle": 0.15,
-  "soh_trend": "stable",
-  "cycles_to_maintenance": 0,
-  "soh_trajectory": [84.35, 84.20, 84.05, 83.90, 83.75],
-  "anomaly_score": -0.12,
-  "recommended_action": "SCHEDULE_MAINTENANCE",
-  "warnings": [...],
-  "feature_summary": {...}
-}
-```
-
-> Flat fields (`soh_percent`, `classification`, ...) là backward-compatible — giữ đến khi BE migrate sang nested response.
-
-**Error cases:**
-```json
-// readings không phải 30 timestep
-HTTP 422: {"detail": "readings must have 30 timesteps, got 25"}
-
-// features không phải 3 hoặc 6
-HTTP 422: {"detail": "readings[0] must have one of {3, 6} feature counts"}
-```
-
----
-
-## 8. Cấu trúc thư mục
-
-```
-ai-module/
-│
-├── main.py                          ← FastAPI app entry point
-│
-├── src/
-│   ├── models/
-│   │   ├── soh_predictor.py         ← MambaBlock + MambaSOHPredictor (production + long)
-│   │   ├── rul_predictor.py         ← RULPredictor — cycle-level Mamba
-│   │   └── anomaly_detector.py      ← classify_anomaly, compute_risk_profile, generate_warnings
-│   │
-│   ├── features/
-│   │   └── extractor.py             ← 54-dim spectral+kurtosis, IC curve, phase mask
-│   │
-│   ├── schemas/
-│   │   └── predict.py               ← PredictRequest, PredictResponse (Pydantic)
-│   │
-│   ├── routers/
-│   │   ├── predict.py               ← POST /predict
-│   │   └── health.py                ← GET /health
-│   │
-│   ├── services/
-│   │   ├── inference.py             ← run_inference() + predict_soh_long()
-│   │   └── confidence.py            ← MC Dropout confidence
-│   │
-│   └── core/
-│       ├── config.py                ← Paths, versions, hyperparameters
-│       └── model_loader.py          ← load_models() (startup) + load_long_model() (lazy)
-│
-├── scripts/
-│   ├── preprocess.py                ← NASA CSV → *.pt (6-feat, L=30)
-│   ├── preprocess_long.py           ← NASA CSV → *.pt (8-feat, L=4096)
-│   ├── preprocess_rul.py            ← RUL dataset (per-cycle features)
-│   ├── preprocess_forecast.py       ← Multi-step forecast dataset
-│   ├── train.py                     ← Train Mamba + IsolationForest (short + long)
-│   ├── experiment_nowcast_lobo.py   ← LOBO cross-validation
-│   ├── experiment_nowcast_multi.py  ← Multi-battery experiment
-│   ├── benchmark_tokens.py          ← Latency benchmark
-│   └── create_dummy_artifacts.py    ← Dummy artifacts cho dev
-│
-├── tests/
-│   ├── test_models.py               ← MambaSOHPredictor forward pass
-│   ├── test_inference.py            ← Pipeline + latency benchmark
-│   ├── test_preprocess.py           ← Preprocessing utils
-│   ├── test_routers.py              ← FastAPI endpoint tests
-│   └── test_rul.py                  ← RULPredictor tests
-│
-├── models/
-│   └── weights/
-│       ├── scaler.pkl               ← MinMaxScaler 6-feat (PHẢI commit)
-│       ├── feature_scaler.pkl       ← StandardScaler 54-dim (PHẢI commit)
-│       ├── soh_mamba_v1.2.pth       ← Production Mamba (PHẢI commit)
-│       ├── isolation_forest_v1.2.pkl ← IsolationForest (PHẢI commit)
-│       ├── scaler_long.pkl          ← MinMaxScaler 8-feat long (PHẢI commit)
-│       ├── feature_scaler_long.pkl  ← StandardScaler 54-dim long (PHẢI commit)
-│       ├── soh_mamba_long_v2.0.pth  ← Long Mamba (PHẢI commit)
-│       ├── feature_scaler_rul.pkl   ← StandardScaler 54-dim RUL (PHẢI commit)
-│       └── soh_mamba_rul_v1.0.pth   ← RUL Predictor (PHẢI commit)
-│
-├── data/
-│   ├── raw/nasa/cleaned_dataset/    ← NASA CSV (KHÔNG commit — .gitignore)
-│   └── processed/                   ← Output preprocess.py (KHÔNG commit)
-│
-├── logs/
-│   ├── training/                    ← Training logs
-│   └── GH-{number}/                 ← plan.md, review.md, test.md
-│
-├── docs/
-│   └── overall.md                   ← File này
-│
-├── requirements.txt
-├── requirements-dev.txt
-└── CLAUDE.md
-```
-
----
-
-## 9. Hướng dẫn chạy local
-
-### Yêu cầu
-
-- Python 3.11
-- Không cần GPU — CPU-only inference
-
-### Bước 1: Clone và cài dependencies
+Chạy server local để test:
 
 ```bash
-git clone https://github.com/GSU26SE55/ai-module.git
-cd ai-module
-pip install -r requirements.txt
-```
-
-### Bước 2: Tạo dummy artifacts (nếu chưa có)
-
-```bash
-python -X utf8 scripts/create_dummy_artifacts.py
-```
-
-> App boot được với dummy artifacts. Prediction sai nhưng endpoint trả đúng format.
-
-### Bước 3: Chạy FastAPI server
-
-```bash
-uvicorn main:app --reload --port 8000
-```
-
-Mở `http://localhost:8000/docs` để xem Swagger UI.
-
-### Bước 4: Test endpoint
-
-```bash
-curl -X POST http://localhost:8000/predict \
-  -H "Content-Type: application/json" \
-  -d '{
-    "battery_id": "B0005",
-    "readings": [
-      [3.92, -0.99, 25.3, -1.00, 3.90, 0.0],
-      [3.87, -0.99, 25.5, -1.00, 3.85, 13.0],
-      "... (30 rows total)"
-    ]
-  }'
-```
-
-### Bước 5: Chạy tests
-
-```bash
-pytest tests/ -v --cov=src
-# Coverage target: ≥ 85%
-```
-
-### Bước 6 (Tuỳ chọn): Train thật với NASA data
-
-```bash
-python -X utf8 scripts/preprocess.py
-python -X utf8 scripts/train.py --epochs 50
+python -m src.grpc_server              # gRPC :50051 (cần artifacts thật trong models/weights/)
+python scripts/grpc_client_demo.py     # demo đủ 4 RPC (thay Swagger)
+python scripts/benchmark_grpc.py --real-weights
 ```
 
 ---
 
-## 10. Kế hoạch Sprint
-
-### Timeline tổng thể: 11/05/2026 → 06/09/2026
-
-| Sprint | Thời gian | AI Tasks | Deliverable |
-|--------|-----------|----------|-------------|
-| **Sprint 1** ✅ | 11/5 – 1/6 | Setup base, Mamba architecture, preprocessing pipeline, FastAPI skeleton | Code + dummy artifacts, test coverage ≥ 90% |
-| **Sprint 2** ✅ | 2/6 – 21/6 | Train production model, FiLM conditioning, spectral features, long-seq L=4096 (GH-10), RULPredictor | `soh_mamba_v1.2.pth` + `soh_mamba_long_v2.0.pth` — MAE < 2% ✅ |
-| **Sprint 3** 🔥 | 22/6 – 6/7 | SOP Knowledge Base, ChromaDB, POST /prescribe (Prescription Layer) | Prescription endpoint live |
-| **Sprint 4** | 7/7 – 20/7 | Tích hợp BatteryAnomalyDetectedEvent, integration test với BE | End-to-end flow |
-| **Sprint 5** | 21/7 – 3/8 | Load test, safety gate, performance optimization | < 100ms P1 confirmed |
-| **Sprint 6** | 4/8 – 17/8 | Monitor dashboard, refinement | Realtime metrics |
-| **Sprint 7** | 18/8 – 31/8 | System test toàn diện | Final test report |
-| **Sprint 8** | (optional) | IoT pipeline nếu core xong | — |
-
----
-
-## 11. Prescription Layer (Sprint 3)
-
-> **Cơ sở khoa học:** *"From Prediction to Prescription: LLM Agent for Context-Aware Maintenance Decision Support"*
-> Deng et al., PHM Society 2024, Cranfield University — [github.com/BlueAsuka/Rocket-RAG](https://github.com/BlueAsuka/Rocket-RAG)
-
-### 11.1. Lý do thiết kế
-
-ML model (Mamba + Isolation Forest) chỉ trả **prediction** — một con số và nhãn phân loại. Đó là **notification**, không phải **hành động**. Staff nhận alert nhưng không biết làm gì tiếp theo trong hệ thống pin mặt trời.
-
-**Prescription Layer** biến output của prediction thành **kế hoạch bảo trì từng bước**, tự động điền nội dung ticket cho TicketService, giảm tải quyết định cho Staff.
-
-```
-Không có Prescription:
-  SOH 68% → "Failed" → Staff tự viết ticket → sai SOP → P1 breach
-
-Có Prescription:
-  SOH 68% → "Failed" → LLM+RAG → "Thay thế ngay, SOP-BAT-001 §3.2,
-             kiểm tra voltage trước khi tháo, báo Admin" → ticket tự điền
-```
-
----
-
-### 11.2. Kiến trúc pipeline đầy đủ
-
-```
-┌────────────────────────────────────────────────────────────────┐
-│                    POST /prescribe                              │
-│  {battery_id, prediction: {soh%, classification, confidence,  │
-│   anomaly_score, risk.priority, warnings[]}}                   │
-└────────────────────────┬───────────────────────────────────────┘
-                         │
-              ┌──────────▼──────────┐
-              │  Step 1             │
-              │  Fault Statement    │  ← LLM (Claude Haiku)
-              │  Generation         │
-              │                     │
-              │  Input:             │
-              │  · prediction JSON  │
-              │  · battery context  │  ← system prompt cố định
-              │    (SOP domain,     │
-              │     solar context)  │
-              │                     │
-              │  Output:            │
-              │  Fault statement    │  → "Pin B0005 SOH 68.3%,
-              │  (structured text)  │     Failed, anomaly Anomaly,
-              └──────────┬──────────┘     cần thay thế khẩn cấp..."
-                         │
-              ┌──────────▼──────────┐
-              │  Step 2             │
-              │  Search Query       │  ← LLM (Claude Haiku)
-              │  Generation         │
-              │                     │
-              │  Input:             │
-              │  · fault statement  │
-              │                     │
-              │  Output: 3–5 queries│  → ["lithium battery SOH below 80
-              │  (JSON array)       │      replacement procedure",
-              │                     │     "solar battery failed safety
-              └──────────┬──────────┘      checklist", ...]
-                         │
-              ┌──────────▼──────────┐
-              │  Step 3             │
-              │  RAG — ChromaDB     │  ← Vector similarity search
-              │  Knowledge Base     │
-              │                     │
-              │  Input:             │
-              │  · 3–5 queries      │
-              │                     │
-              │  Process:           │
-              │  · embed queries    │  ← sentence-transformers
-              │    (all-MiniLM-L6)  │    (local, không cần API)
-              │  · cosine search    │
-              │    top-3 per query  │
-              │  · dedup + rank     │  → max 5 unique SOP chunks
-              │                     │
-              │  Output:            │
-              │  · SOP chunks       │  → [SOP-BAT-001 §3, SOP-BAT-002 §1,
-              │  · source refs      │     SAFETY-LI-003 §2]
-              └──────────┬──────────┘
-                         │
-              ┌──────────▼──────────┐
-              │  Step 4             │
-              │  Prescription       │  ← LLM (Claude Haiku)
-              │  Report Generation  │
-              │                     │
-              │  Input:             │
-              │  · fault statement  │
-              │  · SOP chunks       │
-              │  · priority (P1/2/3)│
-              │                     │
-              │  Output (JSON):     │
-              │  · action_title     │
-              │  · urgency          │
-              │  · steps[]          │  → bước bảo trì cụ thể
-              │  · sop_references[] │  → [SOP-BAT-001, ...]
-              │  · safety_warnings[]│
-              │  · ticket_description│ → text điền thẳng vào ticket
-              └─────────────────────┘
-```
-
----
-
-### 11.3. Knowledge Base — SOP Documents
-
-**Cấu trúc thư mục:**
-
-```
-data/sop/
-├── SOP-BAT-001.md    ← Thay thế pin (Failed — SOH < 80%)
-├── SOP-BAT-002.md    ← Bảo trì định kỳ (Degrading — SOH 80–90%)
-├── SOP-BAT-003.md    ← Giám sát pin bình thường (Normal)
-├── SOP-BAT-004.md    ← Xử lý pin nhiệt độ cao (temperature > 45°C)
-├── SOP-BAT-005.md    ← Xử lý pin điện áp bất thường
-├── SAFETY-LI-001.md  ← An toàn khi tháo lắp pin lithium-ion
-├── SAFETY-LI-002.md  ← PPE và phòng cháy pin
-└── SAFETY-LI-003.md  ← Quy trình khẩn cấp khi pin phồng/smoke
-```
-
-**Format mỗi SOP file:**
-
-```markdown
----
-id: SOP-BAT-001
-title: Quy trình thay thế pin lithium-ion (Failed)
-trigger: SOH < 80% hoặc classification = Failed
-priority: P1
-last_updated: 2026-06-22
----
-
-## Mục đích
-...
-
-## Điều kiện áp dụng
-- SOH < 80% (End of Life)
-- Anomaly score ≤ -0.3
-
-## Bước thực hiện
-### Bước 1: Kiểm tra an toàn trước tháo lắp
-...
-
-## Cảnh báo an toàn
-- Không charge pin đã Failed
-- Kiểm tra nhiệt độ < 60°C trước khi tháo
-```
-
-**Chunking strategy:**
-
-```
-Mỗi SOP file → split theo heading (##) → chunk ~200–400 tokens
-Mỗi chunk giữ nguyên metadata: {id, title, section, priority}
-→ embed → store ChromaDB collection "sop_chunks"
-```
-
----
-
-### 11.4. ChromaDB Vector Store
-
-```python
-# src/services/knowledge_base.py
-
-import chromadb
-from sentence_transformers import SentenceTransformer
-
-EMBED_MODEL = "all-MiniLM-L6-v2"   # 22MB, CPU-friendly, 384-dim
-COLLECTION  = "sop_chunks"
-TOP_K       = 3                      # top-3 per query
-MAX_CHUNKS  = 5                      # max sau dedup
-
-client     = chromadb.PersistentClient(path="data/chroma")
-collection = client.get_or_create_collection(COLLECTION)
-embedder   = SentenceTransformer(EMBED_MODEL)
-
-def retrieve(queries: list[str]) -> list[dict]:
-    """Embed queries → cosine search → dedup → top MAX_CHUNKS."""
-    seen, results = set(), []
-    for q in queries:
-        vec = embedder.encode(q).tolist()
-        hits = collection.query(query_embeddings=[vec], n_results=TOP_K)
-        for doc, meta in zip(hits["documents"][0], hits["metadatas"][0]):
-            key = meta["id"] + meta["section"]
-            if key not in seen:
-                seen.add(key)
-                results.append({"content": doc, "source": meta})
-                if len(results) >= MAX_CHUNKS:
-                    return results
-    return results
-```
-
-**Khởi tạo ChromaDB (1 lần, khi setup):**
-
-```bash
-python scripts/build_knowledge_base.py   # đọc data/sop/ → chunk → embed → insert
-```
-
----
-
-### 11.5. LLM Prompting Design
-
-**Model:** `claude-haiku-4-5-20251001` — nhanh (~1–2s/call), rẻ, đủ cho structured output.
-
-**Step 1 — Fault Statement:**
-
-```python
-SYSTEM_FAULT = """
-You are a battery health expert for solar energy systems.
-Given a prediction JSON, write a concise 2-3 sentence fault statement in Vietnamese.
-Include: battery ID, SOH value, classification, anomaly status, and immediate implication.
-Do NOT add recommendations here — only describe the fault.
-"""
-
-USER_FAULT = """
-Prediction:
-{prediction_json}
-
-Write the fault statement:
-"""
-```
-
-**Step 2 — Query Generation:**
-
-```python
-SYSTEM_QUERY = """
-You are a maintenance knowledge retrieval specialist.
-Given a fault statement, generate 3-5 search queries in English
-that would find relevant SOP procedures and safety guidelines.
-Return as JSON array: ["query1", "query2", ...]
-"""
-```
-
-**Step 4 — Prescription Report:**
-
-```python
-SYSTEM_PRESCRIBE = """
-You are a senior maintenance engineer for solar lithium-ion battery systems.
-Given the fault statement, relevant SOP excerpts, and ticket priority,
-generate a structured maintenance prescription in Vietnamese.
-
-Return ONLY valid JSON with this schema:
-{
-  "action_title": "string — tên hành động chính (< 60 chars)",
-  "urgency": "string — thời hạn thực hiện",
-  "steps": ["step 1", "step 2", ...],      // tối đa 6 bước
-  "sop_references": ["SOP-BAT-001", ...],
-  "safety_warnings": ["warning 1", ...],    // tối đa 3
-  "ticket_description": "string — nội dung điền vào ticket (< 300 chars)"
-}
-"""
-```
-
----
-
-### 11.6. API: POST /prescribe
-
-**Request:**
-
-```json
-{
-  "battery_id": "B0005",
-  "prediction": {
-    "soh_percent": 68.3,
-    "classification": "Failed",
-    "confidence": 0.87,
-    "anomaly_score": -0.41,
-    "anomaly_status": "Anomaly",
-    "risk": {
-      "priority": "P1",
-      "action_code": "REPLACE_IMMEDIATELY"
-    },
-    "warnings": [
-      {"code": "SOH_CRITICAL", "severity": "critical", "message": "SOH below 80% EOL threshold"}
-    ]
-  }
-}
-```
-
-**Response:**
-
-```json
-{
-  "battery_id": "B0005",
-
-  "fault_statement": "Pin B0005 đang ở trạng thái Failed với SOH 68.3% — dưới ngưỡng EOL 80%. Điểm bất thường -0.41 cho thấy suy giảm nghiêm trọng về mặt vật lý. Cần can thiệp ngay lập tức để tránh nguy cơ an toàn.",
-
-  "sop_chunks_used": ["SOP-BAT-001 §3", "SAFETY-LI-001 §1", "SAFETY-LI-003 §2"],
-
-  "prescription": {
-    "action_title": "Thay thế pin khẩn cấp — P1",
-    "urgency": "Trong vòng 4 giờ (SLA P1)",
-    "steps": [
-      "1. Cô lập pin khỏi hệ thống điện mặt trời",
-      "2. Kiểm tra nhiệt độ bề mặt — dừng nếu > 60°C",
-      "3. Đo điện áp từng cell bằng multimeter",
-      "4. Tháo pin theo SOP-BAT-001 §3.2 (2 người)",
-      "5. Thay thế bằng pin cùng model và dung lượng",
-      "6. Chạy charge cycle đầu tiên và ghi SOH baseline"
-    ],
-    "sop_references": ["SOP-BAT-001", "SAFETY-LI-001"],
-    "safety_warnings": [
-      "Không charge pin đã Failed — nguy cơ nhiệt",
-      "Mang PPE: găng cách điện + kính bảo hộ",
-      "Báo Admin ngay nếu pin có dấu hiệu phồng"
-    ],
-    "ticket_description": "Pin B0005 SOH 68.3% — Failed (P1). Cần thay thế trong 4h. Anomaly score: -0.41. Thực hiện theo SOP-BAT-001."
-  },
-
-  "metadata": {
-    "llm_model": "claude-haiku-4-5-20251001",
-    "embed_model": "all-MiniLM-L6-v2",
-    "chunks_retrieved": 3,
-    "prescription_ms": 2150
-  }
-}
-```
-
-**Error cases:**
-
-```json
-// ANTHROPIC_API_KEY chưa set
-HTTP 503: {"detail": "Prescription service unavailable — LLM not configured"}
-
-// ChromaDB chưa khởi tạo
-HTTP 503: {"detail": "Knowledge base not initialized — run build_knowledge_base.py"}
-```
-
----
-
-### 11.7. Latency Budget
-
-| Bước | Thời gian ước tính | Ghi chú |
-|------|--------------------|---------|
-| Step 1 (Fault Statement) | ~600ms | Claude Haiku, ~100 token output |
-| Step 2 (Query Gen) | ~400ms | Claude Haiku, JSON 5 queries |
-| Step 3 (ChromaDB search) | ~50ms | CPU embedding × 5 queries |
-| Step 4 (Prescription) | ~1000ms | Claude Haiku, JSON output ~200 tokens |
-| **Tổng** | **~2.0–2.5s** | Async — không block `/predict` |
-
-> `/prescribe` là **async endpoint riêng** — không ảnh hưởng latency < 100ms của `/predict` (P1 SLA).
-> BE gọi `/predict` trước để tạo alert, sau đó gọi `/prescribe` để điền nội dung ticket.
-
----
-
-### 11.8. Cấu trúc code
-
-```
-src/
-├── services/
-│   ├── inference.py         ← (hiện có)
-│   ├── confidence.py        ← (hiện có)
-│   ├── knowledge_base.py    ← ChromaDB client + retrieve()
-│   └── prescriber.py        ← LLM chain (4 steps) + PrescriptionService
-│
-├── routers/
-│   ├── predict.py           ← (hiện có)
-│   ├── health.py            ← (hiện có)
-│   └── prescribe.py         ← POST /prescribe
-│
-└── schemas/
-    ├── predict.py           ← (hiện có)
-    └── prescribe.py         ← PrescribeRequest, PrescribeResponse
-
-scripts/
-└── build_knowledge_base.py  ← đọc data/sop/ → chunk → embed → ChromaDB
-
-data/
-└── sop/                     ← SOP Markdown files (commit vào Git)
-    ├── SOP-BAT-001.md
-    └── ...
-```
-
----
-
-### 11.9. Tech Stack bổ sung
-
-| Thành phần | Thư viện | Phiên bản | Ghi chú |
-|-----------|----------|-----------|---------|
-| LLM | `anthropic` | ≥ 0.28 | Claude Haiku 4.5 |
-| Vector DB | `chromadb` | ≥ 0.5 | Persistent local store |
-| Embedding | `sentence-transformers` | ≥ 3.0 | `all-MiniLM-L6-v2`, CPU-only |
-| SOP Docs | Markdown → `data/sop/` | — | Commit vào Git |
-
-**Environment variable bắt buộc (Sprint 3):**
-
-```bash
-ANTHROPIC_API_KEY=sk-ant-...   # Claude API key
-```
-
-> Khi `ANTHROPIC_API_KEY` không set → `/prescribe` trả 503. `/predict` không bị ảnh hưởng.
-
----
-
-## 12. Quy ước phát triển
-
-### Git workflow
-
-```
-Branch naming : feat/GH-{number}-slug-ngan
-                fix/GH-{number}-slug-ngan
-Commit message: type(#number): mô tả
-                feat(#10): long-seq L=4096 patch P16S16
-                fix(#6):   fix scaler version mismatch
-
-PR requirement: Có "Closes #{number}" trong body
-```
-
-### Model versioning
-
-| Phiên bản | Khi nào tăng |
-|-----------|-------------|
-| `v1.2 → v1.3` | Retrain cùng architecture, khác data/hyperparameter |
-| `v1.x → v2.0` | Thay đổi architecture (thêm layer, đổi model class) |
-
-> **Bắt buộc:** Commit cả scaler + feature_scaler + model + IF cùng 1 commit.
-
-### Các lệnh hay dùng
-
-```bash
-# Chạy server
-uvicorn main:app --reload
-
-# Chạy toàn bộ test
-pytest tests/ -v --cov=src
-
-# Preprocess (production)
-python -X utf8 scripts/preprocess.py
-
-# Train (production)
-python -X utf8 scripts/train.py --epochs 50
-
-# Benchmark latency
-python -X utf8 scripts/benchmark_tokens.py
-
-# Tạo dummy artifacts (dev)
-python -X utf8 scripts/create_dummy_artifacts.py
-
-# Lint & format
-ruff check src/ scripts/ tests/
-ruff format src/ scripts/ tests/
-```
-
-### Environment variables
-
-Prediction layer: không cần biến môi trường.
-Prescription layer (Sprint 3):
-```
-ANTHROPIC_API_KEY=sk-ant-...   # Claude API
-```
+## 14. File tham khảo
+
+| File | Nội dung |
+|---|---|
+| `protos/ai_service.proto` | Contract nguồn — đọc trực tiếp khi cần field-level detail |
+| `docs/examples/grpc-payloads.json` | Ví dụ request/response đầy đủ, đã verify bằng code thật |
+| `docs/grpc-integration-be.md` | Hướng dẫn client .NET gốc (một phần đã gộp vào §13 tài liệu này) |
+| `docs/ai-be-integration.md` | Chi tiết luồng `BatteryAnomalyDetectedEvent` → `Prescribe` → auto-ticket |
+| `docs/adr/0002-split-rebalance-b0047.md` | Lý do đổi split GH-88 |
+| `docs/adr/0003-llm-provider-chain.md` | Thứ tự fallback LLM provider |
+| `.claude/rules/tech/ai.md` | Rule bắt buộc cho AI dev (model spec, versioning) |
+| `.claude/rules/design.md` | Priority Matrix (Impact × Urgency) — nơi BE tính Priority ticket thật |
 
 ---
 

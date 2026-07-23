@@ -248,7 +248,7 @@ class RetrievedDoc(_message.Message):
     def __init__(self, title: _Optional[str] = ..., content: _Optional[str] = ..., source: _Optional[str] = ..., relevance_score: _Optional[float] = ..., retrieved_via: _Optional[str] = ...) -> None: ...
 
 class PrescribeResponse(_message.Message):
-    __slots__ = ("battery_id", "soh_percent", "risk_level", "priority", "action_code", "prescription", "action_steps", "escalation_conditions", "ppe_required", "sop_references", "enriched", "maintenance_docs", "safety_docs", "human_verification_required", "safety_warnings", "inference_ms", "rag_ms", "llm_ms", "llm_provider", "blocked", "query_gen_ms", "generated_queries", "prescription_id", "prediction", "anomaly", "risk")
+    __slots__ = ("battery_id", "soh_percent", "risk_level", "priority", "action_code", "prescription", "action_steps", "escalation_conditions", "ppe_required", "sop_references", "enriched", "maintenance_docs", "safety_docs", "human_verification_required", "safety_warnings", "inference_ms", "rag_ms", "llm_ms", "llm_provider", "blocked", "query_gen_ms", "generated_queries", "prescription_id", "prediction", "anomaly", "risk", "cached")
     BATTERY_ID_FIELD_NUMBER: _ClassVar[int]
     SOH_PERCENT_FIELD_NUMBER: _ClassVar[int]
     RISK_LEVEL_FIELD_NUMBER: _ClassVar[int]
@@ -275,6 +275,7 @@ class PrescribeResponse(_message.Message):
     PREDICTION_FIELD_NUMBER: _ClassVar[int]
     ANOMALY_FIELD_NUMBER: _ClassVar[int]
     RISK_FIELD_NUMBER: _ClassVar[int]
+    CACHED_FIELD_NUMBER: _ClassVar[int]
     battery_id: str
     soh_percent: float
     risk_level: str
@@ -301,7 +302,8 @@ class PrescribeResponse(_message.Message):
     prediction: PredictionInfo
     anomaly: AnomalyInfo
     risk: RiskInfo
-    def __init__(self, battery_id: _Optional[str] = ..., soh_percent: _Optional[float] = ..., risk_level: _Optional[str] = ..., priority: _Optional[str] = ..., action_code: _Optional[str] = ..., prescription: _Optional[str] = ..., action_steps: _Optional[_Iterable[str]] = ..., escalation_conditions: _Optional[_Iterable[str]] = ..., ppe_required: _Optional[_Iterable[str]] = ..., sop_references: _Optional[_Iterable[str]] = ..., enriched: _Optional[bool] = ..., maintenance_docs: _Optional[_Iterable[_Union[RetrievedDoc, _Mapping]]] = ..., safety_docs: _Optional[_Iterable[_Union[RetrievedDoc, _Mapping]]] = ..., human_verification_required: _Optional[bool] = ..., safety_warnings: _Optional[_Iterable[str]] = ..., inference_ms: _Optional[float] = ..., rag_ms: _Optional[float] = ..., llm_ms: _Optional[float] = ..., llm_provider: _Optional[str] = ..., blocked: _Optional[bool] = ..., query_gen_ms: _Optional[float] = ..., generated_queries: _Optional[_Iterable[str]] = ..., prescription_id: _Optional[str] = ..., prediction: _Optional[_Union[PredictionInfo, _Mapping]] = ..., anomaly: _Optional[_Union[AnomalyInfo, _Mapping]] = ..., risk: _Optional[_Union[RiskInfo, _Mapping]] = ...) -> None: ...
+    cached: bool
+    def __init__(self, battery_id: _Optional[str] = ..., soh_percent: _Optional[float] = ..., risk_level: _Optional[str] = ..., priority: _Optional[str] = ..., action_code: _Optional[str] = ..., prescription: _Optional[str] = ..., action_steps: _Optional[_Iterable[str]] = ..., escalation_conditions: _Optional[_Iterable[str]] = ..., ppe_required: _Optional[_Iterable[str]] = ..., sop_references: _Optional[_Iterable[str]] = ..., enriched: _Optional[bool] = ..., maintenance_docs: _Optional[_Iterable[_Union[RetrievedDoc, _Mapping]]] = ..., safety_docs: _Optional[_Iterable[_Union[RetrievedDoc, _Mapping]]] = ..., human_verification_required: _Optional[bool] = ..., safety_warnings: _Optional[_Iterable[str]] = ..., inference_ms: _Optional[float] = ..., rag_ms: _Optional[float] = ..., llm_ms: _Optional[float] = ..., llm_provider: _Optional[str] = ..., blocked: _Optional[bool] = ..., query_gen_ms: _Optional[float] = ..., generated_queries: _Optional[_Iterable[str]] = ..., prescription_id: _Optional[str] = ..., prediction: _Optional[_Union[PredictionInfo, _Mapping]] = ..., anomaly: _Optional[_Union[AnomalyInfo, _Mapping]] = ..., risk: _Optional[_Union[RiskInfo, _Mapping]] = ..., cached: _Optional[bool] = ...) -> None: ...
 
 class HealthRequest(_message.Message):
     __slots__ = ()

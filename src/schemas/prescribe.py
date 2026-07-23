@@ -67,6 +67,10 @@ class PrescribeResponse(BaseModel):
     # (forbidden action / unsafe judge verdict) — the returned prescription is
     # the rule-based fallback and human verification is always required.
     blocked: bool = False
+    # GH-84: True when served from the idempotency cache (same battery_id/
+    # readings/enrich/agentic within the TTL) instead of a fresh run. Never
+    # True for a blocked=True result — blocked responses are never cached.
+    cached: bool = False
 
     inference_ms: float
     rag_ms: float = 0.0

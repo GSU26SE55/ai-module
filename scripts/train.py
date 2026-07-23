@@ -617,12 +617,13 @@ def train_long(
             f"Long-seq data has {X_train.shape[-1]} features but LONG_INPUT_FEATURES="
             f"{LONG_INPUT_FEATURES}. Re-run preprocess.py with WINDOW_SIZE>30 first."
         )
+    pooling = "attention"  # long-seq model always uses attention pooling (GH-10)
     model = MambaSOHPredictor(
         input_features=LONG_INPUT_FEATURES,
         feat_dim=SPECTRAL_FEAT_DIM,
         d_model=D_MODEL,
         d_state=d_state,
-        pooling="attention",
+        pooling=pooling,
         use_official_mamba=official_mamba,
         patch_size=patch_size,
         patch_stride=patch_stride,
@@ -837,7 +838,7 @@ def train_long(
             "model_state_dict": model.state_dict(),
             "version": LONG_MODEL_VERSION,
             "seq_len": seq_len,
-            "pooling": "attention",
+            "pooling": pooling,
             "input_features": LONG_INPUT_FEATURES,
             "feat_dim": SPECTRAL_FEAT_DIM,
             "d_model": D_MODEL,

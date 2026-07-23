@@ -267,6 +267,12 @@ message PrescribeResponse {
   PredictionInfo prediction = 24;
   AnomalyInfo anomaly = 25;
   RiskInfo risk = 26;
+
+  // GH-84: true when this response was served from the idempotency cache
+  // (same battery_id/readings/enrich/agentic within the TTL window) instead
+  // of re-running inference/RAG/LLM. Never true for a blocked=true result —
+  // blocked responses are never cached.
+  bool cached = 27;
 }
 
 // ── Health ─────────────────────────────────────────────────────────────
