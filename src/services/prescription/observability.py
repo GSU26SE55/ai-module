@@ -41,8 +41,17 @@ _counters: dict = {
 }
 
 
-def cache_key(battery_id: str, readings: list, enrich: bool, agentic: bool) -> str:
-    payload = json.dumps([battery_id, readings, enrich, agentic])
+def cache_key(
+    battery_id: str,
+    readings: list,
+    enrich: bool,
+    agentic: bool,
+    ticket_history: list | None = None,
+) -> str:
+    # GH-105: ticket_history is part of the LLM context now (diagnosis
+    # statement) — must be in the key, or a changed history within the TTL
+    # window would silently serve a stale cached response.
+    payload = json.dumps([battery_id, readings, enrich, agentic, ticket_history or []])
     return hashlib.sha256(payload.encode()).hexdigest()
 
 

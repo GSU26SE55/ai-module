@@ -70,7 +70,7 @@ Ticket tự động tạo từ event này vẫn cần qua bước xác định P
 
 ## 5. Idempotency — GH-84 (đã implement)
 
-Nếu cùng 1 bất thường bắn event trùng/burst (retry MassTransit, nhiều reading liên tiếp cùng trạng thái), `Prescribe` tự động dedup: key = hash(`battery_id`, `readings`, `enrich`, `agentic`), TTL 10 phút, tối đa 256 entry (LRU). Lần gọi thứ 2 trở đi trong TTL với cùng input trả nguyên response đã sinh trước đó (field `cached=true`), không chạy lại inference/RAG/LLM — BE **không cần** tự dedup theo event ID trừ khi muốn dedup ở cửa sổ thời gian khác 10 phút. Response `blocked=true` không bao giờ được cache — luôn đánh giá lại.
+Nếu cùng 1 bất thường bắn event trùng/burst (retry MassTransit, nhiều reading liên tiếp cùng trạng thái), `Prescribe` tự động dedup: key = hash(`battery_id`, `readings`, `enrich`, `agentic`, `ticket_history`), TTL 10 phút, tối đa 256 entry (LRU). Lần gọi thứ 2 trở đi trong TTL với cùng input (kể cả cùng `ticket_history`) trả nguyên response đã sinh trước đó (field `cached=true`), không chạy lại inference/RAG/LLM — BE **không cần** tự dedup theo event ID trừ khi muốn dedup ở cửa sổ thời gian khác 10 phút. Response `blocked=true` không bao giờ được cache — luôn đánh giá lại.
 
 Ngoài ra, `enrich=true` có thêm rate-limit: tối đa 2 lượt LLM đồng thời + budget/giờ (env `LLM_HOURLY_BUDGET`, default 60) — vượt giới hạn thì tự động trả về rule-based (giống hệt trường hợp không có LLM API key), không lỗi 5xx. Counters (tổng request, tỉ lệ cache hit, tỉ lệ enrich thành công, budget còn lại...) xem tại `GET /health` (REST), field `prescription_metrics`.
 
@@ -127,3 +127,12 @@ Path `enrich=false` phải đạt SLA batch `< 500ms` theo `.claude/rules/tech/a
 - Code .NET phía `TicketService`/`BatteryService` (repo BE riêng).
 - LLM/RAG enrichment (`enrich=true`) trong luồng auto-ticket.
 - Logic ma trận Impact × Urgency (thuộc BE).
+
+## 9. `ticket_history` — GH-105 (đã implement, chỉ ảnh hưởng `enrich=true`)
+
+`PrescribeRequest.ticket_history` (`repeated string`) đã có sẵn trong contract từ trước nhưng chỉ mới được AI module sử dụng từ GH-105. Field này **không ảnh hưởng** luồng auto-ticket `enrich=false` ở mục 1–7 (dedup key có gồm `ticket_history` để tránh cache sai, nhưng nội dung thống kê không được dùng khi `enrich=false`) — chỉ có ý nghĩa khi BE/UI gọi `enrich=true` (tính năng "AI gợi ý chi tiết" thủ công, xem mục 2).
+
+- **Định dạng:** mỗi phần tử trong list là 1 dòng tóm tắt ngắn cho 1 lần sửa chữa/bảo trì trước đó của **cùng battery_id**, ví dụ: `"2026-06-10: Replaced BMS fuse after overvoltage alert, resolved"`. Không cần structured JSON — free text ngắn gọn là đủ, AI chỉ nối các dòng lại làm context cho LLM.
+- **Thứ tự:** giả định **oldest → newest** (cũ nhất trước). AI chỉ lấy **5 phần tử cuối cùng** của list (gần nhất) — gửi nhiều hơn 5 không sao, phần dư bị cắt phía AI, không cần BE tự giới hạn.
+- **Rỗng/không gửi:** hợp lệ — response giữ nguyên như trước khi có `ticket_history` (không có lỗi, không có đoạn "past repairs" nào trong context LLM).
+- ⚠️ Giả định thứ tự "oldest → newest" ở trên **chưa được BE xác nhận chính thức** — nếu BE gửi theo chiều ngược lại (newest → oldest), báo AI team để đổi `ticket_history[-N:]` thành `ticket_history[:N]` trong `src/services/prescription/diagnosis.py`.

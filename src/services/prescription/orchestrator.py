@@ -166,6 +166,8 @@ def _enrich(
     rule_out: dict,
     anomaly: dict | None = None,
     agentic: bool = False,
+    battery_id: str = "",
+    ticket_history: list[str] | None = None,
 ) -> dict:
     """
     Run RAG retrieval + LLM generation. Returns a partial dict to merge into the
@@ -181,7 +183,9 @@ def _enrich(
     # GH-83: built unconditionally (not just when agentic) — it is the "context"
     # embedded for both history retrieval below and the history record saved by
     # run_prescription() after this function returns.
-    diagnosis = build_diagnosis_statement(prediction, anomaly or {}, risk, warnings)
+    diagnosis = build_diagnosis_statement(
+        prediction, anomaly or {}, risk, warnings, ticket_history=ticket_history
+    )
 
     result = {
         "prescription":   rule_out["prescription"],
@@ -255,7 +259,9 @@ def _enrich(
     # 2a. Past-case retrieval (GH-83): accepted cases only, reference-only
     #     few-shot context. retrieve_similar_accepted() is itself best-effort
     #     (returns [] on any failure) — no extra try/except needed here.
-    past_cases = _get_history_store().retrieve_similar_accepted(diagnosis, top_k=2)
+    past_cases = _get_history_store().retrieve_similar_accepted(
+        diagnosis, battery_id=battery_id, top_k=2
+    )
 
     t_llm = time.perf_counter()
     try:
@@ -299,7 +305,8 @@ def _run_prescription_uncached(
         agentic: GH-82 — if True (and enrich=True), run the agentic chain:
             diagnosis statement → LLM query generation → multi-query retrieval.
             Ignored when enrich=False (enrich stays the master switch).
-        context_kwargs: age_cycles, last_maintenance_date, ticket_history (reserved).
+        context_kwargs: age_cycles, last_maintenance_date (reserved); ticket_history
+            (GH-105) is forwarded into _enrich() when enrich=True.
 
     Returns:
         PrescribeResponse-compatible dict. "prescription_id" (GH-83) is a uuid4
@@ -323,7 +330,8 @@ def _run_prescription_uncached(
     # 3. Optional enrichment
     if enrich:
         enriched = _enrich(
-            prediction, risk, warnings, rule_out, anomaly=anomaly, agentic=agentic
+            prediction, risk, warnings, rule_out, anomaly=anomaly, agentic=agentic,
+            battery_id=battery_id, ticket_history=context_kwargs.get("ticket_history"),
         )
     else:
         enriched = {
@@ -464,12 +472,14 @@ def run_prescription(
     GH-84: idempotency-cached wrapper around _run_prescription_uncached().
 
     Same signature/return shape, plus a "cached" bool field. A hit within the
-    TTL (key = hash of battery_id/readings/enrich/agentic) short-circuits
+    TTL (key = hash of battery_id/readings/enrich/agentic/ticket_history) short-circuits
     inference/RAG/LLM entirely and returns the exact prior response. A
     blocked=True result is never cached — it must be re-evaluated every call.
     """
     observability.record_prescribe()
-    key = observability.cache_key(battery_id, readings, enrich, agentic)
+    key = observability.cache_key(
+        battery_id, readings, enrich, agentic, context_kwargs.get("ticket_history")
+    )
     t_total = time.perf_counter()
 
     cached = observability.cache_get(key)
