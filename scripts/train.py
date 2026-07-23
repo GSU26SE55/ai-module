@@ -232,7 +232,16 @@ def train(
     jitter: float = 0.0,
     swa: bool = False,
     swa_start_frac: float = 0.75,
+    mamba_path: str = MAMBA_PATH,
+    iso_path: str = ISO_FOREST_PATH,
+    model_version: str = MODEL_VERSION,
 ) -> None:
+    """
+    mamba_path/iso_path/model_version (GH-67 Mức 2): override the default NASA/
+    NMC production artifact paths — lets a chemistry-specific run (e.g. LFP,
+    trained on a different dataset) save to its own files instead of silently
+    overwriting models/weights/soh_mamba_v{MODEL_VERSION}.pth.
+    """
     logger = setup_logger(log_dir)
 
     logger.info("Loading data...")
@@ -434,11 +443,11 @@ def train(
         if test_metrics["rmse"] >= 3.0:
             logger.warning(f"RMSE {test_metrics['rmse']:.4f}% >= 3.0% target")
 
-    os.makedirs(os.path.dirname(MAMBA_PATH), exist_ok=True)
+    os.makedirs(os.path.dirname(mamba_path), exist_ok=True)
     torch.save(
         {
             "model_state_dict": model.state_dict(),
-            "version": MODEL_VERSION,
+            "version": model_version,
             "window_size": WINDOW_SIZE,
             "input_features": INPUT_FEATURES,
             "feat_dim": SPECTRAL_FEAT_DIM,
@@ -450,15 +459,15 @@ def train(
             "jitter": jitter,  # GH-88 A3 traceability
             "swa": final_weights.startswith("SWA"),
         },
-        MAMBA_PATH,
+        mamba_path,
     )
-    logger.info(f"Saved Mamba model -> {MAMBA_PATH}")
+    logger.info(f"Saved Mamba model -> {mamba_path}")
 
     logger.info("Training IsolationForest on spectral features (54 dims)...")
     iso = IsolationForest(contamination=0.1, n_estimators=100, random_state=SEED)
     iso.fit(X_feat_train.numpy())
-    joblib.dump(iso, ISO_FOREST_PATH)
-    logger.info(f"Saved IsolationForest -> {ISO_FOREST_PATH}")
+    joblib.dump(iso, iso_path)
+    logger.info(f"Saved IsolationForest -> {iso_path}")
 
     logger.info("Training complete.")
 
@@ -1371,6 +1380,22 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--log-dir", default="logs/training")
     parser.add_argument(
+        "--mamba-out",
+        default=None,
+        help="Override Mamba checkpoint output path (GH-67 Mức 2 — e.g. chemistry-specific "
+        "run, prevents overwriting the default production models/weights/soh_mamba_v*.pth)",
+    )
+    parser.add_argument(
+        "--iso-out",
+        default=None,
+        help="Override IsolationForest output path (pairs with --mamba-out)",
+    )
+    parser.add_argument(
+        "--model-version",
+        default=None,
+        help="Version string saved into the checkpoint (default: config.MODEL_VERSION)",
+    )
+    parser.add_argument(
         "--long",
         action="store_true",
         help="Train long-sequence model (L up to 4096) with warmup + grad accumulation",
@@ -1615,6 +1640,9 @@ def main() -> None:
             jitter=args.jitter,
             swa=args.swa,
             swa_start_frac=args.swa_start_frac,
+            mamba_path=args.mamba_out or MAMBA_PATH,
+            iso_path=args.iso_out or ISO_FOREST_PATH,
+            model_version=args.model_version or MODEL_VERSION,
         )
 
 

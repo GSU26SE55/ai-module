@@ -115,6 +115,18 @@ RAW_FEATURES = [
 
 SEED = 42
 
+# --- LFP chemistry variant (GH-67 Mức 2) — Severson et al. 2019 dataset ---
+# Separate artifact set (own scaler/model/iso-forest), same window=30/6-feature
+# architecture as the default NASA/NMC model. Selected at inference time when
+# pack_config.chemistry == "LFP" — chemistry-aware artifact selection in
+# model_loader.py/inference.py is a separate follow-up step, NOT part of this.
+LFP_MODEL_VERSION = "2.0-lfp"
+LFP_NOMINAL_CAPACITY_AH = 1.1  # A123 APR18650M1A (Severson et al. 2019) — vs NASA's 2.0 Ah
+LFP_SCALER_PATH = os.path.join(WEIGHTS_DIR, "scaler_lfp.pkl")
+LFP_FEATURE_SCALER_PATH = os.path.join(WEIGHTS_DIR, "feature_scaler_lfp.pkl")
+LFP_MAMBA_PATH = os.path.join(WEIGHTS_DIR, f"soh_mamba_v{LFP_MODEL_VERSION}.pth")
+LFP_ISO_FOREST_PATH = os.path.join(WEIGHTS_DIR, f"isolation_forest_v{LFP_MODEL_VERSION}.pkl")
+
 # GH-95: causal degradation-rate anomaly rule (src/services/battery_history.py).
 # RATE_THRESHOLD = train p90 of the locally smoothed per-cycle SOH fade rate —
 # SAME methodology/percentile as GH-70's GVHD-approved rate-based label
