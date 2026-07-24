@@ -235,24 +235,28 @@ def train(
     mamba_path: str = MAMBA_PATH,
     iso_path: str = ISO_FOREST_PATH,
     model_version: str = MODEL_VERSION,
+    feature_scaler_version: str = FEATURE_SCALER_VERSION,
 ) -> None:
     """
-    mamba_path/iso_path/model_version (GH-67 Mức 2): override the default NASA/
-    NMC production artifact paths — lets a chemistry-specific run (e.g. LFP,
-    trained on a different dataset) save to its own files instead of silently
-    overwriting models/weights/soh_mamba_v{MODEL_VERSION}.pth.
+    mamba_path/iso_path/model_version/feature_scaler_version (GH-67 Mức 2):
+    override the default NASA/NMC production artifact paths + expected feature-
+    scaler version — lets a chemistry-specific run (e.g. LFP, trained on a
+    different dataset with its own preprocess script) save to its own files and
+    validate against its own .pt version tag, instead of silently overwriting
+    models/weights/soh_mamba_v{MODEL_VERSION}.pth or rejecting the data with a
+    version-mismatch error.
     """
     logger = setup_logger(log_dir)
 
     logger.info("Loading data...")
     X_train, X_feat_train, y_train = load_split(
-        os.path.join(data_dir, "train.pt"), FEATURE_SCALER_VERSION
+        os.path.join(data_dir, "train.pt"), feature_scaler_version
     )
     X_val, X_feat_val, y_val = load_split(
-        os.path.join(data_dir, "val.pt"), FEATURE_SCALER_VERSION
+        os.path.join(data_dir, "val.pt"), feature_scaler_version
     )
     X_test, X_feat_test, y_test = load_split(
-        os.path.join(data_dir, "test.pt"), FEATURE_SCALER_VERSION
+        os.path.join(data_dir, "test.pt"), feature_scaler_version
     )
     logger.info(f"  Train: {len(X_train)} | Val: {len(X_val)} | Test: {len(X_test)}")
 
@@ -1396,6 +1400,13 @@ def main() -> None:
         help="Version string saved into the checkpoint (default: config.MODEL_VERSION)",
     )
     parser.add_argument(
+        "--feature-scaler-version",
+        default=None,
+        help="Expected feature_scaler_version stamped in {data_dir}/*.pt (default: "
+        "config.FEATURE_SCALER_VERSION) — must match what the preprocess script wrote, "
+        "e.g. LFP_MODEL_VERSION for data produced by scripts/preprocess_lfp.py",
+    )
+    parser.add_argument(
         "--long",
         action="store_true",
         help="Train long-sequence model (L up to 4096) with warmup + grad accumulation",
@@ -1643,6 +1654,7 @@ def main() -> None:
             mamba_path=args.mamba_out or MAMBA_PATH,
             iso_path=args.iso_out or ISO_FOREST_PATH,
             model_version=args.model_version or MODEL_VERSION,
+            feature_scaler_version=args.feature_scaler_version or FEATURE_SCALER_VERSION,
         )
 
 
