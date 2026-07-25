@@ -78,4 +78,78 @@ Fix nốt 2 chỗ còn dang dở từ phiên trước (code chính đã viết x
 1. `tests/test_grpc_server.py::FIXED_PREDICT_RESULT["metadata"]` thiếu key `chemistry`/`capacity_ah` → `run_inference` bị mock trả dict thiếu key → `KeyError` ở `grpc_server.py:119` khi build `ResponseMetadata` (lan ra 7 test: reading_objects × 4, PredictStream, parity × 2).
 2. Test parity REST↔gRPC so `metadata.chemistry` chưa xử lý case proto3 không có `null` — REST trả `None`, gRPC trả sentinel `""` (đúng convention `n_series=0`="unset" đã có từ GH-65) → thêm nhánh so sánh coi `None` (REST) ≡ `""`/`0.0` (gRPC).
 
+## Mức 2 — Retrain SOH trên Severson LFP (bổ sung 2026-07-23)
+
+### Nguồn dữ liệu
+- **Chính:** Severson et al. 2019 (Nature Energy, Q1) — LFP/graphite A123 APR18650M1A, 1.1 Ah nominal. Raw: https://data.matr.io/1/ (.mat v7.3/HDF5, 3 batch). Parser xác nhận từ code chính thức tác giả (`rdbraatz/data-driven-prediction-of-battery-cycle-life-before-capacity-degradation/BuildPkl_BatchN.ipynb`).
+- **Bổ trợ (chưa dùng, để sau):** SNL/Sandia (batteryarchive.org) — đa dạng nhiệt độ/DoD/discharge-rate mà Severson thiếu (Severson chỉ 1 nhiệt độ 30°C, discharge protocol cố định). Cần user tự tải/upload Kaggle (không có mirror sẵn).
+- **Đã cân nhắc, KHÔNG dùng:** Zenodo field-data 8S/24V LFP (khớp domain nhất — 24V pack thật) — loại vì 4.4TB, không có nhãn SOH per-cycle rõ ràng (cần suy ra qua Gaussian Process, khác hẳn phương pháp hiện tại), selection bias (chỉ hàng lỗi trả về), CC BY-NC. Ghi nhận làm candidate tương lai nếu có thời gian đầu tư sâu hơn.
+
+### Đã làm
+- [x] `scripts/preprocess_lfp.py` — parse Severson .mat (h5py) → window=30/6-feature, SOH target /1.1Ah, split theo battery ID (random SEED=42, override được bằng `--val-ids`/`--test-ids`), reuse nguyên `compute_soc_percent`/`extract_window_features` từ `src/features/extractor.py` (parity với inference).
+- [x] `src/core/config.py` — thêm `LFP_MODEL_VERSION`, `LFP_NOMINAL_CAPACITY_AH=1.1`, `LFP_SCALER_PATH`, `LFP_FEATURE_SCALER_PATH`, `LFP_MAMBA_PATH`, `LFP_ISO_FOREST_PATH`.
+- [x] `scripts/train.py` — thêm optional `mamba_path`/`iso_path`/`model_version` params vào `train()` + CLI `--mamba-out`/`--iso-out`/`--model-version` (default = giá trị cũ, KHÔNG đổi behavior khi không truyền) — bắt buộc phải có vì `train()` mặc định ghi đè thẳng `models/weights/soh_mamba_v1.6.pth` production, không có cờ này chạy LFP sẽ phá model NASA đang chạy.
+- [x] `notebooks/kaggle_train_lfp.ipynb` — notebook Kaggle end-to-end: GPU check (T4 x2) → clone → deps (+h5py) → tìm dataset Severson → preprocess_lfp.py → train.py (với `--mamba-out`/`--iso-out`/`--model-version` riêng) → check target metric → đóng gói zip → dọn output.
+- [x] `pytest tests/ -q` full sau khi sửa train.py/config.py — 539 passed, không có test nào fail (train() không có test riêng nhưng thay đổi chỉ thêm optional param có default giữ nguyên behavior cũ).
+
+### Chưa làm (ngoài scope bước này)
+- Chemistry-aware artifact selection trong `model_loader.py`/`inference.py` (chọn bộ LFP khi `pack_config.chemistry=="LFP"`) — cần bước/issue riêng SAU khi có checkpoint LFP thật để test.
+- Augment thêm SNL dataset (nhiệt độ/DoD đa dạng) — optional, sau khi user tự tải.
+- Document limitation cuối cùng (GH-67 gốc yêu cầu) — viết sau khi có số liệu MAE/RMSE thật từ Kaggle.
+
 `pytest tests/ --cov=src`: 492 passed, coverage 92%. `scripts/benchmark_grpc.py`: PASS.
+
+## Debug: Test MAE/RMSE không đạt target (bổ sung 2026-07-25)
+
+Kết quả lần train Kaggle đầu tiên (checkpoint `soh_mamba_v2.0-lfp.pth` hiện có trong
+`models/weights/`, chưa commit): **Test MAE 2.5856% (target <2.0%), Test RMSE 3.4745%
+(target <3.0%)** — không đạt cả 2 target.
+
+**Root cause #1 (chính, gần như chắc chắn) — undertraining do bug trong notebook:**
+`notebooks/kaggle_train_lfp.ipynb` cell 12 gọi `train.py --epochs 5`, trong khi
+`scripts/train.py` mặc định `--epochs 100`, `ReduceLROnPlateau(patience=5)`, early-stop
+`PATIENCE=15` (`config.py`). Với 5 epoch, LR scheduler **chưa từng trigger** (cần ≥5 epoch
+không cải thiện) và early-stop cũng chưa chạm ngưỡng — model gần chắc chắn chưa hội tụ.
+Mâu thuẫn với chính ghi chú ở markdown cell 11 ("hyperparameter GIỮ NGUYÊN — chỉ đổi data +
+output path"). **Fix:** đổi `--epochs 5` → `--epochs 100` trong notebook (khớp default thật
+sự dùng để train model NASA v1.6).
+
+**Root cause #2 (phụ, verify được trong code) — `CYCLE_COUNT_NORM` sai domain cho Severson:**
+`scripts/preprocess_lfp.py` copy nguyên `CYCLE_COUNT_NORM=200.0` từ NASA (cell dài nhất quan
+sát ~197 cycle), nhưng Severson cell chạy tới **~2300 cycle** (chính comment cũ trong file đã
+ghi nhận điều này nhưng chưa fix). Hệ quả: mọi window sau cycle #200 (= đa số dữ liệu Severson)
+bị `np.clip(cycle_idx/200, 0, 1)` dồn cứng về `cycle_count_norm=1.0` — cột feature mất khả năng
+phân biệt cell ở cycle 250 với cycle 2000 dù SOH khác xa nhau → nhiễu tín hiệu training.
+**Fix:** thêm `LFP_CYCLE_COUNT_NORM=2300.0` vào `src/core/config.py`, `preprocess_lfp.py` dùng
+hằng số này thay vì `200.0` local.
+
+**⚠️ Follow-up bắt buộc khi làm bước "Chemistry-aware artifact selection" (chưa làm — xem mục
+"Chưa làm" ở trên):** `src/services/inference.py::_append_derived_features()` hiện luôn dùng
+`CYCLE_COUNT_NORM` (=200, global NASA) từ `config.py` để normalize `cycle_count` lúc inference,
+KHÔNG phân biệt chemistry. Khi wiring model LFP vào `model_loader.py`/`inference.py`, nhánh xử
+lý request `chemistry=="LFP"` PHẢI dùng `LFP_CYCLE_COUNT_NORM` (2300), không phải
+`CYCLE_COUNT_NORM` (200) — nếu không sẽ lệch hẳn so với lúc train, dự đoán sai mà không có lỗi
+nào được raise (silent mismatch, giống loại lỗi mà `.claude/rules/tech/ai.md` yêu cầu tránh
+bằng version assertion).
+
+**Chưa fix (không đủ evidence để khẳng định là bug, chỉ là giả thuyết cần theo dõi nếu sau khi
+train lại vẫn không đạt target):**
+- Severson dùng protocol sạc nhanh đa bước (CC-CC-CC-CC-CV, nhiều bước dòng khác nhau) phức tạp
+  hơn nhiều so với đường xả đơn giản của NASA — nếu cycle "cycles_grp" trong .mat gộp cả sạc lẫn
+  xả vào 1 mảng liên tục, window 30-step có thể rơi vào đoạn chuyển pha sạc→xả, khác hẳn phân bố
+  NASA. Cần xem log Kaggle đầy đủ (train loss theo epoch) sau lần train lại để biết model có
+  underfit (train loss cũng cao — do thiếu epoch, khớp root cause #1) hay đã hội tụ nhưng vẫn
+  miss target (→ do đặc thù dữ liệu, cần xử lý riêng, ví dụ tách sạc/xả trước khi window).
+- Test set chỉ ~5% cell (`--test-frac 0.05`, mặc định) — với ~124 cell tổng, test set nhỏ
+  (~6 cell) nên MAE/RMSE có thể có variance đáng kể giữa các lần chạy; không phải nguyên nhân
+  chính nhưng nên biết khi so sánh số liệu.
+
+**Việc cần làm tiếp:**
+- [ ] Chạy lại `notebooks/kaggle_train_lfp.ipynb` trên Kaggle (đã sửa `--epochs 100` +
+  `preprocess_lfp.py` dùng `LFP_CYCLE_COUNT_NORM`) — **phải chạy lại bước preprocess** (cell 10)
+  trước train vì cycle_count_norm nằm trong `data/processed_lfp/*.pt`, không chỉ trong config.
+- [ ] Tải zip mới, ghi đè 4 file hiện có trong `models/weights/` (`soh_mamba_v2.0-lfp.pth`,
+  `isolation_forest_v2.0-lfp.pkl`, `scaler_lfp.pkl`, `feature_scaler_lfp.pkl`) — 4 file đang có
+  trong working tree là kết quả của lần train lỗi (MAE 2.59%), CHƯA commit, không dùng được.
+- [ ] Nếu vẫn miss target sau khi fix 2 bug trên → xem lại giả thuyết "sạc/xả gộp chung cycle"
+  ở trên trước khi thử tune thêm hyperparameter.

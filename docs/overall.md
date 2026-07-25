@@ -1,4 +1,4 @@
-# AI Module — Tài liệu tổng quan (gRPC-first, cho BE tích hợp)
+ # AI Module — Tài liệu tổng quan (gRPC-first, cho BE tích hợp)
 
 > **Dự án:** Solar Lithium-ion Battery Maintenance Management System — GSU26SE55
 > **Cập nhật:** 2026-07-22 (thay bản cũ 2026-06-21 — đã lệch nhiều version/field)

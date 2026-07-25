@@ -122,6 +122,13 @@ SEED = 42
 # model_loader.py/inference.py is a separate follow-up step, NOT part of this.
 LFP_MODEL_VERSION = "2.0-lfp"
 LFP_NOMINAL_CAPACITY_AH = 1.1  # A123 APR18650M1A (Severson et al. 2019) — vs NASA's 2.0 Ah
+# Severson cells cycle up to ~2300 times (vs NASA's ~197) — reusing the NASA
+# CYCLE_COUNT_NORM=200 clips almost every Severson window's cycle_count_norm to
+# 1.0, destroying the feature. Whoever wires chemistry-aware artifact selection
+# in model_loader.py/inference.py MUST use THIS constant (not CYCLE_COUNT_NORM)
+# when normalizing cycle_count for chemistry=="LFP" requests, or train/inference
+# will mismatch on this feature.
+LFP_CYCLE_COUNT_NORM = 2300.0
 LFP_SCALER_PATH = os.path.join(WEIGHTS_DIR, "scaler_lfp.pkl")
 LFP_FEATURE_SCALER_PATH = os.path.join(WEIGHTS_DIR, "feature_scaler_lfp.pkl")
 LFP_MAMBA_PATH = os.path.join(WEIGHTS_DIR, f"soh_mamba_v{LFP_MODEL_VERSION}.pth")

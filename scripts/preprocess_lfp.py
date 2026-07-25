@@ -52,6 +52,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.core.config import (
     BASE_FEATURES,
+    LFP_CYCLE_COUNT_NORM,
     LFP_FEATURE_SCALER_PATH,
     LFP_MODEL_VERSION,
     LFP_NOMINAL_CAPACITY_AH,
@@ -63,8 +64,8 @@ from src.features.extractor import compute_soc_percent, extract_window_features
 
 SEED = 42
 MIN_SOH = 10.0  # same filter convention as scripts/preprocess.py — drop dead/corrupt cycles
-CYCLE_COUNT_NORM = 200.0  # kept consistent with src/core/config.py's NASA value;
-# Severson cells run much longer (up to ~2300 cycles) — see note printed at runtime.
+CYCLE_COUNT_NORM = LFP_CYCLE_COUNT_NORM  # Severson-specific (2300) — NOT the NASA 200
+# value, whose cells cycle 10x fewer times. See src/core/config.py comment.
 
 random.seed(SEED)
 np.random.seed(SEED)
