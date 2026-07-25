@@ -144,7 +144,34 @@ train lại vẫn không đạt target):**
   (~6 cell) nên MAE/RMSE có thể có variance đáng kể giữa các lần chạy; không phải nguyên nhân
   chính nhưng nên biết khi so sánh số liệu.
 
+**Bằng chứng phụ xác nhận root cause #1 (tìm thấy 2026-07-25):** `scripts/train.py` chỉ in dòng
+metric per-epoch ở mức INFO khi `epoch % 10 == 0` (line ~370); chi tiết từng epoch là
+`logger.debug` (line ~365, không hiện ở mức log mặc định). Với `--epochs 5`, **KHÔNG có một dòng
+epoch nào được in ra** (1..5 đều không chia hết cho 10) — log Kaggle nhảy thẳng từ
+"Starting training..." sang kết quả test. Đây là lý do log chỉ ~99 dòng và không thấy được
+train/val loss để chẩn đoán. Khi chạy lại với `--epochs 100` sẽ có 10 dòng epoch (10, 20, ..., 100)
+để đối chiếu train loss vs val loss (phân biệt underfit với overfit).
+
+**⚠️ RỦI RO THỜI GIAN CHẠY — chưa giải quyết, phát hiện 2026-07-25:** log Kaggle dừng ở
+**40142.9s = 11.15 giờ**, sát giới hạn 12h/session của Kaggle. Con số này là của lần chạy CHỈ
+5 epoch. Nếu phần lớn 11h đó là training (không phải preprocess), thì `--epochs 100` là **bất
+khả thi** trong 1 session — session sẽ bị Kaggle kill giữa đường, mất hết. Nguyên nhân gốc là
+quy mô dataset: Severson có ~124 cell × 800–2300 cycle/cell (so với NASA ~170 cycle/cell), mỗi
+cycle lại sinh nhiều window ở `WINDOW_STRIDE=30` → tổng số window có thể lớn gấp hàng chục lần
+NASA. **Cần đọc log đầy đủ (dòng `Train: N | Val: N | Test: N` + timestamp của "Loading data..."
+vs "Starting training...") để biết tỉ lệ preprocess/train trước khi quyết định.** Hướng fix khả
+năng cao nhất nếu training là phần chậm: thêm option subsample cycle trong `preprocess_lfp.py`
+(vd `--cycle-stride 5` — giữ mỗi cycle thứ 5), vì SOH giữa các cycle liên tiếp của Severson gần
+như không đổi → dataset nhỏ đi 5x mà gần như không mất thông tin, đồng thời giảm cả thời gian
+preprocess. KHÔNG hạ epoch xuống lại — đó chính là nguyên nhân gây ra vấn đề ban đầu.
+
 **Việc cần làm tiếp:**
+- [ ] **BẮT BUỘC TRƯỚC KHI CHẠY LẠI — commit + push 3 file đã sửa lên GitHub** (`src/core/config.py`,
+  `scripts/preprocess_lfp.py`, `notebooks/kaggle_train_lfp.ipynb`) **VÀ re-upload/paste lại
+  notebook trên Kaggle UI.** Lần chạy 11h vừa rồi ra kết quả y hệt vì cả 2 đường này đều chưa
+  được cập nhật: notebook cell 12 trên Kaggle vẫn `--epochs 5`, và `git clone --depth 1` trong
+  notebook kéo code từ **remote** nên vẫn nhận `CYCLE_COUNT_NORM=200`. Sửa file trên máy local
+  KHÔNG tự động tới Kaggle.
 - [ ] Chạy lại `notebooks/kaggle_train_lfp.ipynb` trên Kaggle (đã sửa `--epochs 100` +
   `preprocess_lfp.py` dùng `LFP_CYCLE_COUNT_NORM`) — **phải chạy lại bước preprocess** (cell 10)
   trước train vì cycle_count_norm nằm trong `data/processed_lfp/*.pt`, không chỉ trong config.
@@ -153,3 +180,141 @@ train lại vẫn không đạt target):**
   trong working tree là kết quả của lần train lỗi (MAE 2.59%), CHƯA commit, không dùng được.
 - [ ] Nếu vẫn miss target sau khi fix 2 bug trên → xem lại giả thuyết "sạc/xả gộp chung cycle"
   ở trên trước khi thử tune thêm hyperparameter.
+
+### Fix vòng 2 (2026-07-25) — giải quyết rủi ro 12h + đo được thời gian
+
+- [x] `scripts/preprocess_lfp.py`: thêm `--cycle-stride N` (default 1 = giữ nguyên behavior).
+  Notebook set `--cycle-stride 5` → dataset/preprocess/train nhỏ đi ~5x. Căn cứ: Severson
+  800–2300 cycle/cell, SOH giữa 2 cycle liền nhau chênh ~0.01–0.02% → dùng hết là dư thừa;
+  stride 5 vẫn còn 160–460 cycle/cell (ngang mật độ per-cell của NASA ~170) và phủ nguyên
+  khoảng SOH.
+- [x] **Bug thứ 3 phát hiện khi làm subsample** — `kept_cycles.append((cycle_arr, soh,
+  len(kept_cycles)))` dùng "vị trí trong các cycle được giữ" làm `cycle_idx` (copy quy ước NASA,
+  `scripts/preprocess.py:114`). Quy ước đó chỉ đúng vì NASA gần như không drop cycle nào; dưới
+  subsample nó **nén trục tuổi pin đúng bằng cycle_stride** (cycle 2000 báo thành 400) → lệch
+  hẳn so với inference, nơi BE gửi cycle_count thật (`inference.py::_raw_cycle_count`). Đã đổi
+  sang dùng `j` = số cycle thật trong file .mat.
+- [x] Thêm log `[TIMING]` vào preprocess: tách riêng thời gian `.mat parse` vs
+  `window+feature extraction` vs total, kèm số step/epoch ở batch=32. Lần chạy tới sẽ **tự trả
+  lời** câu hỏi "preprocess hay train mới là phần ngốn 11h" mà không cần đoán.
+- [x] Metadata `scaler_lfp.pkl` thêm `cycle_stride` + `cycle_count_norm` để trace (2 giá trị này
+  đổi là model học khác đi, và `cycle_count_norm` bắt buộc phải khớp lúc inference).
+- [x] Notebook: cell 10 thêm `--cycle-stride 5`; markdown cell 9/13 ghi rõ cách đọc log
+  `[TIMING]` và cách đọc TrainLoss vs ValLoss để phân biệt underfit / overfit / đã hội tụ.
+- [x] `pytest tests/ -q`: **539 passed** (không có test nào cho preprocess_lfp.py vì h5py không
+  cài local — verify bằng `ast.parse` + chạy `--help` với h5py stub).
+
+## Kết quả train lần 2 (2026-07-25) — ĐẠT TARGET
+
+`models/weights/soh_mamba_v2.0-lfp.pth` (mtime 21:19):
+
+| Metric | Lần 1 (5 epoch) | **Lần 2** | Target | |
+|--------|-----------------|-----------|--------|---|
+| Test MAE | 2.5856% | **1.9213%** | < 2.0% | ✅ |
+| Test RMSE | 3.4745% | **2.7627%** | < 3.0% | ✅ |
+
+Xác nhận root cause #1 (undertraining) là đúng. Smoke-check: checkpoint load `strict=True` vào
+`MambaSOHPredictor` không thiếu/thừa tensor; forward pass trên window LFP giả lập cho SOH
+94–97% (hợp lý cho cell khỏe), iso_forest `contamination=0.1/n_estimators=100/random_state=42`
+đúng spec.
+
+**Lần chạy này KHÔNG dùng round-2 fix** — `scaler_lfp.pkl` metadata thiếu key `cycle_stride`/
+`cycle_count_norm` (2 key mà code round 2 ghi vào), và 3 artifact scaler/feature_scaler/
+iso_forest byte-identical với lần 1 → preprocess chạy lại bằng code round 1. Cải thiện đến
+thuần từ round 1 (`--epochs 100` + `CYCLE_COUNT_NORM` 200→2300).
+
+### ⚠️ Bug thứ 4 (phát hiện 2026-07-25 khi verify artifact) — outlier phi vật lý phá scaler
+
+`MinMaxScaler` fit trên `data_min_/data_max_`, nên chỉ cần 1 mẫu lỗi là hỏng cả kênh. Đo trực
+tiếp trên `scaler_lfp.pkl` hiện tại:
+
+| Kênh | Scaler fit trên | Khoảng vận hành thật | Chiếm % của [0,1] | Mất độ phân giải |
+|------|-----------------|----------------------|-------------------|------------------|
+| temperature | **[-270.0, 400.0]** | 28–45 °C | **2.54%** | **39.4x** |
+| voltage | **[0.736, 6.606]** | 2.0–3.65 V | 28.11% | 3.6x |
+| current | [-12.213, 8.169] | -4.4–8.8 A | 64.76% | 1.5x |
+
+`-270°C`/`400°C` là sentinel lỗi thermocouple trong bản export Severson — **finite nên lọt qua
+`np.isfinite()` check** đang có. Hệ quả: kênh temperature coi như **chết** (biến thiên thật chỉ
+chiếm 2.5% dải scaled), voltage mất 3.6x độ phân giải. Đây là ứng viên số 1 giải thích vì sao
+model LFP (MAE 1.92%) kém hơn hẳn model NASA v1.6 (MAE 1.34%) dù cùng kiến trúc.
+
+**Đã fix:** thêm `PHYSICAL_RANGES` (voltage [1.0,4.5], current [-25,25], temp [-20,80] — cố tình
+lỏng, chỉ bắt sentinel chứ không siết envelope vận hành, vì Severson sạc nhanh tới ~8A/7.4C là
+hợp lệ) + `_nonphysical_channel()` drop nguyên cycle chứa mẫu lỗi, kèm log đếm số cycle bị drop
+và in dải scaler sau khi fit để lần chạy tới tự xác nhận.
+
+> Nếu log báo drop một tỉ lệ LỚN cycle → chuyển từ drop sang clip mẫu lỗi, vì lúc đó đang vứt đi
+> dữ liệu train thật. Số cycle bị drop được in ngay trong log preprocess.
+
+### Notebook viết lại (2026-07-25) — `notebooks/kaggle_train_lfp.ipynb`, 21 cell
+
+- **Cell 3 mới — guard kiểm tra version code clone về.** Assert `--cycle-stride`/
+  `PHYSICAL_RANGES`/`_nonphysical_channel` có trong `preprocess_lfp.py`, `--feature-scaler-version`
+  /`--mamba-out`/`--iso-out` trong `train.py`, `LFP_CYCLE_COUNT_NORM` trong `config.py`. Fail →
+  dừng ngay kèm hướng dẫn `git push` + Restart & Run All. **Chặn đúng cái bẫy đã đốt ~11 giờ**
+  (notebook sửa rồi nhưng code chưa push → clone về vẫn bản cũ). Đã test 2 chiều: pass trên code
+  local (đủ fix), chặn đúng trên code HEAD hiện tại (thiếu 3 symbol).
+- **KHÔNG bật `--cycle-stride`.** Lần train 2 chạy full data vẫn xong trong 12h → lo hết giờ là
+  thừa, mà cắt 5× dữ liệu lúc này có nguy cơ làm MAE tệ đi. Giữ nguyên full data để **chỉ đổi 1
+  biến** (lọc outlier) → biết chính xác nó đóng góp bao nhiêu. Flag vẫn còn, dùng làm đường lui
+  nếu session sắp hết giờ (ghi rõ trong markdown cell 6).
+- Cell 8 so metric với baseline lần 2 (1.9213/2.7627) và **in dải scaler sau train** để xác nhận
+  `PHYSICAL_RANGES` đã ăn (kỳ vọng temperature ~[25,50] thay vì [-270,400]).
+- Cell 1 assert CUDA khả dụng (trước chỉ warn), checklist 4 bước + bảng lịch sử kết quả ở cell 0.
+
+### Bug thứ 5 (2026-07-25) — window lẫn pha SẠC, trong khi NASA/inference chỉ có pha XẢ
+
+**Đây là chênh lệch lớn nhất giữa pipeline LFP và NASA.** `scripts/preprocess.py::load_cycles()`
+lọc `meta["type"] == "discharge"` — NASA **chỉ nạp chu kỳ xả**. `preprocess_lfp.py` thì đọc
+nguyên `cycles_grp["V"/"I"/"T"/"t"]`, tức **cả sạc nhanh nhiều bước (CC1–CC4–CV, dòng dương tới
+~8 A) lẫn xả 4C** trong cùng 1 mảng, rồi cắt window trượt qua toàn bộ.
+
+Hệ quả:
+1. ~Nửa số window nằm trong pha **sạc** — phân bố mà model production **không bao giờ gặp**
+   (BE gửi telemetry xả).
+2. Nhãn SOH lấy từ `QDischarge` (dung lượng **xả**) — bắt model hồi quy nhãn xả từ mẫu sạc.
+3. Dòng sạc dương / xả âm trộn chung làm dải scaler current rộng ra và thống kê window bimodal.
+
+**Đã fix:** `_longest_discharge_segment()` — lấy đoạn xả liên tục dài nhất, dùng lại
+`compute_phase_mask` từ `src/features/extractor.py` (2 = xả, `current < -0.1A`) để convention
+nằm đúng 1 chỗ; rebase `time` về 0 khớp file per-cycle của NASA (`time` vừa là input channel vừa
+là trục tích phân của `compute_soc_percent`). CLI `--phase discharge|all`, default `discharge`;
+`all` giữ behavior cũ để ablation.
+
+### Bug thứ 6 (2026-07-25) — cột `time` có giá trị âm + nghi sai đơn vị
+
+`scaler_lfp.pkl` cho `time` range **[-57510.7, 4825.5]** — thời gian trôi trong 1 cycle không thể
+âm. Đã thêm `"time": (0.0, 200_000.0)` vào `PHYSICAL_RANGES` (trước chỉ check 3 kênh đầu).
+
+**Chưa kết luận được — cần số liệu từ lần chạy tới:** `compute_soc_percent()` giả định `time`
+tính bằng **giây** (`t_hours = time / 3600`, đúng convention NASA và đúng cái BE gửi lúc
+inference). Nếu Severson lưu bằng **phút** thì kênh `soc_percent` lệch 60×, coi như chết giống
+kênh temperature. Đã thêm log in **trung vị thời lượng đoạn xả**: xả 4C kéo dài ~15 phút → trung
+vị ~900 nghĩa là giây (khớp NASA), ~15 nghĩa là phút (phải sửa).
+
+### Các knob train CHƯA dùng (đã xác minh trong code)
+
+`train()` cho path window=30 chỉ nhận 4 tham số: `epochs`, `balance_bands`, `jitter`, `swa`
+(+`swa_start_frac`). Mọi flag khác của `train.py` (`--pooling`, `--patch-size`,
+`--attention-heads`, `--dropout`, `--weight-decay`, `--weighted-loss`, `--cosine-t0`,
+`--accum-steps`…) **chỉ đi vào path `--long`**, không ảnh hưởng window=30. Checkpoint LFP lần 2
+ghi `balance_bands: False, jitter: 0.0, swa: False` → chưa dùng knob nào.
+
+> ⚠️ `--balance-bands` **yếu với dữ liệu LFP**: `_balance_band_weights()` chia SOH thành
+> `n_soh_bins=10` trên thang [0,100], mà Severson chỉ trải ~80–100% → rơi vào đúng **2 bin**;
+> đồng thời Severson chỉ có **1 mức nhiệt (30°C)** nên chiều `n_temp_bins=3` của lưới cũng sụp.
+> Flag này sinh ra cho NASA (3 mức nhiệt, SOH trải rộng) nên đừng kỳ vọng nhiều ở LFP.
+
+### Thứ tự chạy đề xuất (để quy trách nhiệm được cho từng thay đổi)
+
+1. **Lần 3** — chỉ 2 fix đúng đắn (`--phase discharge` + `PHYSICAL_RANGES`), không bật knob nào.
+   Đây là fix *correctness*, không phải tuning, nên gộp chung 1 lần là hợp lý.
+2. **Lần 4** (nếu còn muốn ép) — thêm `--swa`, rồi `--jitter 0.01`. Từng cái một.
+
+### Việc còn lại
+- [ ] Push round 2 + round 3 (cycle-stride, cycle_idx=j, TIMING, PHYSICAL_RANGES) rồi chạy lại
+  Kaggle → kỳ vọng MAE cải thiện thêm nhờ kênh temperature/voltage hồi phục độ phân giải.
+- [ ] Chemistry-aware artifact selection (vẫn chưa làm) — nhớ `LFP_CYCLE_COUNT_NORM` (2300),
+  xem cảnh báo ở mục trên.
+- [ ] Model LFP hiện CHƯA được wire vào inference — `chemistry=="LFP"` vẫn dùng artifact NASA.

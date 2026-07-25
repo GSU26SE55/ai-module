@@ -41,6 +41,7 @@ import argparse
 import os
 import random
 import sys
+import time
 
 import h5py
 import joblib
@@ -60,10 +61,39 @@ from src.core.config import (
     WINDOW_SIZE,
     WINDOW_STRIDE,
 )
-from src.features.extractor import compute_soc_percent, extract_window_features
+from src.features.extractor import (
+    compute_phase_mask,
+    compute_soc_percent,
+    extract_window_features,
+)
 
 SEED = 42
 MIN_SOH = 10.0  # same filter convention as scripts/preprocess.py — drop dead/corrupt cycles
+
+# Physically impossible sensor values — thermocouple dropouts and voltage-probe
+# glitches in the raw Severson export survive the isfinite() check below (-270.0
+# and 400.0 are finite, just absurd) and then poison MinMaxScaler.fit(), which is
+# fit on min/max. Measured on the v2.0-lfp artifacts BEFORE this filter: the
+# scaler spanned temperature [-270, 400] and voltage [0.736, 6.606], so a real
+# 28-45°C swing occupied 2.5% of the [0,1] output range (39x resolution loss) and
+# real 2.0-3.65V occupied 28% (3.6x loss) — the temperature channel was
+# effectively dead as a model input.
+#
+# Bounds are deliberately loose: they only need to catch sentinel/glitch values,
+# NOT enforce the operating envelope. A123 APR18650M1A runs 2.0-3.65 V/cell at
+# 30°C chamber (cells self-heat during the 4-8C fast-charge steps), and Severson's
+# protocol legitimately reaches ~8 A charge (7.4C on a 1.1 Ah cell), so the
+# current bound stays wide enough not to discard real fast-charge data.
+PHYSICAL_RANGES = {
+    "voltage": (1.0, 4.5),
+    "current": (-25.0, 25.0),
+    "temperature": (-20.0, 80.0),
+    # Elapsed time within a cycle cannot be negative. Measured on the v2.0-lfp
+    # scaler: the time column spanned [-57510.7, 4825.5] — the negative end is
+    # another export glitch, and it matters because `time` is a model input AND
+    # the integration axis for compute_soc_percent()'s Coulomb counting.
+    "time": (0.0, 200_000.0),
+}
 CYCLE_COUNT_NORM = LFP_CYCLE_COUNT_NORM  # Severson-specific (2300) — NOT the NASA 200
 # value, whose cells cycle 10x fewer times. See src/core/config.py comment.
 
@@ -77,7 +107,64 @@ def _h5_str(dataset) -> str:
     return dataset[()].tobytes()[::2].decode(errors="replace")
 
 
-def load_batch_file(mat_path: str, batch_label: str) -> dict:
+def _nonphysical_channel(cycle_arr: np.ndarray) -> str | None:
+    """Name of the first channel holding a physically impossible value, else None.
+
+    Whole-cycle rejection (rather than clipping the offending samples) because a
+    cycle with a sensor dropout has untrustworthy dynamics throughout, and the
+    30-step windows sliced from it feed spectral/kurtosis features that a clipped
+    plateau would distort just as badly as the raw glitch.
+    """
+    for idx, name in enumerate(BASE_FEATURES):  # voltage, current, temperature, time
+        lo, hi = PHYSICAL_RANGES[name]
+        col = cycle_arr[:, idx]
+        if col.min() < lo or col.max() > hi:
+            return name
+    return None
+
+
+def _longest_discharge_segment(cycle_arr: np.ndarray) -> np.ndarray | None:
+    """Longest contiguous discharge run of a Severson cycle, time rebased to 0.
+
+    Severson stores the WHOLE cycle — multi-step fast charge (CC1-CC2-CC3-CC4-CV,
+    positive current up to ~8 A) followed by the 4C discharge — in one array.
+    NASA's pipeline instead feeds discharge cycles ONLY (scripts/preprocess.py
+    filters metadata `type == "discharge"`), and inference sees discharge
+    telemetry too. Training the LFP model on windows sliced anywhere in the full
+    cycle therefore (a) puts ~half the windows in a charge phase the production
+    model never sees, and (b) asks it to regress a discharge-capacity label
+    (QDischarge) from charge-phase samples that barely encode it.
+
+    Phase detection reuses src/features/extractor.compute_phase_mask (2 =
+    discharge, i.e. current < -0.1 A) so the charge/discharge convention lives in
+    exactly one place. Time is rebased so the segment starts at 0, matching NASA's
+    per-cycle CSVs — `time` is both a model input channel and the integration axis
+    for compute_soc_percent().
+
+    Returns None when no discharge run is at least WINDOW_SIZE long.
+    """
+    phase = compute_phase_mask(cycle_arr[:, BASE_FEATURES.index("current")])
+    idx = np.flatnonzero(phase == 2.0)
+    if idx.size < WINDOW_SIZE:
+        return None
+
+    # Split idx into contiguous runs, take the longest.
+    breaks = np.flatnonzero(np.diff(idx) > 1)
+    starts = np.concatenate(([0], breaks + 1))
+    ends = np.concatenate((breaks + 1, [idx.size]))
+    k = int(np.argmax(ends - starts))
+    s, e = int(idx[starts[k]]), int(idx[ends[k] - 1]) + 1
+    if e - s < WINDOW_SIZE:
+        return None
+
+    seg = cycle_arr[s:e].copy()
+    seg[:, BASE_FEATURES.index("time")] -= seg[0, BASE_FEATURES.index("time")]
+    return seg
+
+
+def load_batch_file(
+    mat_path: str, batch_label: str, cycle_stride: int = 1, discharge_only: bool = True
+) -> dict:
     """
     Parse one Severson .mat v7.3 file into {cell_key: {"cycle_life", "policy",
     "cycles": [(V, I, T, t, cycle_idx), ...], "QDischarge": array}}.
@@ -85,11 +172,29 @@ def load_batch_file(mat_path: str, batch_label: str) -> dict:
     cell_key = f"{batch_label}c{i}" (e.g. "b1c0") — matches the original
     BuildPkl_BatchN.ipynb naming convention.
 
+    cycle_stride > 1 keeps only every Nth cycle. Severson cells run 800-2300
+    cycles (vs NASA's ~170), and consecutive cycles differ by ~0.01-0.02% SOH —
+    so the full set is largely redundant while costing a proportional amount of
+    parse + feature-extraction time. Stride 5 still leaves 160-460 cycles per
+    cell (comparable to NASA's per-cell density) across the same full SOH range.
+
+    ⚠️ cycle_idx here is the TRUE cycle number j from the .mat file, NOT the
+    "position among kept cycles" that scripts/preprocess.py documents for NASA.
+    That NASA convention only works because it drops almost nothing; under
+    subsampling it would compress the aging axis by exactly cycle_stride (cycle
+    2000 would report as 400), so cycle_count_norm would no longer mean the same
+    thing it does at inference, where BE sends the battery's real cycle count
+    (src/services/inference.py::_raw_cycle_count). Using j keeps train and
+    inference on the same scale.
+
     Defensive: a malformed cycle (shape mismatch, NaN) is skipped with a
     warning rather than aborting the whole file — real HDF5 exports of this
     dataset are known to have occasional corrupt entries.
     """
     cells: dict = {}
+    n_nonphysical = [0]  # list = mutable counter reachable from the inner loop
+    n_no_discharge = [0]
+    durations: list[float] = []
     with h5py.File(mat_path, "r") as f:
         if "batch" not in f:
             raise ValueError(
@@ -110,7 +215,7 @@ def load_batch_file(mat_path: str, batch_label: str) -> dict:
                 cycles_grp = f[batch["cycles"][i, 0]]
                 n_cycles = cycles_grp["V"].shape[0]
                 kept_cycles = []
-                for j in range(n_cycles):
+                for j in range(0, n_cycles, cycle_stride):
                     try:
                         V = np.hstack(f[cycles_grp["V"][j, 0]][()])
                         I = np.hstack(f[cycles_grp["I"][j, 0]][()])
@@ -128,6 +233,16 @@ def load_batch_file(mat_path: str, batch_label: str) -> dict:
                     if not np.all(np.isfinite(cycle_arr)):
                         print(f"    [{key}] cycle {j}: skipped (NaN/Inf)")
                         continue
+                    bad = _nonphysical_channel(cycle_arr)
+                    if bad is not None:
+                        n_nonphysical[0] += 1
+                        continue
+                    if discharge_only:
+                        cycle_arr = _longest_discharge_segment(cycle_arr)
+                        if cycle_arr is None:
+                            n_no_discharge[0] += 1
+                            continue
+                        durations.append(float(cycle_arr[-1, 3] - cycle_arr[0, 3]))
                     soh = (
                         float(qd_summary[j]) / LFP_NOMINAL_CAPACITY_AH * 100
                         if j < len(qd_summary)
@@ -135,7 +250,9 @@ def load_batch_file(mat_path: str, batch_label: str) -> dict:
                     )
                     if soh is None or soh < MIN_SOH or soh > 105.0:
                         continue
-                    kept_cycles.append((cycle_arr, soh, len(kept_cycles)))
+                    # j = true cycle number (see load_batch_file docstring) —
+                    # NOT len(kept_cycles), which would collapse under stride.
+                    kept_cycles.append((cycle_arr, soh, j))
 
                 if kept_cycles:
                     cells[key] = {
@@ -147,6 +264,25 @@ def load_batch_file(mat_path: str, batch_label: str) -> dict:
                 print(f"  [{key}] skipped entirely (cell-level error: {exc})")
                 continue
 
+    if n_nonphysical[0]:
+        # Watch this number: a handful of dropouts is the expected case. If it is
+        # a large share of the batch, switch from dropping cycles to clipping the
+        # offending samples — dropping would then be throwing away real training data.
+        print(
+            f"  {batch_label}: {n_nonphysical[0]} cycles dropped (sensor value outside "
+            f"{PHYSICAL_RANGES}) — these are what previously widened the scaler range"
+        )
+    if n_no_discharge[0]:
+        print(f"  {batch_label}: {n_no_discharge[0]} cycles dropped (no discharge run >= {WINDOW_SIZE})")
+    if durations:
+        med = float(np.median(durations))
+        # Decides a real question we cannot answer offline: compute_soc_percent()
+        # divides `time` by 3600, i.e. it assumes SECONDS (NASA convention, and
+        # what BE sends at inference). A 4C discharge lasts ~15 min, so a median
+        # near ~900 means seconds; a median near ~15 means Severson stores minutes
+        # and the Coulomb-counted soc_percent channel is off by 60x.
+        unit = "giay (khop NASA)" if med > 200 else "PHUT? -> soc_percent lech 60x, BAO LAI"
+        print(f"  {batch_label}: discharge duration trung vi = {med:.1f} -> {unit}")
     return cells
 
 
@@ -204,10 +340,31 @@ def main() -> None:
     parser.add_argument("--test-frac", type=float, default=0.05)
     parser.add_argument("--val-ids", default=None, help="Comma-separated cell keys, overrides --val-frac")
     parser.add_argument("--test-ids", default=None, help="Comma-separated cell keys, overrides --test-frac")
+    parser.add_argument(
+        "--cycle-stride",
+        type=int,
+        default=1,
+        help="Keep only every Nth cycle (default 1 = all). Severson cells run 800-2300 "
+        "cycles with ~0.01%% SOH change between neighbours, so N=5 cuts dataset size and "
+        "preprocess/train time ~5x at negligible information loss. See load_batch_file().",
+    )
+    parser.add_argument(
+        "--phase",
+        choices=["discharge", "all"],
+        default="discharge",
+        help="'discharge' (default) keeps only the longest discharge run of each cycle, "
+        "matching scripts/preprocess.py (NASA feeds discharge cycles only) and what "
+        "inference sees. 'all' keeps the raw Severson cycle incl. the fast-charge steps "
+        "— the pre-2026-07-25 behaviour, kept for ablation.",
+    )
     args = parser.parse_args()
+    if args.cycle_stride < 1:
+        parser.error(f"--cycle-stride must be >= 1, got {args.cycle_stride}")
 
     os.makedirs(args.output_dir, exist_ok=True)
     print(f"Window size: {WINDOW_SIZE} | Stride: {WINDOW_STRIDE} | LFP nominal capacity: {LFP_NOMINAL_CAPACITY_AH} Ah")
+    print(f"Cycle stride: {args.cycle_stride} | cycle_count_norm divisor: {CYCLE_COUNT_NORM}")
+    print(f"Phase filter: {args.phase}")
 
     mat_files = sorted(
         f for f in os.listdir(args.data_dir)
@@ -220,11 +377,23 @@ def main() -> None:
         )
     print(f"Found {len(mat_files)} batch file(s): {mat_files}")
 
+    # Timing breakdown: the .mat parse and the per-window feature extraction have
+    # very different costs, and knowing the split decides whether --cycle-stride
+    # or the training loop is what needs tuning to fit Kaggle's 12h session limit.
+    t_start = time.perf_counter()
+
     all_cells: dict = {}
     for idx, fname in enumerate(mat_files, start=1):
         batch_label = f"b{idx}"
-        cells = load_batch_file(os.path.join(args.data_dir, fname), batch_label)
+        cells = load_batch_file(
+            os.path.join(args.data_dir, fname),
+            batch_label,
+            args.cycle_stride,
+            discharge_only=(args.phase == "discharge"),
+        )
         all_cells.update(cells)
+    t_parse = time.perf_counter()
+    print(f"\n[TIMING] .mat parse: {t_parse - t_start:.1f}s")
 
     cell_ids = sorted(all_cells.keys())
     print(f"\nTotal usable cells: {len(cell_ids)}")
@@ -256,6 +425,12 @@ def main() -> None:
     )
     scaler = MinMaxScaler()
     scaler.fit(train_raw)
+    # Print the fitted range: this is what silently broke the first v2.0-lfp run
+    # (temperature spanned [-270, 400], squashing the real 28-45°C swing into 2.5%
+    # of [0,1]). Expect voltage ~[2, 3.7], temperature ~[25, 50] once the
+    # PHYSICAL_RANGES filter is doing its job.
+    for idx, name in enumerate(BASE_FEATURES[:3]):
+        print(f"  scaler range {name:<12}: [{scaler.data_min_[idx]:9.3f}, {scaler.data_max_[idx]:9.3f}]")
     os.makedirs(os.path.dirname(LFP_SCALER_PATH), exist_ok=True)
     joblib.dump(
         {
@@ -265,6 +440,11 @@ def main() -> None:
             "features": BASE_FEATURES,
             "chemistry": "LFP",
             "nominal_capacity_ah": LFP_NOMINAL_CAPACITY_AH,
+            # Traceability: both values change what the model learned, and both
+            # must match at inference (cycle_count_norm divisor especially).
+            "cycle_stride": args.cycle_stride,
+            "cycle_count_norm": CYCLE_COUNT_NORM,
+            "phase": args.phase,
         },
         LFP_SCALER_PATH,
     )
@@ -306,6 +486,17 @@ def main() -> None:
             path,
         )
         print(f"Saved {name}.pt ({len(X)} samples)")
+
+    t_end = time.perf_counter()
+    print(
+        f"\n[TIMING] .mat parse: {t_parse - t_start:.1f}s | "
+        f"window+feature extraction: {t_end - t_parse:.1f}s | "
+        f"total: {t_end - t_start:.1f}s"
+    )
+    print(
+        f"[TIMING] {len(X_train)} train windows -> at batch=32 that is "
+        f"{len(X_train) // 32:,} steps/epoch"
+    )
 
     print("\nLFP preprocessing complete.")
     print(
