@@ -312,6 +312,60 @@ ghi `balance_bands: False, jitter: 0.0, swa: False` → chưa dùng knob nào.
    Đây là fix *correctness*, không phải tuning, nên gộp chung 1 lần là hợp lý.
 2. **Lần 4** (nếu còn muốn ép) — thêm `--swa`, rồi `--jitter 0.01`. Từng cái một.
 
+### Log Kaggle đầy đủ lần 2 (đọc được 2026-07-26) — ĐÍNH CHÍNH 2 kết luận sai trước đó
+
+**Sai #1 — "undertraining do `--epochs 5`" là SAI.** Log lần 2 dòng 78 ghi
+`Config: lr=0.0005, batch=32, epochs=5, patience=15` → **lần 2 CŨNG chạy 5 epoch**, và dòng 39
+ghi clone được `f0f3996` (code round-1). Nghĩa là toàn bộ cải thiện 2.5856 → 1.9213 đến từ fix
+`CYCLE_COUNT_NORM` 200→2300, **không liên quan số epoch**. `--epochs 100` chưa từng chạy.
+
+**Sai #2 — "full data vẫn xong trong 12h nên bỏ `--cycle-stride`" là SAI.** Số đo thật:
+
+| Bước | Thời gian |
+|------|-----------|
+| Parse 4 file `.mat` (141 cell) | 266s (4,5 phút) |
+| Trích xuất window+feature train (3 220 853 window) | 13 293s (**3,7h**) |
+| Trích xuất val/test | 1 427s (24 phút) |
+| Train **5 epoch** | 25 147s (**7,0h** → **1,4h/epoch**) |
+| Tổng | **11,2h** / giới hạn 12h |
+
+→ 100 epoch full data = **140 giờ**, vượt giới hạn **12 lần**. `--cycle-stride` là **bắt buộc**.
+Lần 2 chỉ vừa khít 12h vì nó chạy 5 epoch, không phải vì full data rẻ.
+
+### ⚠️ Phát hiện quan trọng nhất — model hỏng ở vùng EOL, MAE tổng che mất
+
+Log lần 2, `Per-band test MAE` (band 10 điểm, từ `train.py` GH-88):
+
+| Dải SOH | n | MAE | bias |
+|---------|---|-----|------|
+| 70–80% | 950 | **10.293%** | **+10.280%** |
+| 80–90% | 19 310 | 4.139% | +3.845% |
+| 90–100% | 150 080 | 1.507% | −0.878% |
+
+Pin thật 75% SOH → model dự đoán **~85%**. Đây là failure mode **tệ nhất có thể** cho hệ thống
+bảo trì: pin đã qua ngưỡng EOL 80% bị báo là còn khoẻ → **bỏ sót pin cần thay**, đúng thứ sản
+phẩm sinh ra để phát hiện. MAE tổng 1.92% "đạt target" chỉ vì dải 90–100% chiếm **88%** số mẫu
+test (150 080/170 340).
+
+Nguyên nhân: mất cân bằng **158:1**. Đây chính xác là ca dùng của `--balance-bands`
+(comment trong `train.py`: *"the v1.5 failure mode was concentrated in the 75-85% band"*).
+
+**Sai #3 — tôi từng viết `--balance-bands` "yếu với LFP" vì tưởng SOH chỉ trải 80–100% → 2 bin.
+Log cho thấy trải 70–100% → 3 bin và lệch 158:1. Kết luận đó SAI, flag này là ưu tiên số 1.**
+
+### Cấu hình lần 3 (notebook đã set sẵn)
+
+`--cycle-stride 5 --phase discharge` + `--epochs 50 --balance-bands`
+→ ước tính ~290k window, ~450s/epoch, 50 epoch ≈ 6,3h + preprocess ~27 phút ≈ **7h tổng**.
+
+Cell 8 của notebook giờ **đọc lại per-band từ file log** và so `bias` dải 70–80% với mốc
++10.280% của lần 2 — đây mới là chỉ số quyết định, không phải MAE tổng. Cell cũng
+`assert scaler['phase'] == 'discharge'` để không bao giờ nhầm artifact cũ/mới nữa.
+
+> Ghi chú nhỏ, không phải bug: dòng log `Training IsolationForest on spectral features (54 dims)`
+> là chuỗi hardcode cũ trong `train.py`; số chiều thật là 57 (`SPECTRAL_FEAT_DIM`). Không ảnh
+> hưởng kết quả, để lại vì ngoài scope.
+
 ### Việc còn lại
 - [ ] Push round 2 + round 3 (cycle-stride, cycle_idx=j, TIMING, PHYSICAL_RANGES) rồi chạy lại
   Kaggle → kỳ vọng MAE cải thiện thêm nhờ kênh temperature/voltage hồi phục độ phân giải.
