@@ -94,6 +94,44 @@ PHYSICAL_RANGES = {
     # the integration axis for compute_soc_percent()'s Coulomb counting.
     "time": (0.0, 200_000.0),
 }
+
+# Severson stores cycle time in MINUTES; NASA (scripts/preprocess.py) and the
+# production payload BE sends both use SECONDS. Confirmed on the run-3 artifacts:
+# scaler_lfp.pkl fit `time` over [0.000, 24.130], and a 4C discharge of a 1.1 Ah
+# cell lasts ~15 min — so 24.13 is minutes, not seconds (24 s at 4C is physically
+# impossible).
+#
+# Two things break without this conversion:
+#   1. compute_soc_percent() does t_hours = time / 3600, i.e. it assumes seconds.
+#      Fed minutes, it under-counts drawn charge 60x — soc_percent stayed ~100
+#      across every training window, so that model input channel was dead.
+#   2. Worse at inference: BE sends seconds, but the scaler was fit on minutes.
+#      A 300 s reading scales to 12.43 when training only ever saw [0, 1] —
+#      massively out of distribution, with no error raised.
+TIME_UNIT_SECONDS = {"minutes": 60.0, "seconds": 1.0}
+
+# StandardScaler divides by sqrt(var), so a feature whose training variance is
+# pure floating-point rounding noise gets that noise amplified to unit variance.
+# Measured on the run-3 feature_scaler_lfp.pkl: 7 of the 57 features sat at
+# var 1e-10..4e-9 and were being amplified 15,000x-93,000x —
+#   spec.temp.centroid  93,072x     spec.temp.band_mid   76,739x
+#   spec.temp.band_high 62,733x     spec.temp.band_low   34,788x
+#   spec.temp.gini      26,727x     stat.temp.waveform   19,610x
+#   spec.temp.flatness  15,210x
+# i.e. almost the whole temperature spectral block. Severson runs in a 30 °C
+# chamber, so temperature is near-constant inside a 30-step window; its FFT is
+# essentially DC and every spectral-shape descriptor degenerates.
+#
+# These 7 feed film_proj, which emits the gamma/beta modulating EVERY hidden
+# unit — so the noise spreads across the whole representation and shows up as
+# prediction variance (RMSE). Flooring scale_ at 1.0 for them makes the value
+# collapse to ~0 (x - mean, undivided) instead: a dead input rather than a noise
+# input. NASA's scaler is left alone (its degenerate set is much smaller and
+# v1.6 is already shipped).
+#
+# 1e-8 sits in a clear gap: the harmful block is at var ~1e-10, while the
+# smallest feature carrying real signal (spec.voltage.centroid) is at ~1.4e-6.
+FEATURE_VAR_FLOOR = 1e-8
 CYCLE_COUNT_NORM = LFP_CYCLE_COUNT_NORM  # Severson-specific (2300) — NOT the NASA 200
 # value, whose cells cycle 10x fewer times. See src/core/config.py comment.
 
@@ -163,7 +201,11 @@ def _longest_discharge_segment(cycle_arr: np.ndarray) -> np.ndarray | None:
 
 
 def load_batch_file(
-    mat_path: str, batch_label: str, cycle_stride: int = 1, discharge_only: bool = True
+    mat_path: str,
+    batch_label: str,
+    cycle_stride: int = 1,
+    discharge_only: bool = True,
+    time_scale: float = 60.0,
 ) -> dict:
     """
     Parse one Severson .mat v7.3 file into {cell_key: {"cycle_life", "policy",
@@ -228,7 +270,7 @@ def load_batch_file(
                     if n < WINDOW_SIZE:
                         continue
                     cycle_arr = np.stack(
-                        [V[:n], I[:n], T[:n], t[:n]], axis=1
+                        [V[:n], I[:n], T[:n], t[:n] * time_scale], axis=1
                     ).astype(np.float32)
                     if not np.all(np.isfinite(cycle_arr)):
                         print(f"    [{key}] cycle {j}: skipped (NaN/Inf)")
@@ -357,6 +399,14 @@ def main() -> None:
         "inference sees. 'all' keeps the raw Severson cycle incl. the fast-charge steps "
         "— the pre-2026-07-25 behaviour, kept for ablation.",
     )
+    parser.add_argument(
+        "--time-unit",
+        choices=["minutes", "seconds"],
+        default="minutes",
+        help="Unit of the raw Severson `t` column (default: minutes — verified against the "
+        "run-3 scaler, see TIME_UNIT_SECONDS). Converted to SECONDS internally so training "
+        "matches NASA's convention and the payload BE sends at inference.",
+    )
     args = parser.parse_args()
     if args.cycle_stride < 1:
         parser.error(f"--cycle-stride must be >= 1, got {args.cycle_stride}")
@@ -364,7 +414,7 @@ def main() -> None:
     os.makedirs(args.output_dir, exist_ok=True)
     print(f"Window size: {WINDOW_SIZE} | Stride: {WINDOW_STRIDE} | LFP nominal capacity: {LFP_NOMINAL_CAPACITY_AH} Ah")
     print(f"Cycle stride: {args.cycle_stride} | cycle_count_norm divisor: {CYCLE_COUNT_NORM}")
-    print(f"Phase filter: {args.phase}")
+    print(f"Phase filter: {args.phase} | time unit vao: {args.time_unit} -> quy ve GIAY")
 
     mat_files = sorted(
         f for f in os.listdir(args.data_dir)
@@ -390,6 +440,7 @@ def main() -> None:
             batch_label,
             args.cycle_stride,
             discharge_only=(args.phase == "discharge"),
+            time_scale=TIME_UNIT_SECONDS[args.time_unit],
         )
         all_cells.update(cells)
     t_parse = time.perf_counter()
@@ -445,6 +496,7 @@ def main() -> None:
             "cycle_stride": args.cycle_stride,
             "cycle_count_norm": CYCLE_COUNT_NORM,
             "phase": args.phase,
+            "time_unit_in": args.time_unit,  # luu ra GIAY bat ke input la gi
         },
         LFP_SCALER_PATH,
     )
@@ -455,9 +507,32 @@ def main() -> None:
     print(f"  Train: {len(X_train)} windows")
 
     feat_scaler = StandardScaler()
-    X_feat_train = feat_scaler.fit_transform(X_feat_train_raw).astype(np.float32)
+    feat_scaler.fit(X_feat_train_raw)
+
+    # Floor scale_ on degenerate features BEFORE transforming anything, so train,
+    # val, test and inference all go through the identical mapping (val/test call
+    # feat_scaler.transform() below; inference loads this same pickle). See
+    # FEATURE_VAR_FLOOR for why these would otherwise inject amplified noise.
+    degenerate = feat_scaler.var_ < FEATURE_VAR_FLOOR
+    n_degenerate = int(degenerate.sum())
+    if n_degenerate:
+        worst = np.argsort(np.where(degenerate, feat_scaler.var_, np.inf))[:n_degenerate]
+        print(f"  {n_degenerate}/{len(degenerate)} feature suy bien (var < {FEATURE_VAR_FLOOR:g}) "
+              f"-> ep scale_=1.0 thay vi khuech dai nhieu:")
+        for i in worst:
+            amp = 1.0 / feat_scaler.scale_[i] if feat_scaler.scale_[i] > 0 else 0.0
+            print(f"     idx {i:>2}: var={feat_scaler.var_[i]:.3e}  (dang khuech dai {amp:,.0f}x)")
+        feat_scaler.scale_[degenerate] = 1.0
+
+    X_feat_train = feat_scaler.transform(X_feat_train_raw).astype(np.float32)
     joblib.dump(
-        {"scaler": feat_scaler, "version": LFP_MODEL_VERSION, "n_features": X_feat_train.shape[1]},
+        {
+            "scaler": feat_scaler,
+            "version": LFP_MODEL_VERSION,
+            "n_features": X_feat_train.shape[1],
+            "var_floor": FEATURE_VAR_FLOOR,
+            "n_degenerate": n_degenerate,
+        },
         LFP_FEATURE_SCALER_PATH,
     )
     print(f"Saved feature_scaler -> {LFP_FEATURE_SCALER_PATH}")

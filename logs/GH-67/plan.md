@@ -366,6 +366,140 @@ Cell 8 của notebook giờ **đọc lại per-band từ file log** và so `bias
 > là chuỗi hardcode cũ trong `train.py`; số chiều thật là 57 (`SPECTRAL_FEAT_DIM`). Không ảnh
 > hưởng kết quả, để lại vì ngoài scope.
 
+## Kết quả lần 3 (2026-07-27) — ĐẠT TARGET, gần ngang model NASA
+
+| Metric | Lần 2 | **Lần 3** | Target | NASA v1.6 |
+|--------|-------|-----------|--------|-----------|
+| Test MAE | 1.9213% | **1.4365%** | < 2.0% | 1.3409% |
+| Test RMSE | 2.7627% | **1.8767%** | < 3.0% | 1.8426% |
+
+MAE giảm 25%, **RMSE giảm 32%**. RMSE cải thiện mạnh hơn MAE nghĩa là các sai số **lớn** co lại
+nhiều hơn sai số điển hình — dấu hiệu tốt cho thấy bias +10.28% ở dải EOL đã giảm đáng kể
+(cần số per-band từ log để xác nhận chắc chắn).
+
+Metadata xác nhận đủ 4 fix đã ăn: `cycle_stride: 5`, `cycle_count_norm: 2300.0`,
+`phase: discharge`, `balance_bands: True`. Dải scaler đã sạch hoàn toàn:
+
+| Kênh | Lần 2 (hỏng) | Lần 3 |
+|------|--------------|-------|
+| voltage | [0.736, 6.606] | **[1.889, 3.595]** — đúng dải LFP |
+| current | [-12.213, 8.169] | **[-4.265, -0.100]** — toàn ÂM = thuần pha xả ✅ |
+| temperature | [-270.0, 400.0] | **[0.000, 44.365]** |
+| time | [-57510.7, 4825.5] | **[0.000, 24.130]** |
+
+126/141 cell vào train (1 cell không có đoạn xả đủ 30 bước).
+
+### 🚨 Bug thứ 7 — cột `time` của Severson là PHÚT, không phải giây (CHẶN PRODUCTION)
+
+Dải `time` sau fix = **[0.000, 24.130]**. Xả 4C của cell 1.1 Ah kéo dài ~15 phút → 24.13 là
+**phút**. (24 *giây* cho một lần xả 4C là bất khả thi về vật lý.) NASA và payload BE gửi đều
+dùng **giây**.
+
+Đo trực tiếp, 2 hậu quả:
+
+1. **Kênh `soc_percent` chết trong lúc train.** `compute_soc_percent()` làm
+   `t_hours = time / 3600` tức giả định giây. Cho ăn phút → đếm thiếu điện lượng 60×:
+   window 12 phút xả 4A cho `soc 100.00 → 98.79` (đúng phải là `100.00 → 27.27`). Gần như
+   phẳng, model mất hẳn 1 trong 6 kênh input.
+2. **Nghiêm trọng hơn — lệch phân bố lúc inference.** BE gửi giây, nhưng scaler fit trên phút:
+
+   | `time` BE gửi | Sau scaler | |
+   |---|---|---|
+   | 0 s | 0.00 | |
+   | 60 s | **2.49** | ngoài phân bố |
+   | 300 s | **12.43** | ngoài phân bố |
+   | 720 s | **29.84** | ngoài phân bố |
+
+   Train chỉ từng thấy [0, 1]. Không có lỗi nào được raise — model cứ thế predict sai.
+
+**Đã fix:** `TIME_UNIT_SECONDS` + `--time-unit {minutes,seconds}` (default `minutes`) quy `time`
+về **giây** ngay lúc parse, trước mọi thứ khác. Metadata scaler thêm `time_unit_in` để trace.
+Sau fix, `time` sẽ nằm dải ~[0, 1448] giây thay vì [0, 24.13].
+
+> Fix này **bắt buộc** trước khi wire model LFP vào inference, và nhiều khả năng còn cải thiện
+> thêm metric vì hồi sinh kênh `soc_percent` đang chết.
+
+## Mục tiêu mới (2026-07-27): cả MAE và RMSE < 1.0%
+
+**Đánh giá trung thực: MAE < 1% khả thi, RMSE < 1% khó.** RMSE ≥ MAE luôn; tỉ lệ hiện tại
+`1.8767/1.4365 = 1.31` → muốn RMSE < 1.0 thì MAE phải xuống **~0.77%**, tức cải thiện **47%**.
+Chưa model nào của dự án xuống dưới 1% (NASA v1.6: 1.34/1.84; long-seq v2.2: 1.52/1.97).
+
+### Vì sao fix #7 là đòn bẩy mạnh nhất (không chỉ là fix production)
+
+Mọi window cắt từ **cùng 1 chu kỳ xả** mang **chung 1 nhãn SOH**. Window 30 bước chỉ là lát cắt
+nhỏ trong ~15 phút xả: lát đầu (3.4 V) và lát cuối (2.9 V) trông khác hẳn nhau nhưng phải cho ra
+cùng một con số. Model chỉ phân giải được nếu biết **đang ở đoạn nào của quá trình xả** — tín
+hiệu đó chính là `soc_percent`/`time`, mà `soc_percent` đang **chết** vì bug #7. Đây là phương
+sai nội-chu-kỳ không thể khử nếu thiếu thông tin vị trí → fix #7 tấn công trực diện nguồn sai số
+lớn nhất còn lại.
+
+### Cấu hình lần 4 (user chốt 2026-07-27)
+
+`--cycle-stride 5 --phase discharge --time-unit minutes` + `--epochs 50 --balance-bands --swa`
+→ giữ stride 5 để **cô lập** đóng góp của fix #7 + SWA, ~7h.
+
+`--swa` rủi ro rất thấp: `train.py` chỉ dùng trọng số SWA **nếu val_loss tốt hơn** best
+checkpoint, không thì `model.load_state_dict(best_state)` revert. Với `epochs=50`,
+`swa_start_frac=0.75` → SWA gộp từ epoch 38, `effective_patience = max(15, 50-38+5) = 17`.
+
+### Đòn bẩy còn lại (chưa dùng), xếp theo giá trị
+
+| # | Đòn bẩy | Kỳ vọng | Ghi chú |
+|---|---------|---------|---------|
+| 1 | Fix #7 (hồi sinh `soc_percent`) | Cao | lần 4 |
+| 2 | `--swa` | 5–15% tương đối | lần 4 |
+| 3 | `--cycle-stride 2` (gấp 2.5× dữ liệu) | Vừa | phải giảm còn ~25 epoch để vừa 12h |
+| 4 | `--jitter 0.01` | Thấp–vừa | chỉ khi log cho thấy overfit |
+| 5 | `d_model` 64→128 (79 467 params là rất nhỏ) | Có thể cao | ⚠️ **lệch spec `CLAUDE.md`** — cần quyết định riêng; `train.py` chưa có flag `--d-model` |
+
+> Về #5: `model_loader.py:74-75` đọc `d_model`/`d_state` **từ checkpoint**
+> (`checkpoint.get("d_model", 64)`), nên model to hơn vẫn load được mà không phải sửa code
+> inference. Rào cản duy nhất là spec, không phải kỹ thuật.
+
+### Còn thiếu để tư vấn chắc chắn
+
+**3 dòng `Per-band test MAE` của lần 3.** Sai số còn lại nằm ở dải SOH nào quyết định đòn bẩy nào
+đáng dùng — tập trung ở dải 70–80% thì hướng khác hẳn với khi rải đều. Chưa có số đó thì phần
+xếp hạng trên có phần suy đoán.
+
+### 🚨 Bug thứ 8 (2026-07-27) — 7 đặc trưng khuếch đại nhiễu làm tròn 15.000–93.000×
+
+Đo trực tiếp `feature_scaler_lfp.pkl` lần 3: **12/57 đặc trưng có `var < 1e-8`** (NASA chỉ 4),
+trong đó **7 cái có `var` ở mức 1e-10…4e-9** — tức chỉ là nhiễu làm tròn float. `StandardScaler`
+chia cho `sqrt(var)` nên biến nhiễu đó thành tín hiệu biên độ đơn vị:
+
+| idx | Đặc trưng | var | Khuếch đại |
+|-----|-----------|-----|------------|
+| 20 | `spec.temp.centroid` | 1.15e-10 | **93.072×** |
+| 27 | `spec.temp.band_mid` | 1.70e-10 | 76.739× |
+| 28 | `spec.temp.band_high` | 2.54e-10 | 62.733× |
+| 26 | `spec.temp.band_low` | 8.26e-10 | 34.788× |
+| 29 | `spec.temp.gini` | 1.40e-09 | 26.727× |
+| 53 | `stat.temp.waveform` | 2.60e-09 | 19.610× |
+| 24 | `spec.temp.flatness` | 4.32e-09 | 15.210× |
+
+Gần trọn khối **phổ nhiệt độ** (layout feature: `[spec×3ch(10), stat×3ch(9)]`, idx 20–29 =
+spectral temperature). Severson chạy buồng 30 °C → nhiệt độ gần như hằng số trong window 30 bước
+→ FFT là DC thuần → mọi mô tả hình dạng phổ suy biến.
+
+**Vì sao hại nặng:** 7 kênh này vào `film_proj` (`Linear(57→57)→SiLU→Linear(57→128)`), sinh
+`gamma`/`beta` **điều biến MỌI hidden unit** của model. Nhiễu lan ra toàn bộ biểu diễn → biểu
+hiện thành phương sai dự đoán, tức đúng **RMSE** — chỉ số đang là ràng buộc khó nhất.
+
+**Đã fix:** `FEATURE_VAR_FLOOR = 1e-8`, ép `scale_ = 1.0` cho feature dưới ngưỡng ngay sau khi
+`fit()` và **trước** khi transform bất cứ split nào → train/val/test/inference đi qua cùng một
+ánh xạ. Ngưỡng nằm trong khoảng trống rõ: khối gây hại ở `var ~1e-10`, feature nhỏ nhất có tín
+hiệu thật (`spec.voltage.centroid`) ở `~1.4e-6` — cách nhau 4 bậc.
+
+**Không phải sửa code inference:** `inference.py` gọi `model_loader.feature_scaler.transform()`
+trên chính file pickle này, nên `scale_` đã vá tự động áp dụng ở cả 2 phía.
+
+Verify bằng dữ liệu mô phỏng (4 cột: signal mạnh / signal nhỏ thật / nhiễu làm tròn / hằng số):
+cột nhiễu biên độ `1.000 → 1.1e-05`, 2 cột có tín hiệu thật **không đổi**. Metadata
+`feature_scaler_lfp.pkl` thêm `var_floor` + `n_degenerate` để trace; notebook assert
+`amp_max < 5000` để bắt trường hợp fix chưa ăn.
+
 ### Việc còn lại
 - [ ] Push round 2 + round 3 (cycle-stride, cycle_idx=j, TIMING, PHYSICAL_RANGES) rồi chạy lại
   Kaggle → kỳ vọng MAE cải thiện thêm nhờ kênh temperature/voltage hồi phục độ phân giải.
