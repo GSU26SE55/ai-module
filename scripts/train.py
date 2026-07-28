@@ -428,7 +428,13 @@ def train(
     # concentrated in the 75-85% band of the 4°C test battery).
     logger.info("Per-band test MAE:")
     test_pred = test_metrics["pred"]
-    for lo in range(50, 100, 10):
+    # Upper bound 110, not 100: preprocess keeps labels up to 105% (early cycles
+    # whose measured capacity exceeds nominal), and those samples were invisible
+    # in every band table so far — on the LFP run-4 the in-band weighted MAE was
+    # 1.234% while the reported total was 1.3095%, i.e. the gap lived entirely in
+    # the unshown >=100% region. An empty band is skipped by the mask check below,
+    # so this is a no-op for datasets that have none.
+    for lo in range(50, 110, 10):
         hi = lo + 10
         mask = (y_test >= lo) & (y_test < hi)
         if mask.any():

@@ -500,6 +500,52 @@ cột nhiễu biên độ `1.000 → 1.1e-05`, 2 cột có tín hiệu thật **
 `feature_scaler_lfp.pkl` thêm `var_floor` + `n_degenerate` để trace; notebook assert
 `amp_max < 5000` để bắt trường hợp fix chưa ăn.
 
+## Kết quả lần 4 (2026-07-27) — thắng lớn ở vùng EOL
+
+| Dải SOH | Lần 2 | **Lần 4** |
+|---------|-------|-----------|
+| 70–80% | MAE 10.293%, bias **+10.280%** | MAE 2.814%, bias **+2.474%** (n=46) |
+| 80–90% | MAE 4.139%, bias +3.845% | MAE 1.233%, bias **+0.198%** (n=1856) |
+| 90–100% | MAE 1.507%, bias −0.878% | MAE 1.229%, bias −0.186% (n=14257) |
+
+Bias vùng EOL giảm **7,8 điểm**; 3 dải giờ gần như **đồng đều** (1.233 vs 1.229) — model không
+còn thiên lệch hệ thống ở vùng pin sắp hỏng. Đây là thứ quyết định cho bài toán bảo trì, quan
+trọng hơn MAE tổng.
+
+| Metric | Lần 3 | **Lần 4** |
+|--------|-------|-----------|
+| MAE | 1.4365% | **1.3095%** ↓ |
+| RMSE | 1.8767% | 1.9228% ↑ |
+
+Fix #7 + #8 đều xác nhận ăn: `time [0, 1447.789]` (giây), `n_degenerate=12`, khuếch đại nhiễu
+`93.072× → 5.879×`. `swa: False` — SWA bị revert vì val_loss tệ hơn best checkpoint (cơ chế an
+toàn hoạt động đúng, chỉ là SWA không giúp lần này).
+
+### Lỗi của tôi trong notebook lần 4 (đã sửa)
+
+1. **Ngưỡng assert quá chặt.** `assert amp_max < 5000` fail ở 5.879×. Thủ phạm:
+   `spec.temp.entropy` với `var = 2.89e-8`, nằm **ngay trên** sàn `1e-8` nên lọt lưới.
+   → Nâng `FEATURE_VAR_FLOOR` lên **`1e-7`**: bắt 13 feature (var ≤ 2.89e-8), giữ nguyên 5
+   feature có tín hiệu thật (var ≥ 3.84e-7) — khoảng cách **13,3×**, vẫn tách sạch.
+2. **Lỗi thiết kế nghiêm trọng hơn: assert chẩn đoán abort cả notebook SAU khi train xong
+   4 tiếng**, nên cell đóng gói zip không chạy. → Đảo thứ tự: **đóng gói (§8) chạy TRƯỚC chẩn
+   đoán (§9)**, và mọi kiểm tra hậu-train chuyển thành cảnh báo `[!]` qua hàm `chk()`, **không
+   còn `assert`** nào. Hard-stop chỉ còn ở cell 3 (guard) — tức trước khi tốn giờ GPU.
+   > Artifact lần 4 vẫn cứu được: cell dọn dẹp cũng không chạy nên 4 file còn nguyên ở
+   > `/kaggle/working/ai-module/models/weights/` trong tab Output, chỉ chưa gom vào zip.
+
+### Vì sao RMSE tăng nhẹ dù MAE giảm — và fix để nhìn thấy
+
+Cộng 3 dải: 46+1856+14257 = 16.159 mẫu, MAE có trọng số = **1.234%**. Nhưng MAE tổng báo
+**1.3095%**. Chênh lệch nghĩa là **có mẫu nằm ngoài 3 dải** và chúng sai nhiều hơn.
+
+Nguyên nhân: `train.py` in band bằng `for lo in range(50, 100, 10)` → **mọi mẫu SOH ≥ 100% đều
+vô hình**, trong khi `preprocess_lfp.py` giữ nhãn tới 105% (chu kỳ đầu có dung lượng đo vượt
+nominal). Đây nhiều khả năng là nơi RMSE bị đội lên.
+
+**Đã sửa:** đổi thành `range(50, 110, 10)` → thêm dải 100–110. Band rỗng tự bị bỏ qua bởi
+`if mask.any()` nên **no-op với NASA**. Lần chạy tới sẽ thấy được vùng này.
+
 ### Việc còn lại
 - [ ] Push round 2 + round 3 (cycle-stride, cycle_idx=j, TIMING, PHYSICAL_RANGES) rồi chạy lại
   Kaggle → kỳ vọng MAE cải thiện thêm nhờ kênh temperature/voltage hồi phục độ phân giải.

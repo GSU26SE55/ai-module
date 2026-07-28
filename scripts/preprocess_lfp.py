@@ -129,9 +129,12 @@ TIME_UNIT_SECONDS = {"minutes": 60.0, "seconds": 1.0}
 # input. NASA's scaler is left alone (its degenerate set is much smaller and
 # v1.6 is already shipped).
 #
-# 1e-8 sits in a clear gap: the harmful block is at var ~1e-10, while the
-# smallest feature carrying real signal (spec.voltage.centroid) is at ~1.4e-6.
-FEATURE_VAR_FLOOR = 1e-8
+# Raised 1e-8 -> 1e-7 after run 4: the floor caught 12 features but left
+# spec.temp.entropy (var 2.89e-8, just above the old floor) still amplifying
+# 5,879x. 1e-7 catches it and remains 3.8x below the smallest voltage feature
+# that carries real signal (spec.voltage.band_high, var 3.83e-7) — the harmful
+# temperature block sits at 1e-10..3e-8, so the gap is still unambiguous.
+FEATURE_VAR_FLOOR = 1e-7
 CYCLE_COUNT_NORM = LFP_CYCLE_COUNT_NORM  # Severson-specific (2300) — NOT the NASA 200
 # value, whose cells cycle 10x fewer times. See src/core/config.py comment.
 
