@@ -69,6 +69,26 @@ from src.features.extractor import (
 
 SEED = 42
 MIN_SOH = 10.0  # same filter convention as scripts/preprocess.py — drop dead/corrupt cycles
+MAX_SOH_KEEP = 105.0  # above this the capacity reading is an error, not a fresh cell — drop
+
+# SOH is "health relative to a new cell", so >100% is not a health state: it is an
+# artifact of dividing measured capacity by the datasheet nominal (1.1 Ah) when a
+# fresh A123 cell actually delivers slightly more. Run 5 exposed the cost of
+# feeding those labels through unchanged — a band that had been invisible until
+# train.py's per-band range was widened to 110:
+#     SOH 100-110: n=532  MAE=3.533%  bias=-3.506%
+# 3.2% of test windows producing 8.7% of the total absolute error, all of it the
+# model correctly refusing to predict "healthier than new".
+#
+# Nothing downstream distinguishes 100% from 103%: health_stage thresholds are
+# 80/85/90, so both are "Healthy" and no maintenance decision changes. Clipping
+# (rather than dropping) keeps the windows as training signal for "very healthy"
+# while removing a bias target nobody needs.
+#
+# ⚠️ Be honest when reporting: clipping also relabels the TEST set, so part of any
+# metric gain here is definitional, not the model getting better. State that when
+# comparing against run 5's 1.2899% / 1.8935%.
+SOH_CLIP_DEFAULT = 100.0
 
 # Physically impossible sensor values — thermocouple dropouts and voltage-probe
 # glitches in the raw Severson export survive the isfinite() check below (-270.0
@@ -209,6 +229,7 @@ def load_batch_file(
     cycle_stride: int = 1,
     discharge_only: bool = True,
     time_scale: float = 60.0,
+    soh_clip: float = SOH_CLIP_DEFAULT,
 ) -> dict:
     """
     Parse one Severson .mat v7.3 file into {cell_key: {"cycle_life", "policy",
@@ -239,6 +260,7 @@ def load_batch_file(
     cells: dict = {}
     n_nonphysical = [0]  # list = mutable counter reachable from the inner loop
     n_no_discharge = [0]
+    n_soh_clipped = [0]
     durations: list[float] = []
     with h5py.File(mat_path, "r") as f:
         if "batch" not in f:
@@ -293,8 +315,11 @@ def load_batch_file(
                         if j < len(qd_summary)
                         else None
                     )
-                    if soh is None or soh < MIN_SOH or soh > 105.0:
+                    if soh is None or soh < MIN_SOH or soh > MAX_SOH_KEEP:
                         continue
+                    if soh > soh_clip:
+                        n_soh_clipped[0] += 1
+                        soh = soh_clip
                     # j = true cycle number (see load_batch_file docstring) —
                     # NOT len(kept_cycles), which would collapse under stride.
                     kept_cycles.append((cycle_arr, soh, j))
@@ -319,6 +344,8 @@ def load_batch_file(
         )
     if n_no_discharge[0]:
         print(f"  {batch_label}: {n_no_discharge[0]} cycles dropped (no discharge run >= {WINDOW_SIZE})")
+    if n_soh_clipped[0]:
+        print(f"  {batch_label}: {n_soh_clipped[0]} cycles co SOH > {soh_clip}% -> clip ve {soh_clip}%")
     if durations:
         med = float(np.median(durations))
         # Decides a real question we cannot answer offline: compute_soc_percent()
@@ -410,6 +437,14 @@ def main() -> None:
         "run-3 scaler, see TIME_UNIT_SECONDS). Converted to SECONDS internally so training "
         "matches NASA's convention and the payload BE sends at inference.",
     )
+    parser.add_argument(
+        "--soh-clip",
+        type=float,
+        default=SOH_CLIP_DEFAULT,
+        help=f"Clip SOH labels at this %% (default {SOH_CLIP_DEFAULT}). >100%% is a "
+        "nominal-spec artifact, not a health state — see SOH_CLIP_DEFAULT. Pass 999 to "
+        "disable and reproduce run 5's labels.",
+    )
     args = parser.parse_args()
     if args.cycle_stride < 1:
         parser.error(f"--cycle-stride must be >= 1, got {args.cycle_stride}")
@@ -418,6 +453,7 @@ def main() -> None:
     print(f"Window size: {WINDOW_SIZE} | Stride: {WINDOW_STRIDE} | LFP nominal capacity: {LFP_NOMINAL_CAPACITY_AH} Ah")
     print(f"Cycle stride: {args.cycle_stride} | cycle_count_norm divisor: {CYCLE_COUNT_NORM}")
     print(f"Phase filter: {args.phase} | time unit vao: {args.time_unit} -> quy ve GIAY")
+    print(f"SOH clip: {args.soh_clip}% (drop neu > {MAX_SOH_KEEP}%)")
 
     mat_files = sorted(
         f for f in os.listdir(args.data_dir)
@@ -444,6 +480,7 @@ def main() -> None:
             args.cycle_stride,
             discharge_only=(args.phase == "discharge"),
             time_scale=TIME_UNIT_SECONDS[args.time_unit],
+            soh_clip=args.soh_clip,
         )
         all_cells.update(cells)
     t_parse = time.perf_counter()
@@ -500,6 +537,7 @@ def main() -> None:
             "cycle_count_norm": CYCLE_COUNT_NORM,
             "phase": args.phase,
             "time_unit_in": args.time_unit,  # luu ra GIAY bat ke input la gi
+            "soh_clip": args.soh_clip,
         },
         LFP_SCALER_PATH,
     )

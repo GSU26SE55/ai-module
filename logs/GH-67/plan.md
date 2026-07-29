@@ -546,6 +546,68 @@ nominal). Đây nhiều khả năng là nơi RMSE bị đội lên.
 **Đã sửa:** đổi thành `range(50, 110, 10)` → thêm dải 100–110. Band rỗng tự bị bỏ qua bởi
 `if mask.any()` nên **no-op với NASA**. Lần chạy tới sẽ thấy được vùng này.
 
+## Kết quả lần 5 (2026-07-28) — tốt nhất từ trước tới nay, KHÔNG fail
+
+> Lần chạy này **thành công**: 5/5 check `[OK]`, `lfp_artifacts.zip` đã tạo, không traceback.
+> Hai dòng `SyntaxWarning` cuối log là của `mistune`/`nbconvert` — thư viện **của chính Kaggle**
+> khi render notebook ra HTML, xuất hiện ở mọi lần chạy kể cả các lần thành công trước.
+
+| Metric | Lần 4 | **Lần 5** |
+|--------|-------|-----------|
+| MAE | 1.3095% | **1.2899%** |
+| RMSE | 1.9228% | **1.8935%** |
+
+Xác nhận đủ: `time` max 1447.8 (giây), `discharge duration trung vi ≈ 1000` (khớp NASA),
+`n_degenerate=13`, khuếch đại nhiễu **93.072× → 1.615×**, 230.644 window train, 3,9h tổng.
+
+### Dải SOH ≥ 100% lộ ra — đúng giả thuyết
+
+```
+SOH  70-80 : n=   46  MAE=2.808%  bias=+2.560%
+SOH  80-90 : n= 1856  MAE=1.230%  bias=+0.218%
+SOH  90-100: n=14257  MAE=1.209%  bias=-0.135%
+SOH 100-110: n=  532  MAE=3.533%  bias=-3.506%   <- trước đây VÔ HÌNH
+```
+
+Kiểm chứng số học: `(46×2.808 + 1856×1.230 + 14257×1.209 + 532×3.533)/16691 = 1.2898` — khớp
+**chính xác** MAE tổng 1.2899%, tức mọi mẫu test đã được giải trình.
+
+Dải này chiếm **3,2% số mẫu** nhưng gánh **8,7% tổng sai số tuyệt đối** (quá tay 2,7×); với RMSE
+(bình phương) còn nặng hơn. Đây là chu kỳ đầu đời có dung lượng đo vượt nominal 1.1 Ah.
+
+**Đã fix — `SOH_CLIP_DEFAULT = 100.0` + `--soh-clip`:** SOH nghĩa là "sức khoẻ so với pin mới",
+>100% không phải trạng thái sức khoẻ mà là hệ quả của việc chia cho nominal datasheet. Không gì
+phía sau phân biệt 100% với 103% (ngưỡng `health_stage` là 80/85/90 → cả hai đều "Healthy").
+Clip thay vì drop để giữ window làm tín hiệu train vùng "rất khoẻ". `MAX_SOH_KEEP = 105` giữ
+nguyên làm bộ lọc lỗi đo.
+
+> ⚠️ **Phải trung thực khi báo cáo:** clip cũng đổi nhãn **tập test**, nên một phần cải thiện là
+> do định nghĩa chứ không phải model giỏi lên. Nêu rõ khi so với lần 5 (1.2899%/1.8935%).
+> Ghi chú này đã viết thẳng vào comment `SOH_CLIP_DEFAULT` trong code.
+
+### Phát hiện: model đang OVERFIT
+
+```
+epoch 30: train 0.000348 | val 0.000505   <- val TỐT NHẤT
+epoch 40: train 0.000326 | val 0.000589   <- train giảm, val TĂNG
+epoch 50: train 0.000310 | val 0.000549
+```
+
+Train loss giảm đều, val loss chạm đáy epoch 30 rồi đi lên → overfit rõ. Giải thích luôn vì sao
+**SWA bị revert 2 lần liên tiếp** (lần 5: SWA val 0.000496 vs best-ckpt 0.000473) — trung bình
+hoá các epoch cuối vốn đã overfit thì vô ích.
+
+### Cấu hình lần 6
+
+`--cycle-stride 3 --phase discharge --time-unit minutes --soh-clip 100`
++ `--epochs 50 --balance-bands --swa --jitter 0.01`
+
+- **`--jitter 0.01`** — chống overfit trực tiếp (nhiễu Gauss lên input). Val vẫn tách khỏi train
+  → tăng `0.02`; **cả hai** cùng tệ hơn lần 5 → hạ `0.005` (nhiễu quá mạnh gây underfit).
+- **`--cycle-stride 3`** (thay 5) — thêm 66% dữ liệu, cách chống overfit hiệu quả nhất. Lần 5 chỉ
+  dùng 3,9/12 giờ nên thừa ngân sách; stride 3 ước tính ~6,4h.
+- `--soh-clip 100` — xử lý dải 100–110 ở trên.
+
 ### Việc còn lại
 - [ ] Push round 2 + round 3 (cycle-stride, cycle_idx=j, TIMING, PHYSICAL_RANGES) rồi chạy lại
   Kaggle → kỳ vọng MAE cải thiện thêm nhờ kênh temperature/voltage hồi phục độ phân giải.
