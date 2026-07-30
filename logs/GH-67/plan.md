@@ -660,6 +660,77 @@ Artifact lần 5 (1.2899%/1.8935%) **đã commit trong git**. Bản trên đĩa 
 chưa commit). Lấy lại lần 5: `git checkout -- models/weights/`.
 **KHÔNG commit artifact lần 6.**
 
+## 🚨 Bug thứ 10 (2026-07-30) — `soc_percent` vô dụng khi train, lệch hẳn lúc inference
+
+**Phát hiện cấu trúc lớn nhất từ đầu GH-67 — khác hẳn #6/#8/#9 (đều là outlier làm hỏng dải).**
+
+`compute_soc_percent()` được thiết kế **window-local**; docstring của nó ghi rõ *"SOC is defined
+RELATIVE TO THE WINDOW: 100% at the first row"*. `preprocess_lfp.py` gọi nó trên từng lát 30 dòng:
+
+| | Dải `soc_norm` | Biến thiên |
+|---|---|---|
+| **Train** (window-local) | `[0.912, 1.000]` — mọi window đều 100.0 → 91.2% | **8,8 điểm** |
+| **Inference** (BE 6 cột) | `[0.094, 1.000]` — SOC thật của pin | **90,6 điểm** |
+
+Ba hậu quả:
+
+1. **Một trong 6 kênh input bị bỏ không.** `soc_percent` gần như hằng số ở mọi window → model
+   thực chất chỉ có **5 kênh hữu ích**.
+2. **Mất đúng tín hiệu quan trọng nhất.** Mọi window cắt từ 1 chu kỳ mang **chung 1 nhãn SOH**,
+   nên model chỉ phân giải được lát đầu (3.4 V) vs lát cuối (2.9 V) qua tín hiệu **vị trí**. Đây
+   chính là lập luận tôi đã dùng để giải thích fix #7 và #9 — nhưng `soc_percent`, kênh *được
+   thiết kế* để mang tín hiệu đó, lại đang không mang gì.
+3. **Lệch phân bố train/inference.** Model chưa bao giờ thấy `soc_norm < 0.912` khi train, nhưng
+   BE gửi xuống tận `0.094`. Payload 6 cột là **default BE dùng thật**
+   ([[be-predict-payload-6column-default]]).
+
+**Đã fix — `--soc-mode {cycle,window}`, default `cycle`:** Coulomb-count trên **toàn đoạn xả** rồi
+lát ra theo window (tính 1 lần/chu kỳ, không tính lại mỗi lát). Verify trên đoạn xả 4C mô phỏng:
+`cycle` biến thiên **90,6 điểm** (window đầu 1.000→0.912, window cuối 0.182→0.094) và khớp đúng
+dải BE gửi; `window` giữ 8,8 điểm. Mode `window` giữ lại để ablation.
+
+> ⚠️ **Lưu ý phạm vi:** `scripts/preprocess.py` (NASA) có **cùng vấn đề** — nó cũng gọi
+> `compute_soc_percent` window-local. Nghĩa là model NASA v1.6 đang production cũng bị lệch kênh
+> này với payload 6 cột. **Chưa sửa** vì ngoài scope GH-67 và v1.6 đã ship; cần issue riêng.
+
+## Đánh giá trung thực về mục tiêu < 1% cả hai chỉ số
+
+Sau khi phân tích lại toàn bộ, **MAE < 1% là khả thi; RMSE < 1% gần như không**, và lý do mang
+tính bản chất chứ không phải thiếu tuning:
+
+**1. Số nhãn độc lập bị chặn cứng, không phải số mẫu.** 230.644 window nghe nhiều, nhưng ~10
+window/chu kỳ **chung 1 nhãn**, và 2 chu kỳ liền nhau chênh ~0,02% SOH. Số nhãn thực sự phân biệt
+được ≈ 126 cell × (100%→80%). Hạ `--cycle-stride` chỉ thêm bản gần-trùng, **không thêm đa dạng
+nhãn**. Đây là lý do model 79.467 tham số vẫn overfit được — nghịch lý chỉ giải thích được khi
+nhìn vào số nhãn, không phải số mẫu.
+
+**2. LFP có plateau điện áp cực phẳng.** Cả dự án đã ghi nhận điều này (profile ngưỡng riêng cho
+LFP ở Mức 1). Trên plateau 3,2–3,3 V, điện áp gần như không đổi theo SOC — nên biến thiên do SOH
+lại càng nhỏ. Một window 90 giây nằm giữa plateau mang **rất ít thông tin SOH**. Đây là giới hạn
+tín hiệu/nhiễu của window=30 trên LFP, không sửa được bằng hyperparameter.
+
+**3. Sàn nhiễu nhãn.** Nhãn = `QDischarge / 1.1`. Sai số phép đo dung lượng của Severson cộng với
+biến thiên cell-to-cell ở cùng mức SOH tạo ra sai số không thể khử, ước lượng ~0,5–1% MAE.
+MAE hiện tại 1,29% đã không còn cách sàn đó bao xa.
+
+**Ước lượng có căn cứ cho lần 7** (tính từ per-band lần 5):
+- `--soh-clip 100` xoá gần hết sai số dải 100–110 (532 mẫu, MAE 3,533% → ~0,5%):
+  `(46×2.808 + 1856×1.230 + 14257×1.209 + 532×0.5)/16691 = 1.193%`
+- Cộng fix #10 (hồi sinh kênh vị trí) + #9 + `--jitter`: **MAE ~1,05–1,15%, RMSE ~1,5–1,7%**
+
+RMSE < 1% sẽ cần khử luôn 2 dải đuôi (70–80% đang MAE 2,808%, và dải 100–110 nếu không clip) —
+mà dải 70–80% chỉ có **46 mẫu test**, tức bản thân con số đó đã rất nhiễu, không phải thứ tối ưu
+được một cách đáng tin.
+
+### Đòn bẩy cấu trúc còn lại (chưa làm, cần quyết định)
+
+| Đòn bẩy | Kỳ vọng | Rào cản |
+|---------|---------|---------|
+| Đặc trưng dQ/dV (IC curve) cho path window=30 | Cao — IC là phương pháp chuẩn cho LFP trong y văn (`compute_ic_feature` đã có sẵn, đang chỉ dùng cho model long) | Đổi contract 57-dim; cần feature path riêng theo chemistry trong `inference.py` |
+| Thay ~38/57 đặc trưng vô dụng | Vừa–cao: `current` hằng số trong xả CC → 19 đặc trưng current gần vô nghĩa; `temperature` buồng ổn định → 13 đã bị ép sàn | Cùng rào cản trên; `feat_dim` đọc từ checkpoint nên kỹ thuật khả thi |
+| Chọn val/test có chủ đích (phủ vùng EOL) | Vừa — dải 70–80% chỉ 46 mẫu test là quá mỏng để tin | Đổi cách báo cáo số liệu; `--val-ids/--test-ids` đã có sẵn |
+| `d_model` 64→128 | **Thấp** — model đang overfit, thêm dung lượng nhiều khả năng làm tệ hơn | Lệch spec `CLAUDE.md` |
+
 ### Việc còn lại
 - [ ] Push round 2 + round 3 (cycle-stride, cycle_idx=j, TIMING, PHYSICAL_RANGES) rồi chạy lại
   Kaggle → kỳ vọng MAE cải thiện thêm nhờ kênh temperature/voltage hồi phục độ phân giải.

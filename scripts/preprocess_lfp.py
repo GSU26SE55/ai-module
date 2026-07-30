@@ -397,12 +397,29 @@ def cycles_to_windows(
     all_cells: dict,
     scaler: MinMaxScaler,
     feat_scaler: StandardScaler | None = None,
+    soc_mode: str = "cycle",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Same windowing/derived-feature logic as scripts/preprocess.py's
-    cycles_to_windows() (window=30, non-overlapping stride, cycle_count_norm +
-    Coulomb-counted soc_percent appended after scaling) — kept in lockstep so
-    inference (src/services/inference.py) sees identical feature semantics
-    regardless of which chemistry trained the weights."""
+    """Window=30, non-overlapping stride, with cycle_count_norm + soc_percent
+    appended after scaling — same layout as scripts/preprocess.py.
+
+    soc_mode (bug #10, GH-67):
+      "cycle"  — Coulomb-count over the WHOLE discharge segment, then slice the
+                 window's slots out of it. soc therefore runs ~100% -> ~9% across
+                 the segment, which is (a) a real position-within-discharge signal
+                 and (b) what BE actually sends in the recommended 6-column payload
+                 (real SOC from the battery's full history).
+      "window" — the pre-2026-07-30 behaviour: call compute_soc_percent() on the
+                 30-row slice. Its docstring says SOC is "RELATIVE TO THE WINDOW:
+                 100% at the first row", so EVERY window starts at 100.0 and the
+                 channel spans only [0.912, 1.000] — a near-constant that carries
+                 zero position information, while inference feeds the model the
+                 real [0.094, 1.000]. Kept only for ablation.
+
+    Why this matters more than it looks: every window sliced from one cycle shares
+    ONE SOH label, so the model can only tell an early slice (3.4 V) from a late
+    one (2.9 V) via a position signal. Measured on a real 4C segment, "cycle" mode
+    varies 90.6 points across the discharge; "window" mode varies 0.
+    """
     all_X, all_feat, all_y = [], [], []
 
     for cid in cell_ids:
@@ -410,17 +427,30 @@ def cycles_to_windows(
             T = len(cycle_raw)
             cycle_scaled = scaler.transform(cycle_raw).astype(np.float32)
             cycle_count_norm = np.float32(np.clip(cycle_idx / CYCLE_COUNT_NORM, 0.0, 1.0))
+            # Computed ONCE over the full segment so window slots inherit their
+            # true position; "window" mode recomputes per slice (see docstring).
+            soc_cycle = (
+                compute_soc_percent(
+                    cycle_raw[:, 1], cycle_raw[:, 3],
+                    nominal_capacity_ah=LFP_NOMINAL_CAPACITY_AH,
+                )
+                / 100.0
+            )
 
             for i in range(0, T - WINDOW_SIZE + 1, WINDOW_STRIDE):
                 window = cycle_scaled[i : i + WINDOW_SIZE]
                 window_feat = extract_window_features(window[:, :3])
-                raw_win = cycle_raw[i : i + WINDOW_SIZE]
-                soc_norm = (
-                    compute_soc_percent(
-                        raw_win[:, 1], raw_win[:, 3], nominal_capacity_ah=LFP_NOMINAL_CAPACITY_AH
+                if soc_mode == "cycle":
+                    soc_norm = soc_cycle[i : i + WINDOW_SIZE]
+                else:
+                    raw_win = cycle_raw[i : i + WINDOW_SIZE]
+                    soc_norm = (
+                        compute_soc_percent(
+                            raw_win[:, 1], raw_win[:, 3],
+                            nominal_capacity_ah=LFP_NOMINAL_CAPACITY_AH,
+                        )
+                        / 100.0
                     )
-                    / 100.0
-                )
                 window = np.column_stack(
                     [window, np.full(WINDOW_SIZE, cycle_count_norm, dtype=np.float32), soc_norm]
                 )
@@ -479,6 +509,15 @@ def main() -> None:
         "nominal-spec artifact, not a health state — see SOH_CLIP_DEFAULT. Pass 999 to "
         "disable and reproduce run 5's labels.",
     )
+    parser.add_argument(
+        "--soc-mode",
+        choices=["cycle", "window"],
+        default="cycle",
+        help="How soc_percent is Coulomb-counted (default: cycle). 'cycle' counts over the "
+        "whole discharge segment so soc runs ~100%%->~9%% and matches BE's real-SOC 6-column "
+        "payload; 'window' is the old per-slice behaviour where every window starts at 100%% "
+        "and the channel is a near-constant. See cycles_to_windows().",
+    )
     args = parser.parse_args()
     if args.cycle_stride < 1:
         parser.error(f"--cycle-stride must be >= 1, got {args.cycle_stride}")
@@ -487,7 +526,7 @@ def main() -> None:
     print(f"Window size: {WINDOW_SIZE} | Stride: {WINDOW_STRIDE} | LFP nominal capacity: {LFP_NOMINAL_CAPACITY_AH} Ah")
     print(f"Cycle stride: {args.cycle_stride} | cycle_count_norm divisor: {CYCLE_COUNT_NORM}")
     print(f"Phase filter: {args.phase} | time unit vao: {args.time_unit} -> quy ve GIAY")
-    print(f"SOH clip: {args.soh_clip}% (drop neu > {MAX_SOH_KEEP}%)")
+    print(f"SOH clip: {args.soh_clip}% (drop neu > {MAX_SOH_KEEP}%) | soc_mode: {args.soc_mode}")
 
     mat_files = sorted(
         f for f in os.listdir(args.data_dir)
@@ -581,13 +620,16 @@ def main() -> None:
             "phase": args.phase,
             "time_unit_in": args.time_unit,  # luu ra GIAY bat ke input la gi
             "soh_clip": args.soh_clip,
+            "soc_mode": args.soc_mode,
         },
         LFP_SCALER_PATH,
     )
     print(f"Saved scaler -> {LFP_SCALER_PATH}")
 
     print("\nExtracting windows + spectral features (train)...")
-    X_train, X_feat_train_raw, y_train = cycles_to_windows(train_ids, all_cells, scaler)
+    X_train, X_feat_train_raw, y_train = cycles_to_windows(
+        train_ids, all_cells, scaler, soc_mode=args.soc_mode
+    )
     print(f"  Train: {len(X_train)} windows")
 
     feat_scaler = StandardScaler()
@@ -621,8 +663,12 @@ def main() -> None:
     )
     print(f"Saved feature_scaler -> {LFP_FEATURE_SCALER_PATH}")
 
-    X_val, X_feat_val, y_val = cycles_to_windows(val_ids, all_cells, scaler, feat_scaler)
-    X_test, X_feat_test, y_test = cycles_to_windows(test_ids, all_cells, scaler, feat_scaler)
+    X_val, X_feat_val, y_val = cycles_to_windows(
+        val_ids, all_cells, scaler, feat_scaler, soc_mode=args.soc_mode
+    )
+    X_test, X_feat_test, y_test = cycles_to_windows(
+        test_ids, all_cells, scaler, feat_scaler, soc_mode=args.soc_mode
+    )
 
     print(f"\nSplit summary:")
     print(f"  Train: {len(X_train):>6} windows ({len(train_ids)} cells)")
