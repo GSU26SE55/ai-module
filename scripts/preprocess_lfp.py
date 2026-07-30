@@ -130,6 +130,24 @@ PHYSICAL_RANGES = {
 #      massively out of distribution, with no error raised.
 TIME_UNIT_SECONDS = {"minutes": 60.0, "seconds": 1.0}
 
+# Reject discharge segments longer than this (seconds). Severson's protocol
+# discharges at 4C, i.e. ~15 min (~900 s) for a 1.1 Ah cell; even a 1C diagnostic
+# would finish in ~1 h. Run 6 proved why an upper bound is needed: switching
+# --cycle-stride 5 -> 3 samples a different set of cycles and picked up one whose
+# "discharge" run lasted 25,551 s (7.1 h). That single outlier widened the MinMax
+# range of `time` from [0, 1448] to [0, 25551] — 17.6x — so a normal ~900 s window
+# went from spanning 62% of the scaled [0,1] range down to 3.5%.
+#
+# `time` is the position-within-discharge signal (every window of a cycle shares
+# one SOH label, so the model can only tell an early slice from a late one via
+# time/soc_percent). Squashing it 17.6x doubled the error: MAE 1.2899% -> 2.8390%,
+# RMSE 1.8935% -> 3.5785%, the latter breaking the <3% target.
+#
+# Same failure mode as PHYSICAL_RANGES (bug #6) and FEATURE_VAR_FLOOR (bug #8):
+# one implausible sample poisons a range and squashes the real signal. The old
+# PHYSICAL_RANGES["time"] bound of 200,000 s only ever caught sentinel garbage.
+MAX_DISCHARGE_SECONDS = 7200.0  # 2 h — 8x the nominal 4C discharge, generous
+
 # StandardScaler divides by sqrt(var), so a feature whose training variance is
 # pure floating-point rounding noise gets that noise amplified to unit variance.
 # Measured on the run-3 feature_scaler_lfp.pkl: 7 of the 57 features sat at
@@ -261,6 +279,7 @@ def load_batch_file(
     n_nonphysical = [0]  # list = mutable counter reachable from the inner loop
     n_no_discharge = [0]
     n_soh_clipped = [0]
+    n_too_long = [0]
     durations: list[float] = []
     with h5py.File(mat_path, "r") as f:
         if "batch" not in f:
@@ -309,7 +328,13 @@ def load_batch_file(
                         if cycle_arr is None:
                             n_no_discharge[0] += 1
                             continue
-                        durations.append(float(cycle_arr[-1, 3] - cycle_arr[0, 3]))
+                        dur = float(cycle_arr[-1, 3] - cycle_arr[0, 3])
+                        if dur > MAX_DISCHARGE_SECONDS:
+                            # See MAX_DISCHARGE_SECONDS: one 7.1 h segment widened the
+                            # `time` MinMax range 17.6x in run 6 and doubled the error.
+                            n_too_long[0] += 1
+                            continue
+                        durations.append(dur)
                     soh = (
                         float(qd_summary[j]) / LFP_NOMINAL_CAPACITY_AH * 100
                         if j < len(qd_summary)
@@ -346,8 +371,17 @@ def load_batch_file(
         print(f"  {batch_label}: {n_no_discharge[0]} cycles dropped (no discharge run >= {WINDOW_SIZE})")
     if n_soh_clipped[0]:
         print(f"  {batch_label}: {n_soh_clipped[0]} cycles co SOH > {soh_clip}% -> clip ve {soh_clip}%")
+    if n_too_long[0]:
+        print(f"  {batch_label}: {n_too_long[0]} cycles dropped (doan xa > {MAX_DISCHARGE_SECONDS:.0f}s "
+              f"= khong phai xa 4C binh thuong, se lam no dai MinMax cua `time`)")
     if durations:
         med = float(np.median(durations))
+        # Percentiles matter more than the median here: the whole point of
+        # MAX_DISCHARGE_SECONDS is that a single long tail sample poisons the range.
+        print(f"  {batch_label}: discharge duration p50={med:.0f}s "
+              f"p95={float(np.percentile(durations, 95)):.0f}s "
+              f"p99={float(np.percentile(durations, 99)):.0f}s "
+              f"max={float(np.max(durations)):.0f}s")
         # Decides a real question we cannot answer offline: compute_soc_percent()
         # divides `time` by 3600, i.e. it assumes SECONDS (NASA convention, and
         # what BE sends at inference). A 4C discharge lasts ~15 min, so a median
@@ -520,8 +554,17 @@ def main() -> None:
     # (temperature spanned [-270, 400], squashing the real 28-45°C swing into 2.5%
     # of [0,1]). Expect voltage ~[2, 3.7], temperature ~[25, 50] once the
     # PHYSICAL_RANGES filter is doing its job.
-    for idx, name in enumerate(BASE_FEATURES[:3]):
+    for idx, name in enumerate(BASE_FEATURES):
         print(f"  scaler range {name:<12}: [{scaler.data_min_[idx]:9.3f}, {scaler.data_max_[idx]:9.3f}]")
+    # Loud warning if a wide range squashes the real signal — the failure mode
+    # behind bug #6 (temperature [-270, 400]) and the run-6 regression
+    # (time [0, 25551]). A normal 4C discharge is ~900 s, so a range far past
+    # MAX_DISCHARGE_SECONDS means an outlier still slipped through.
+    t_max = float(scaler.data_max_[BASE_FEATURES.index("time")])
+    if t_max > MAX_DISCHARGE_SECONDS:
+        print(f"  !!! CANH BAO: time max = {t_max:.0f}s > {MAX_DISCHARGE_SECONDS:.0f}s. "
+              f"Mot window xa binh thuong (~900s) chi con chiem {900 / t_max * 100:.1f}% dai "
+              f"[0,1] -> kenh `time` bi bop, du doan se te di nhieu (xem lan 6).")
     os.makedirs(os.path.dirname(LFP_SCALER_PATH), exist_ok=True)
     joblib.dump(
         {

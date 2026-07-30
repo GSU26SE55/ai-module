@@ -608,6 +608,58 @@ hoá các epoch cuối vốn đã overfit thì vô ích.
   dùng 3,9/12 giờ nên thừa ngân sách; stride 3 ước tính ~6,4h.
 - `--soh-clip 100` — xử lý dải 100–110 ở trên.
 
+## Lần 6 (2026-07-30) — LÙI, và nguyên nhân đã xác định
+
+| Metric | Lần 5 (tốt nhất) | **Lần 6** | Target |
+|--------|------------------|-----------|--------|
+| MAE | 1.2899% | **2.8390%** | < 2.0% ❌ |
+| RMSE | 1.8935% | **3.5785%** | < 3.0% ❌ |
+
+Cấu hình xác nhận áp đúng (`cycle_stride=3, soh_clip=100.0, jitter=0.01, phase=discharge`), nên
+không phải chạy sai cờ.
+
+### 🚨 Bug thứ 9 — đoạn xả dài bất thường làm nổ dải `time`
+
+```
+Lần 5:  time [0.000,  1,447.789]   <- ~24 phút, hợp lý cho xả 4C
+Lần 6:  time [0.000, 25,551.094]   <- 7,1 GIỜ
+```
+
+Dải rộng ra **17,6×**. `--cycle-stride 5 → 3` lấy tập cycle khác nhau (0,5,10,… vs 0,3,6,…) và
+stride 3 vô tình lấy được một cycle có đoạn "xả" dài 7,1 giờ — protocol Severson xả 4C ~15 phút
+nên đây là bất thường (chu kỳ chẩn đoán dòng thấp, hoặc pha bị nhận diện sai).
+
+Hệ quả: window xả bình thường ~900 s từ chỗ chiếm **62%** dải `[0,1]` tụt còn **3,5%** → kênh
+`time` mất 17,6× độ phân giải. Mà `time` chính là tín hiệu **vị-trí-trong-chu-kỳ-xả** (mọi window
+của 1 chu kỳ mang chung 1 nhãn SOH nên model chỉ phân biệt lát đầu/cuối qua `time`/`soc_percent`)
+→ sai số tăng gấp đôi là hợp lý.
+
+**Cùng loại lỗi với #6 (temperature `[-270, 400]`) và #8 (nhiễu feature): một mẫu vô lý làm hỏng
+một dải và bóp chết tín hiệu thật.** `PHYSICAL_RANGES["time"] = (0, 200_000)` quá lỏng — chỉ bắt
+sentinel, không bắt "đoạn xả dài vô lý".
+
+**Đã fix:**
+- `MAX_DISCHARGE_SECONDS = 7200` (2 h — gấp 8× xả 4C nominal ~900 s): loại đoạn xả dài hơn thế.
+  Verify bằng mô phỏng: xả 4C (897 s) và xả chậm 1 h (3588 s) **được giữ**; 2,5 h (8970 s) và
+  7,1 h (25564 s) **bị loại**.
+- In `p50/p95/p99/max` thời lượng đoạn xả thay vì chỉ trung vị — vì vấn đề nằm ở đuôi phân bố.
+- In dải scaler cho **cả 4 kênh** (trước chỉ 3) + **cảnh báo lớn** nếu `time` max vẫn vượt ngưỡng,
+  kèm tính luôn phần trăm dải mà một window bình thường còn chiếm được.
+
+### ⚠️ Chưa cô lập được: `--jitter 0.01` có góp phần hay không
+
+Lần 6 đổi 3 thứ cùng lúc (stride 3, soh-clip, jitter) nên chưa thể tách. Dải `time` nổ 17,6× gần
+như chắc chắn là nguyên nhân **chi phối**, nhưng cần log lần 7 (train/val loss theo epoch) để
+biết `--jitter 0.01` có quá mạnh không:
+- val vẫn tách khỏi train → giữ hoặc tăng `0.02`
+- **cả hai** cùng cao hơn lần 5 → hạ `0.005` (nhiễu quá mạnh gây underfit)
+
+### Model tốt nhất vẫn an toàn
+
+Artifact lần 5 (1.2899%/1.8935%) **đã commit trong git**. Bản trên đĩa hiện là lần 6 (tệ hơn,
+chưa commit). Lấy lại lần 5: `git checkout -- models/weights/`.
+**KHÔNG commit artifact lần 6.**
+
 ### Việc còn lại
 - [ ] Push round 2 + round 3 (cycle-stride, cycle_idx=j, TIMING, PHYSICAL_RANGES) rồi chạy lại
   Kaggle → kỳ vọng MAE cải thiện thêm nhờ kênh temperature/voltage hồi phục độ phân giải.
