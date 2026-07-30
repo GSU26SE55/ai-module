@@ -731,6 +731,57 @@ mà dải 70–80% chỉ có **46 mẫu test**, tức bản thân con số đó 
 | Chọn val/test có chủ đích (phủ vùng EOL) | Vừa — dải 70–80% chỉ 46 mẫu test là quá mỏng để tin | Đổi cách báo cáo số liệu; `--val-ids/--test-ids` đã có sẵn |
 | `d_model` 64→128 | **Thấp** — model đang overfit, thêm dung lượng nhiều khả năng làm tệ hơn | Lệch spec `CLAUDE.md` |
 
+## Lần 7 (2026-07-30) — mọi fix đã ăn, nhưng `--jitter` làm tệ đi
+
+| Metric | Lần 5 | **Lần 7** |
+|--------|-------|-----------|
+| MAE | **1.2899%** | 1.4220% |
+| RMSE | 1.8935% | **1.8883%** |
+
+Metadata xác nhận **toàn bộ** fix đã áp: `cycle_stride=3`, `phase=discharge`,
+`time_unit_in=minutes`, `soh_clip=100.0`, `soc_mode=cycle`, `time [0, 1453.9]` (fix #9 ăn —
+không còn 25551), `var_floor=1e-07`, `n_degenerate=13`, `amp_max=1618x`, `jitter=0.01`.
+
+**Dự đoán của tôi (MAE ~1,05–1,15%) SAI.** Thực tế 1,4220% — kém cả lần 5 dù tiền xử lý tốt hơn
+hẳn. Khác biệt duy nhất đáng nghi: lần 5 `jitter=0.0`, lần 7 `jitter=0.01`.
+
+### Vì sao `--jitter 0.01` phản tác dụng — đo được
+
+Biến thiên **trong 1 window** (sau scale) so với nhiễu σ=0.01:
+
+| Kênh | Biến thiên/window | Nhiễu/tín hiệu |
+|------|-------------------|----------------|
+| current (xả CC) | 0.0002 | **4608%** |
+| temperature | 0.0045 | **223%** |
+| voltage (plateau) | 0.0292 | 34% |
+| time (window 90 s) | 0.0619 | 16% |
+| soc (mode cycle) | 0.088 | 11% |
+| voltage (knee) | 0.2339 | 4% |
+
+`train.py` cộng nhiễu **đều tay lên mọi kênh** (`X_batch + jitter * randn_like(X_batch)`), nên nó
+đánh mạnh nhất vào đúng các kênh biến thiên **nhỏ trong window** — mà đó chính là
+`time`/`soc`/`temperature`, tức tín hiệu **vị trí** vừa được dựng lên ở #7/#9/#10.
+**`--jitter` đang xoá đi thứ mà 3 fix trước vừa sửa.**
+
+→ **Lần 8: bỏ `--jitter`**, giữ nguyên mọi thứ khác. Đổi đúng 1 biến. Nếu sau này vẫn cần chống
+overfit thì dùng `0.002` (nhiễu/tín hiệu của `time` còn ~3%), tuyệt đối không `0.01`.
+
+### RMSE kẹt ~1,88 qua 3 lần chạy — dấu hiệu đã tới sàn
+
+| | MAE | RMSE |
+|---|-----|------|
+| Lần 3 | 1.4365% | 1.8767% |
+| Lần 5 | 1.2899% | 1.8935% |
+| Lần 7 | 1.4220% | 1.8883% |
+
+MAE dao động 1,29–1,44% nhưng **RMSE gần như không đổi (1.877–1.894)** qua cả 3 lần, dù tiền xử
+lý thay đổi rất nhiều. Điều này nói lên RMSE đang bị chi phối bởi phần **không** chịu tác động của
+các fix đó — gần như chắc chắn là đuôi phân bố (dải 70–80% và biến thiên cell-to-cell ở cùng SOH).
+
+Củng cố kết luận đã nêu: **RMSE < 1% không đạt được bằng con đường hiện tại** (window=30 trên
+plateau LFP). Muốn phá sàn này cần đổi *thông tin đầu vào*, không phải hyperparameter — tức đòn
+bẩy dQ/dV hoặc window dài hơn.
+
 ### Việc còn lại
 - [ ] Push round 2 + round 3 (cycle-stride, cycle_idx=j, TIMING, PHYSICAL_RANGES) rồi chạy lại
   Kaggle → kỳ vọng MAE cải thiện thêm nhờ kênh temperature/voltage hồi phục độ phân giải.
