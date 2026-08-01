@@ -15,6 +15,8 @@ from src.core.config import (
     CYCLE_COUNT_NORM,
     FEATURES,
     INPUT_FEATURES,
+    LFP_CYCLE_COUNT_NORM,
+    LFP_MODEL_VERSION,
     MODEL_VERSION,
     NOMINAL_CAPACITY_AH,
     TEMPERATURE_OOD_THRESHOLD,
@@ -39,21 +41,79 @@ from src.services import battery_history
 _FEATURE_NAMES = FEATURES  # single source of truth: src/core/config.py
 
 
-def _expected_feature_count() -> int:
+class _Artifacts:
+    """The scaler/model/iso-forest triple plus the constants that must match them.
+
+    Bundled rather than read from module globals at each use site because the two
+    sets differ in more than weights: LFP normalises cycle_count by 2300 (Severson
+    cells run 150-2300 cycles) while NASA uses 200 (~197 max). Reading the model
+    from one set and the constant from the other would shift that input channel
+    with no error raised anywhere — the exact silent-mismatch class of bug this
+    codebase keeps hitting.
+    """
+
+    __slots__ = ("scaler", "feature_scaler", "soh_model", "iso_model",
+                 "cycle_count_norm", "artifact_set", "model_version", "soc_mode")
+
+    def __init__(self, scaler, feature_scaler, soh_model, iso_model,
+                 cycle_count_norm, artifact_set, model_version, soc_mode="window"):
+        self.scaler = scaler
+        self.feature_scaler = feature_scaler
+        self.soh_model = soh_model
+        self.iso_model = iso_model
+        self.cycle_count_norm = cycle_count_norm
+        self.artifact_set = artifact_set
+        self.model_version = model_version
+        self.soc_mode = soc_mode
+
+
+def _resolve_artifacts(chemistry: str | None) -> _Artifacts:
+    """Pick the artifact set for this request (GH-67 chemistry-aware selection).
+
+    chemistry is already normalised to "LFP"/"NMC"/None by the PackConfig validator.
+    Anything that is not "LFP" keeps the NASA/NMC default, so every existing caller
+    and test is unaffected.
+
+    Raises when "LFP" is requested but its artifacts are missing: scoring LFP
+    telemetry with NASA weights would be a silent wrong prediction, which
+    .claude/rules/tech/ai.md explicitly requires failing on instead.
+    """
+    if chemistry == "LFP":
+        if model_loader.lfp_soh_model is None:
+            raise RuntimeError(
+                "chemistry='LFP' requested but the LFP artifact set is not loaded. "
+                "Ensure models/weights/{scaler_lfp.pkl,feature_scaler_lfp.pkl,"
+                f"soh_mamba_v{LFP_MODEL_VERSION}.pth,isolation_forest_v{LFP_MODEL_VERSION}.pkl}} "
+                "exist — refusing to score LFP data with the NASA/NMC model."
+            )
+        return _Artifacts(
+            model_loader.lfp_scaler, model_loader.lfp_feature_scaler,
+            model_loader.lfp_soh_model, model_loader.lfp_iso_model,
+            LFP_CYCLE_COUNT_NORM, "LFP", LFP_MODEL_VERSION,
+            model_loader.lfp_soc_mode,
+        )
+    return _Artifacts(
+        model_loader.scaler, model_loader.feature_scaler,
+        model_loader.soh_model, model_loader.iso_model,
+        CYCLE_COUNT_NORM, "NASA", MODEL_VERSION,
+    )
+
+
+def _expected_feature_count(art: _Artifacts) -> int:
     """Feature count expected FROM THE PAYLOAD (= scaler width, base features).
 
     GH-54: model input = base + 2 derived columns computed server-side, so when
     falling back to the model dim, subtract the derived columns."""
-    if hasattr(model_loader.scaler, "n_features_in_"):
-        return int(model_loader.scaler.n_features_in_)
-    if hasattr(model_loader.soh_model, "input_features"):
-        n = int(model_loader.soh_model.input_features)
+    if hasattr(art.scaler, "n_features_in_"):
+        return int(art.scaler.n_features_in_)
+    if hasattr(art.soh_model, "input_features"):
+        n = int(art.soh_model.input_features)
         return n - 2 if n == len(BASE_FEATURES) + 2 else n
     return 3
 
 
-def _align_features(x: np.ndarray) -> np.ndarray:
-    expected = _expected_feature_count()
+def _align_features(x: np.ndarray, art: _Artifacts) -> np.ndarray:
+    expected = _expected_feature_count(art)
     actual = x.shape[1]
     if actual == expected:
         return x
@@ -92,7 +152,7 @@ def _raw_cycle_count(raw: np.ndarray, cycle_idx: int | None) -> float | None:
 
 
 def _append_derived_features(
-    x_scaled: np.ndarray, raw: np.ndarray, cycle_idx: int | None
+    x_scaled: np.ndarray, raw: np.ndarray, cycle_idx: int | None, art: _Artifacts
 ) -> np.ndarray:
     """GH-54: append cycle_count_norm + soc_percent/100 as columns 5-6.
 
@@ -107,7 +167,7 @@ def _append_derived_features(
     (0.0 when the caller doesn't know the cycle) and window-local
     Coulomb-counting SOC / 100.
     """
-    model_dim = getattr(model_loader.soh_model, "input_features", x_scaled.shape[1])
+    model_dim = getattr(art.soh_model, "input_features", x_scaled.shape[1])
     if model_dim != x_scaled.shape[1] + 2:
         return x_scaled
     if raw.shape[1] < len(BASE_FEATURES):
@@ -119,23 +179,40 @@ def _append_derived_features(
     if raw.shape[1] >= len(BASE_FEATURES) + 2:
         # GH-56: BE sends cycle_count (constant across the window) + soc_percent
         # (per-timestep) directly as columns 5-6 — no server-side derivation needed.
-        cycle_count_norm = raw_cycle_count / CYCLE_COUNT_NORM
+        cycle_count_norm = raw_cycle_count / art.cycle_count_norm
         soc_norm = raw[:, len(BASE_FEATURES) + 1] / 100.0
     else:
+        # The window-local fallback defines SOC relative to THIS window, so it
+        # always starts at 100% and spans ~[0.91, 1.0]. Artifacts trained with
+        # soc_mode="cycle" learned soc spanning the whole discharge (~[0.09, 1.0])
+        # — feeding them the fallback is a silent distribution shift on that
+        # channel, and a stateless 30-row window cannot reconstruct the real value.
+        if art.soc_mode == "cycle":
+            raise ValueError(
+                f"{art.artifact_set} artifacts were trained with soc_mode='cycle' "
+                f"(soc spans the full discharge), but this payload has "
+                f"{raw.shape[1]} columns so soc_percent has to be estimated "
+                "window-locally — which the model never saw. Send the 6-column "
+                "payload (voltage, current, temperature, time, cycle_count, "
+                "soc_percent) with the battery's real SOC."
+            )
         current = raw[:, BASE_FEATURES.index("current")]
         time_col = raw[:, BASE_FEATURES.index("time")]
         soc_norm = compute_soc_percent(current, time_col, NOMINAL_CAPACITY_AH) / 100.0
-        cycle_count_norm = 0.0 if raw_cycle_count is None else raw_cycle_count / CYCLE_COUNT_NORM
+        cycle_count_norm = 0.0 if raw_cycle_count is None else raw_cycle_count / art.cycle_count_norm
 
-    # GH-59: CYCLE_COUNT_NORM=200 is fit to NASA's observed max (~197 cycles) — a
-    # real battery outliving that goes out of the range the model was trained on
-    # (extrapolation). Clip to keep the feature in-distribution; log so production
-    # data can later inform whether CYCLE_COUNT_NORM should be raised.
-    if raw_cycle_count is not None and not (0 <= raw_cycle_count <= CYCLE_COUNT_NORM):
+    # GH-59: the divisor is fit to each dataset's observed max cycle count (NASA
+    # ~197 -> 200; Severson/LFP up to ~2300). A real battery outliving that goes
+    # out of the range the model was trained on (extrapolation). Clip to keep the
+    # feature in-distribution; log so production data can later inform whether the
+    # divisor should be raised.
+    if raw_cycle_count is not None and not (0 <= raw_cycle_count <= art.cycle_count_norm):
         logger.warning(
-            "cycle_count=%s outside expected range [0, %s] — clipping cycle_count_norm to [0, 1]",
+            "cycle_count=%s outside expected range [0, %s] (%s artifacts) — "
+            "clipping cycle_count_norm to [0, 1]",
             raw_cycle_count,
-            CYCLE_COUNT_NORM,
+            art.cycle_count_norm,
+            art.artifact_set,
         )
     cycle_count_norm = np.float32(np.clip(cycle_count_norm, 0.0, 1.0))
 
@@ -195,6 +272,10 @@ def run_inference(
     """
     start = time.perf_counter()
 
+    # GH-67: pick the artifact set BEFORE anything touches a scaler/model, so the
+    # scaler, the model and cycle_count_norm can never come from different sets.
+    art = _resolve_artifacts(chemistry)
+
     raw = np.array(readings, dtype=np.float32)  # (30, F) — keep for warnings + summary
     if n_series > 1:
         # GH-65: pack → per-cell voltage. In-place on the raw copy so EVERYTHING
@@ -207,15 +288,15 @@ def run_inference(
         # fallback in _append_derived_features() correct WITHOUT touching it:
         # ∫|I×2/C|dt / 2Ah  ==  ∫|I|dt / C_real.
         raw[:, BASE_FEATURES.index("current")] *= NOMINAL_CAPACITY_AH / capacity_ah
-    x = _align_features(raw)  # (30, F_scaler)
-    x_scaled = model_loader.scaler.transform(x)
-    x_model = _append_derived_features(x_scaled, raw, cycle_idx)  # (30, 6) — GH-54
+    x = _align_features(raw, art)  # (30, F_scaler)
+    x_scaled = art.scaler.transform(x)
+    x_model = _append_derived_features(x_scaled, raw, cycle_idx, art)  # (30, 6) — GH-54
     x_tensor = torch.tensor(x_model, dtype=torch.float32).unsqueeze(0)
 
     # Cycle-level features: compute from scaled window (first 3 channels: voltage, current, temp)
     # Matches SPECTRAL_FEAT_DIM=57 config (10 spectral incl. Gini + 9 statistical × 3 channels).
     raw_feat = extract_window_features(x_scaled[:, :3])  # (57,)
-    feat_scaled = model_loader.feature_scaler.transform(raw_feat.reshape(1, -1))
+    feat_scaled = art.feature_scaler.transform(raw_feat.reshape(1, -1))
     x_feat_tensor = torch.tensor(feat_scaled, dtype=torch.float32)  # (1, 57)
 
     # MC Dropout: MC_RUNS stochastic samples (Dropout ON) in ONE batched forward
@@ -229,14 +310,14 @@ def run_inference(
     # Lock prevents concurrent requests from corrupting model train/eval state
     MC_RUNS = 10
     with _MC_LOCK:
-        model_loader.soh_model.train()  # enable Dropout
+        art.soh_model.train()  # enable Dropout
         try:
             with torch.no_grad():
                 xb = x_tensor.repeat(MC_RUNS, 1, 1)
                 xfb = x_feat_tensor.repeat(MC_RUNS, 1)
-                mc_preds = (model_loader.soh_model(xb, xfb) * 100).tolist()
+                mc_preds = (art.soh_model(xb, xfb) * 100).tolist()
         finally:
-            model_loader.soh_model.eval()  # always restore eval mode
+            art.soh_model.eval()  # always restore eval mode
 
     soh = float(max(0.0, min(100.0, float(np.mean(mc_preds)))))
     soh_std = float(np.std(mc_preds))
@@ -247,7 +328,7 @@ def run_inference(
     soh_median = float(max(0.0, min(100.0, float(np.median(mc_preds)))))
 
     # IsolationForest trained on spectral features (57 dims) — use same features at inference
-    score = float(model_loader.iso_model.decision_function(feat_scaled)[0])
+    score = float(art.iso_model.decision_function(feat_scaled)[0])
     # GH-95: causal_rate compares soh_median to this battery's OWN recent history —
     # computed BEFORE record() below, so it only ever sees cycles strictly before
     # this request (causal, not the offline label's centered/future-peeking window).
@@ -309,7 +390,8 @@ def run_inference(
         "feature_summary": feature_summary,
     }
     metadata = {
-        "model_version": MODEL_VERSION,
+        "model_version": art.model_version,
+        "artifact_set": art.artifact_set,  # GH-67: NASA vs LFP weights actually used
         "window_size": WINDOW_SIZE,
         "input_features": INPUT_FEATURES,
         "inference_ms": elapsed_ms,
@@ -395,7 +477,10 @@ def predict_soh_long(readings: list[list[float]], device: str | None = None) -> 
 
     start = time.perf_counter()
     raw = np.array(readings, dtype=np.float32)
-    x = _align_features(raw)  # (L, 4) — align to base features
+    # The long path has always sized its base-feature alignment off the DEFAULT
+    # scaler (both sets carry the same 4 base columns); resolving the default
+    # bundle here keeps that behaviour byte-for-byte after the GH-67 refactor.
+    x = _align_features(raw, _resolve_artifacts(None))  # (L, 4) — align to base features
 
     # Extend to 6 features: append ic_curve + discharge_progress (per-cycle,
     # matching training — see _add_long_derived_features).

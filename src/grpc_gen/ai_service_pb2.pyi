@@ -310,15 +310,19 @@ class HealthRequest(_message.Message):
     def __init__(self) -> None: ...
 
 class HealthResponse(_message.Message):
-    __slots__ = ("status", "model_version", "scaler_loaded", "mamba_loaded", "isolation_forest_loaded")
+    __slots__ = ("status", "model_version", "scaler_loaded", "mamba_loaded", "isolation_forest_loaded", "lfp_loaded", "lfp_model_version")
     STATUS_FIELD_NUMBER: _ClassVar[int]
     MODEL_VERSION_FIELD_NUMBER: _ClassVar[int]
     SCALER_LOADED_FIELD_NUMBER: _ClassVar[int]
     MAMBA_LOADED_FIELD_NUMBER: _ClassVar[int]
     ISOLATION_FOREST_LOADED_FIELD_NUMBER: _ClassVar[int]
+    LFP_LOADED_FIELD_NUMBER: _ClassVar[int]
+    LFP_MODEL_VERSION_FIELD_NUMBER: _ClassVar[int]
     status: str
     model_version: str
     scaler_loaded: bool
     mamba_loaded: bool
     isolation_forest_loaded: bool
-    def __init__(self, status: _Optional[str] = ..., model_version: _Optional[str] = ..., scaler_loaded: _Optional[bool] = ..., mamba_loaded: _Optional[bool] = ..., isolation_forest_loaded: _Optional[bool] = ...) -> None: ...
+    lfp_loaded: bool
+    lfp_model_version: str
+    def __init__(self, status: _Optional[str] = ..., model_version: _Optional[str] = ..., scaler_loaded: _Optional[bool] = ..., mamba_loaded: _Optional[bool] = ..., isolation_forest_loaded: _Optional[bool] = ..., lfp_loaded: _Optional[bool] = ..., lfp_model_version: _Optional[str] = ...) -> None: ...

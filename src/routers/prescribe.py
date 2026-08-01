@@ -31,6 +31,10 @@ async def prescribe(request: PrescribeRequest) -> dict:
         battery_id            = request.battery_id,
         enrich                = request.enrich,
         n_series              = request.pack_config.n_series if request.pack_config else 1,
+        # GH-67: forward the rest of pack_config too — chemistry picks the voltage
+        # profile + artifact set, capacity_ah rescales current to the NASA C-rate.
+        chemistry             = request.pack_config.chemistry if request.pack_config else None,
+        capacity_ah           = request.pack_config.capacity_ah if request.pack_config else None,
         agentic               = request.agentic,
         age_cycles            = request.age_cycles,
         last_maintenance_date = request.last_maintenance_date,

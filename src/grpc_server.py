@@ -17,7 +17,7 @@ import grpc
 from pydantic import ValidationError
 
 from src.core import model_loader
-from src.core.config import MODEL_VERSION
+from src.core.config import LFP_MODEL_VERSION, MODEL_VERSION
 from src.grpc_gen import ai_service_pb2, ai_service_pb2_grpc
 from src.schemas.predict import PredictRequest
 from src.schemas.prescribe import PrescribeRequest
@@ -288,6 +288,10 @@ class AiServiceServicer(ai_service_pb2_grpc.AiServiceServicer):
                 battery_id=parsed.battery_id,
                 enrich=parsed.enrich,
                 n_series=parsed.pack_config.n_series if parsed.pack_config else 1,
+                # GH-67: same pack_config forwarding as REST — parity is enforced
+                # by tests/test_grpc_server.py.
+                chemistry=parsed.pack_config.chemistry if parsed.pack_config else None,
+                capacity_ah=parsed.pack_config.capacity_ah if parsed.pack_config else None,
                 agentic=parsed.agentic,
                 age_cycles=parsed.age_cycles,
                 last_maintenance_date=parsed.last_maintenance_date,
@@ -321,6 +325,10 @@ class AiServiceServicer(ai_service_pb2_grpc.AiServiceServicer):
             scaler_loaded=model_loader.scaler is not None,
             mamba_loaded=model_loader.soh_model is not None,
             isolation_forest_loaded=model_loader.iso_model is not None,
+            # GH-67: parity with REST /health — BE checks these before routing
+            # any chemistry="LFP" traffic (that request fails if not loaded).
+            lfp_loaded=model_loader.lfp_soh_model is not None,
+            lfp_model_version=LFP_MODEL_VERSION,
         )
 
 

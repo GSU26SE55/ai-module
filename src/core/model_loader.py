@@ -1,3 +1,4 @@
+import logging
 import os
 
 import joblib
@@ -7,6 +8,11 @@ from src.core.config import (
     FEATURE_SCALER_PATH,
     FEATURE_SCALER_VERSION,
     ISO_FOREST_PATH,
+    LFP_FEATURE_SCALER_PATH,
+    LFP_ISO_FOREST_PATH,
+    LFP_MAMBA_PATH,
+    LFP_MODEL_VERSION,
+    LFP_SCALER_PATH,
     LONG_FEATURE_SCALER_PATH,
     LONG_MAMBA_PATH,
     LONG_MODEL_VERSION,
@@ -22,6 +28,9 @@ from src.core.config import (
 )
 from src.models.soh_predictor import MambaSOHPredictor
 
+logger = logging.getLogger(__name__)
+
+# Default (NASA/NMC) artifact set — the names every existing caller and test binds to.
 scaler = None
 feature_scaler = None
 soh_model = None
@@ -33,9 +42,36 @@ long_feature_scaler = None
 long_soh_model      = None
 long_device         = None
 
+# LFP chemistry variant (GH-67 Mức 2) — its own scaler/model/iso-forest, trained on
+# Severson instead of NASA. Selected in run_inference() when pack_config.chemistry
+# == "LFP". Loaded at startup (not lazily like the long model) because this IS a
+# production hot path: BE sends chemistry="LFP" for the real 4S pack, so a lazy load
+# would make the FIRST such request pay the load + torch.compile cost and risk the
+# <100ms P1 SLA exactly once, unpredictably.
+lfp_scaler         = None
+lfp_feature_scaler = None
+lfp_soh_model      = None
+lfp_iso_model      = None
+lfp_soc_mode       = "window"  # GH-67: how soc_percent was counted at train time
+
 
 def load_models() -> None:
     global scaler, feature_scaler, soh_model, iso_model
+
+    # Flush-to-zero for subnormal floats. x86 handles subnormals in microcode, which
+    # is orders of magnitude slower than normal arithmetic, and the SSM recurrence
+    # (h decays multiplicatively over 30 steps, x10 MC-Dropout samples) generates
+    # them in bulk. Measured on this CPU, end-to-end run_inference():
+    #     NASA  avg 51.0 -> 21.2 ms   p95 70.8  -> 24.6 ms
+    #     LFP   avg 73.0 -> 26.5 ms   p95 101.7 -> 30.6 ms
+    # The LFP p95 was BREACHING the <100ms P1 SLA before this; both sets now clear
+    # it with room to spare.
+    #
+    # Safe to do globally: subnormals are < 1.2e-38, far below anything that can
+    # move an SOH percentage. Verified empirically — with identical seeds the
+    # predictions are bit-identical (max delta 0.000000% over 8 MC-Dropout draws on
+    # BOTH artifact sets), so this is pure speed, not a precision trade.
+    torch.set_flush_denormal(True)
 
     for path, label in [
         (SCALER_PATH,         "MinMaxScaler"),
@@ -114,6 +150,116 @@ def load_models() -> None:
             pass  # compile unavailable/unsupported on this host — eager fallback
 
     iso_model = joblib.load(ISO_FOREST_PATH)
+
+    # Best-effort: a deploy that only ever serves NASA/NMC batteries must still boot
+    # when the LFP artifacts are absent. A request that actually asks for chemistry
+    # ="LFP" then fails loudly in run_inference() rather than being scored with the
+    # wrong weights.
+    try:
+        load_lfp_models()
+    except Exception as exc:
+        logger.warning(
+            "LFP artifacts not loaded (%s) — requests with chemistry='LFP' will fail "
+            "until models/weights/*_lfp.* are present.", exc
+        )
+
+
+def _compile_for_inference(model: MambaSOHPredictor, input_features: int, feat_dim: int):
+    """torch.compile + force the lazy backend to run now, in BOTH eval and train mode.
+
+    Same reasoning as load_models(): compilation is deferred to the first real forward
+    pass, so without this warm-up a missing C++ toolchain would crash production
+    request #1 instead of falling back to eager here. Train mode matters because
+    run_inference()'s MC Dropout flips the model into it, and dynamo guards on
+    `self.training` — compiling eval only would defer the train graph to the first
+    real MC-Dropout call.
+    """
+    try:
+        if torch.cuda.is_available():
+            return torch.compile(model, mode="reduce-overhead")
+        compiled = torch.compile(model, mode="default")
+        dummy_x = torch.zeros(1, WINDOW_SIZE, input_features)
+        dummy_feat = torch.zeros(1, feat_dim)
+        with torch.no_grad():
+            compiled(dummy_x, dummy_feat)
+            compiled.train()
+            compiled(dummy_x, dummy_feat)
+            compiled.eval()
+        return compiled
+    except Exception:
+        return model  # compile unavailable/unsupported on this host — eager fallback
+
+
+def load_lfp_models() -> None:
+    """Load the LFP (Severson-trained) artifact set into the lfp_* globals.
+
+    Kept separate from load_models() rather than parameterised: the two sets have
+    different versions, different cycle_count normalisation (LFP_CYCLE_COUNT_NORM
+    2300 vs 200) and are selected per request, so conflating them would make a
+    version mismatch silent.
+    """
+    global lfp_scaler, lfp_feature_scaler, lfp_soh_model, lfp_iso_model, lfp_soc_mode
+
+    for path, label in [
+        (LFP_SCALER_PATH,         "LFP MinMaxScaler"),
+        (LFP_FEATURE_SCALER_PATH, "LFP feature StandardScaler"),
+        (LFP_MAMBA_PATH,          "LFP Mamba model"),
+        (LFP_ISO_FOREST_PATH,     "LFP Isolation Forest"),
+    ]:
+        if not os.path.exists(path):
+            raise RuntimeError(
+                f"[STARTUP] {label} artifact not found at '{path}'. "
+                "Run scripts/preprocess_lfp.py + scripts/train.py with the LFP output "
+                "paths and commit models/weights/ before serving chemistry='LFP'."
+            )
+
+    scaler_artifact = joblib.load(LFP_SCALER_PATH)
+    # GH-67: preprocess_lfp.py records how soc_percent was Coulomb-counted.
+    # "cycle" means soc spans the whole discharge (~100% -> ~9%); a 3/4-column
+    # payload cannot reproduce that from a single stateless 30-row window, so
+    # run_inference() refuses those rather than feeding the model a near-constant
+    # [0.91, 1.0] channel it never saw in training. Default "window" keeps any
+    # older artifact working unchanged.
+    lfp_soc_mode = scaler_artifact.get("soc_mode", "window")
+    if scaler_artifact["version"] != LFP_MODEL_VERSION:
+        raise RuntimeError(
+            f"LFP scaler version mismatch: expected {LFP_MODEL_VERSION}, "
+            f"got {scaler_artifact['version']}"
+        )
+    feat_artifact = joblib.load(LFP_FEATURE_SCALER_PATH)
+    if feat_artifact["version"] != LFP_MODEL_VERSION:
+        raise RuntimeError(
+            f"LFP feature scaler version mismatch: expected {LFP_MODEL_VERSION}, "
+            f"got {feat_artifact['version']}"
+        )
+
+    checkpoint = torch.load(LFP_MAMBA_PATH, map_location="cpu", weights_only=False)
+    if checkpoint["version"] != LFP_MODEL_VERSION:
+        raise RuntimeError(
+            f"LFP model version mismatch: expected {LFP_MODEL_VERSION}, "
+            f"got {checkpoint['version']}"
+        )
+    input_features = checkpoint.get("input_features", 6)
+    feat_dim = checkpoint.get("feat_dim", SPECTRAL_FEAT_DIM)
+    model = MambaSOHPredictor(
+        input_features=input_features,
+        feat_dim=feat_dim,
+        d_model=checkpoint.get("d_model", 64),
+        d_state=checkpoint.get("d_state", 16),
+    )
+    model.load_state_dict(checkpoint["model_state_dict"])
+    model.eval()
+
+    lfp_scaler = scaler_artifact["scaler"]
+    lfp_feature_scaler = feat_artifact["scaler"]
+    lfp_soh_model = _compile_for_inference(model, input_features, feat_dim)
+    lfp_iso_model = joblib.load(LFP_ISO_FOREST_PATH)
+    logger.info(
+        "LFP artifacts loaded (v%s, trained on %s cells, soc_mode=%s)",
+        LFP_MODEL_VERSION,
+        len(scaler_artifact.get("trained_on", [])),
+        scaler_artifact.get("soc_mode", "?"),
+    )
 
 
 def load_long_model(device: str | None = None) -> MambaSOHPredictor:

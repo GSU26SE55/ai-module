@@ -292,6 +292,8 @@ def _run_prescription_uncached(
     enrich: bool = False,
     n_series: int = 1,
     agentic: bool = False,
+    chemistry: str | None = None,
+    capacity_ah: float | None = None,
     **context_kwargs,
 ) -> dict:
     """
@@ -315,8 +317,17 @@ def _run_prescription_uncached(
         must treat "" as "no record to give feedback on".
     """
     # 1. Inference
+    # GH-67: chemistry/capacity_ah MUST be forwarded. Before this they were
+    # accepted by PrescribeRequest.pack_config and then dropped here, so on the
+    # Prescribe path — the one docs/overall.md tells BE to use for everything —
+    # an LFP pack silently got NMC voltage thresholds, no C-rate current
+    # normalisation, and (Mức 2) the NASA weights instead of the LFP ones.
     prediction_result = run_inference(
-        readings, n_series=n_series, battery_id=battery_id
+        readings,
+        n_series=n_series,
+        battery_id=battery_id,
+        chemistry=chemistry,
+        capacity_ah=capacity_ah,
     )
     prediction = prediction_result.get("prediction", {})
     anomaly    = prediction_result.get("anomaly", {})
@@ -466,6 +477,8 @@ def run_prescription(
     enrich: bool = False,
     n_series: int = 1,
     agentic: bool = False,
+    chemistry: str | None = None,
+    capacity_ah: float | None = None,
     **context_kwargs,
 ) -> dict:
     """
@@ -478,7 +491,8 @@ def run_prescription(
     """
     observability.record_prescribe()
     key = observability.cache_key(
-        battery_id, readings, enrich, agentic, context_kwargs.get("ticket_history")
+        battery_id, readings, enrich, agentic, context_kwargs.get("ticket_history"),
+        n_series=n_series, chemistry=chemistry, capacity_ah=capacity_ah,
     )
     t_total = time.perf_counter()
 
@@ -494,6 +508,8 @@ def run_prescription(
             enrich=enrich,
             n_series=n_series,
             agentic=agentic,
+            chemistry=chemistry,
+            capacity_ah=capacity_ah,
             **context_kwargs,
         )
         response["cached"] = False

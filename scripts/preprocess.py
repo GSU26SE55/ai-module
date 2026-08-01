@@ -166,6 +166,7 @@ def cycles_to_windows(
     scaler: MinMaxScaler,
     feat_scaler: StandardScaler | None = None,
     long_seq: bool = False,
+    soc_mode: str = "window",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Scale cycles, then slice windows and compute a per-window feature vector
@@ -177,9 +178,33 @@ def cycles_to_windows(
 
     long_seq=False (GH-54): appends 2 derived columns AFTER scaling the 4 base
     columns — cycle_count_norm (cycle_idx / CYCLE_COUNT_NORM, constant per
-    cycle) and soc_percent/100 (window-local Coulomb counting, recomputed per
-    window). Both are already in ~[0,1] by construction, so scaler.pkl stays
-    a 4-feature scaler. Model input becomes (WINDOW_SIZE, 6).
+    cycle) and soc_percent/100. Both are already in ~[0,1] by construction, so
+    scaler.pkl stays a 4-feature scaler. Model input becomes (WINDOW_SIZE, 6).
+
+    soc_mode — how that soc_percent column is Coulomb-counted (GH-67 bug #10,
+    found on the LFP pipeline and confirmed identical here):
+
+      "window" (DEFAULT, what v1.6 was trained with)
+          compute_soc_percent() is called on each 30-row slice. Its docstring is
+          explicit that SOC is "RELATIVE TO THE WINDOW: 100% at the first row",
+          so EVERY window starts at 100.0 and the channel spans only ~[0.91, 1.0]
+          — a near-constant that carries no position information. Worse, it does
+          not match serving: with the recommended 6-column payload BE sends the
+          battery's REAL SOC, which spans ~[0.09, 1.0]. Measured on a 4C discharge
+          the two differ by 90.6 points of range.
+
+      "cycle" (CORRECT)
+          Counts once over the whole discharge cycle, then slices, so soc falls
+          ~100% -> ~0% across the cycle: a real position-within-discharge signal
+          AND the same semantics BE sends.
+
+    Why the default is still "window": train.py writes
+    soh_mamba_v{MODEL_VERSION}.pth, so flipping the default would let a plain
+    re-run overwrite the shipped v1.6 artifacts with *different* semantics under
+    the *same* version number — exactly the silent mismatch the version asserts
+    exist to catch. Switch to "cycle" only together with a MODEL_VERSION bump.
+    The chosen mode is recorded in scaler.pkl's metadata so any artifact
+    self-documents which one produced it.
     """
     all_X, all_feat, all_y = [], [], []
 
@@ -199,6 +224,16 @@ def cycles_to_windows(
         # _append_derived_features(); a no-op for NASA data (max cycle_idx ~197).
         cycle_count_norm = np.float32(np.clip(cycle_idx / CYCLE_COUNT_NORM, 0.0, 1.0))
 
+        # soc_mode="cycle": Coulomb-count ONCE over the whole discharge cycle so each
+        # window inherits its true position (soc falls ~100% -> ~0% across the cycle).
+        # See the soc_mode note in cycles_to_windows' docstring for why the default
+        # is still the historical per-window behaviour.
+        soc_cycle = (
+            compute_soc_percent(cycle_raw[:, 1], cycle_raw[:, 3]) / 100.0
+            if soc_mode == "cycle" and not long_seq
+            else None
+        )
+
         # Non-overlapping sliding windows
         for i in range(0, T - WINDOW_SIZE + 1, WINDOW_STRIDE):
             window = cycle_scaled[i : i + WINDOW_SIZE]
@@ -208,8 +243,11 @@ def cycles_to_windows(
             window_feat = extract_window_features(window[:, :3])  # (54,)
             if not long_seq:
                 # GH-54: derived columns from the RAW window (current=col1, time=col3)
-                raw_win = cycle_raw[i : i + WINDOW_SIZE]
-                soc_norm = compute_soc_percent(raw_win[:, 1], raw_win[:, 3]) / 100.0
+                if soc_cycle is not None:
+                    soc_norm = soc_cycle[i : i + WINDOW_SIZE]
+                else:
+                    raw_win = cycle_raw[i : i + WINDOW_SIZE]
+                    soc_norm = compute_soc_percent(raw_win[:, 1], raw_win[:, 3]) / 100.0
                 window = np.column_stack(
                     [
                         window,
@@ -235,6 +273,18 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-dir", default="data/raw/nasa/cleaned_dataset")
     parser.add_argument("--output-dir", default="data/processed")
+    parser.add_argument(
+        "--soc-mode",
+        choices=["cycle", "window"],
+        default="window",
+        help="How soc_percent is Coulomb-counted. 'window' (DEFAULT, historical) counts "
+        "within each 30-row slice, so every window starts at 100%% and the channel is a "
+        "near-constant carrying no position information — and it does NOT match the real "
+        "SOC that BE sends in the 6-column payload. 'cycle' counts over the whole discharge "
+        "cycle and is the CORRECT semantics. Default stays 'window' so re-running this "
+        "script reproduces the shipped v1.6 artifacts byte-for-byte; switch to 'cycle' "
+        "TOGETHER WITH a MODEL_VERSION bump (see the note in cycles_to_windows)."
+    )
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -293,6 +343,7 @@ def main() -> None:
                 "version": SCALER_VERSION,
                 "trained_on": TRAIN_IDS,
                 "features": BASE_FEATURES,
+                "soc_mode": args.soc_mode,  # self-document which semantics produced this
             },
             "models/weights/scaler.pkl",
         )
@@ -301,7 +352,7 @@ def main() -> None:
     # Extract cycle-level features for train
     print("\nExtracting cycle-level Spectral+Kurtosis features...")
     X_train_raw, X_feat_train_raw, y_train = cycles_to_windows(
-        train_cycles, scaler, long_seq=long_seq
+        train_cycles, scaler, long_seq=long_seq, soc_mode=args.soc_mode
     )
     print(f"  Train: {len(X_train_raw)} windows, feat shape: {X_feat_train_raw.shape}")
 
@@ -324,10 +375,10 @@ def main() -> None:
     print(f"Saved feature_scaler -> {feat_scaler_out}")
 
     X_val, X_feat_val, y_val = cycles_to_windows(
-        val_cycles, scaler, feat_scaler, long_seq=long_seq
+        val_cycles, scaler, feat_scaler, long_seq=long_seq, soc_mode=args.soc_mode
     )
     X_test, X_feat_test, y_test = cycles_to_windows(
-        test_cycles, scaler, feat_scaler, long_seq=long_seq
+        test_cycles, scaler, feat_scaler, long_seq=long_seq, soc_mode=args.soc_mode
     )
 
     print(f"\nSplit summary:")

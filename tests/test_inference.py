@@ -464,6 +464,15 @@ class TestAppendDerivedFeatures:
             mock_loader.soh_model = model
             yield
 
+    @staticmethod
+    def _art():
+        """GH-67: _append_derived_features now takes the resolved artifact bundle so
+        the model and its cycle_count divisor can't come from different sets. These
+        tests exercise the DEFAULT (NASA) set — chemistry=None resolves to it."""
+        from src.services.inference import _resolve_artifacts
+
+        return _resolve_artifacts(None)
+
     def test_appends_two_columns_with_defaults(self):
         from src.services.inference import _append_derived_features
 
@@ -471,7 +480,7 @@ class TestAppendDerivedFeatures:
         raw[:, 3] = np.arange(WINDOW_SIZE) * 10.0
         x_scaled = np.random.rand(WINDOW_SIZE, BASE_N).astype(np.float32)
 
-        out = _append_derived_features(x_scaled, raw, cycle_idx=None)
+        out = _append_derived_features(x_scaled, raw, cycle_idx=None, art=self._art())
         assert out.shape == (WINDOW_SIZE, INPUT_FEATURES)
         np.testing.assert_allclose(out[:, 4], 0.0)  # BE chua gui cycle_idx -> 0
         assert out[0, 5] == 1.0  # SOC window-local bat dau 100%
@@ -484,7 +493,7 @@ class TestAppendDerivedFeatures:
         raw[:, 3] = np.arange(WINDOW_SIZE) * 10.0
         x_scaled = np.random.rand(WINDOW_SIZE, BASE_N).astype(np.float32)
 
-        out = _append_derived_features(x_scaled, raw, cycle_idx=100)
+        out = _append_derived_features(x_scaled, raw, cycle_idx=100, art=self._art())
         np.testing.assert_allclose(out[:, 4], 100 / CYCLE_COUNT_NORM)
 
     def test_legacy_model_passthrough(self):
@@ -498,7 +507,7 @@ class TestAppendDerivedFeatures:
         with patch.object(inf.model_loader, "soh_model", legacy, create=True):
             x_scaled = np.random.rand(WINDOW_SIZE, BASE_N).astype(np.float32)
             raw = x_scaled.copy()
-            out = inf._append_derived_features(x_scaled, raw, cycle_idx=None)
+            out = inf._append_derived_features(x_scaled, raw, cycle_idx=None, art=self._art())
         assert out.shape == (WINDOW_SIZE, BASE_N)
 
     def test_6col_payload_uses_be_values_directly(self):
@@ -514,12 +523,12 @@ class TestAppendDerivedFeatures:
         raw6 = np.column_stack([raw4, raw_cycle_count, raw_soc_percent])
         x_scaled = np.random.rand(WINDOW_SIZE, BASE_N).astype(np.float32)
 
-        out = _append_derived_features(x_scaled, raw6, cycle_idx=None)
+        out = _append_derived_features(x_scaled, raw6, cycle_idx=None, art=self._art())
         assert out.shape == (WINDOW_SIZE, INPUT_FEATURES)
         np.testing.assert_allclose(out[:, 4], 42.0 / CYCLE_COUNT_NORM)
         np.testing.assert_allclose(out[:, 5], raw_soc_percent / 100.0)
         # cycle_idx param is ignored once the payload already carries 6 columns
-        out_ignored_param = _append_derived_features(x_scaled, raw6, cycle_idx=999)
+        out_ignored_param = _append_derived_features(x_scaled, raw6, cycle_idx=999, art=self._art())
         np.testing.assert_allclose(out_ignored_param[:, 4], 42.0 / CYCLE_COUNT_NORM)
 
     def test_cycle_count_norm_clipped_when_exceeding_norm(self, caplog):
@@ -532,7 +541,7 @@ class TestAppendDerivedFeatures:
         x_scaled = np.random.rand(WINDOW_SIZE, BASE_N).astype(np.float32)
 
         with caplog.at_level("WARNING"):
-            out = _append_derived_features(x_scaled, raw, cycle_idx=5000)
+            out = _append_derived_features(x_scaled, raw, cycle_idx=5000, art=self._art())
         np.testing.assert_allclose(out[:, 4], 1.0)
         assert "cycle_count=5000" in caplog.text
 
@@ -544,7 +553,7 @@ class TestAppendDerivedFeatures:
         raw[:, 3] = np.arange(WINDOW_SIZE) * 10.0
         x_scaled = np.random.rand(WINDOW_SIZE, BASE_N).astype(np.float32)
 
-        out = _append_derived_features(x_scaled, raw, cycle_idx=-1)
+        out = _append_derived_features(x_scaled, raw, cycle_idx=-1, art=self._art())
         np.testing.assert_allclose(out[:, 4], 0.0)
 
     def test_cycle_count_norm_at_boundary_no_warning(self, caplog):
@@ -557,7 +566,7 @@ class TestAppendDerivedFeatures:
         x_scaled = np.random.rand(WINDOW_SIZE, BASE_N).astype(np.float32)
 
         with caplog.at_level("WARNING"):
-            out = _append_derived_features(x_scaled, raw, cycle_idx=int(CYCLE_COUNT_NORM))
+            out = _append_derived_features(x_scaled, raw, cycle_idx=int(CYCLE_COUNT_NORM), art=self._art())
         np.testing.assert_allclose(out[:, 4], 1.0)
         assert caplog.text == ""
 
@@ -577,7 +586,7 @@ class TestAppendDerivedFeatures:
         x_scaled = np.random.rand(WINDOW_SIZE, BASE_N).astype(np.float32)
 
         with caplog.at_level("WARNING"):
-            out = _append_derived_features(x_scaled, raw6, cycle_idx=None)
+            out = _append_derived_features(x_scaled, raw6, cycle_idx=None, art=self._art())
         np.testing.assert_allclose(out[:, 4], 1.0)
         assert "cycle_count=5000" in caplog.text
 
@@ -600,8 +609,8 @@ class TestAppendDerivedFeatures:
         )
         x_scaled = np.random.rand(WINDOW_SIZE, BASE_N).astype(np.float32)
 
-        out_6col = _append_derived_features(x_scaled, raw6, cycle_idx=None)
-        out_4col = _append_derived_features(x_scaled, raw4, cycle_idx=cycle_idx)
+        out_6col = _append_derived_features(x_scaled, raw6, cycle_idx=None, art=self._art())
+        out_4col = _append_derived_features(x_scaled, raw4, cycle_idx=cycle_idx, art=self._art())
         np.testing.assert_allclose(out_6col, out_4col, rtol=1e-5)
 
 
@@ -693,6 +702,15 @@ class TestChemistryCapacity:
             mock_loader.feature_scaler = dummy_feat_scaler
             mock_loader.soh_model = dummy_model
             mock_loader.iso_model = dummy_iso
+            # GH-67: chemistry now ALSO selects the artifact set. These tests are
+            # about the voltage-warning profile and the C-rate rescale, so point
+            # the LFP set at the same dummies — artifact SELECTION is covered by
+            # TestChemistryArtifactSelection below. Without this the MagicMock's
+            # auto-created lfp_* attributes would be used as real scalers.
+            mock_loader.lfp_scaler = dummy_scaler
+            mock_loader.lfp_feature_scaler = dummy_feat_scaler
+            mock_loader.lfp_soh_model = dummy_model
+            mock_loader.lfp_iso_model = dummy_iso
             yield
 
     def test_current_rescaled_by_c_rate_in_feature_summary(self):
@@ -752,3 +770,151 @@ class TestChemistryCapacity:
         assert not any(
             "VOLTAGE" in w["code"] for w in lfp["warnings"]
         ), lfp["warnings"]
+
+
+class TestChemistryArtifactSelection:
+    """GH-67 — chemistry picks WHICH trained artifact set scores the request.
+
+    Before this, chemistry only chose the voltage warning profile (Mức 1) while
+    LFP telemetry was still scored with the NASA/NMC weights.
+    """
+
+    @staticmethod
+    def _distinct_sets():
+        """Two artifact sets whose models are distinguishable by their output."""
+        from sklearn.ensemble import IsolationForest
+        from sklearn.preprocessing import MinMaxScaler, StandardScaler
+
+        def make(seed):
+            import torch
+
+            torch.manual_seed(seed)
+            sc = MinMaxScaler().fit(np.random.RandomState(seed).rand(50, BASE_N))
+            fs = StandardScaler().fit(np.random.RandomState(seed).rand(50, SPECTRAL_FEAT_DIM))
+            m = MambaSOHPredictor(
+                input_features=INPUT_FEATURES, feat_dim=SPECTRAL_FEAT_DIM,
+                d_model=8, d_state=4,
+            )
+            m.eval()
+            iso = IsolationForest(n_estimators=10, random_state=seed).fit(
+                np.random.RandomState(seed).rand(50, SPECTRAL_FEAT_DIM)
+            )
+            return sc, fs, m, iso
+
+        return make(1), make(99)
+
+    def test_lfp_chemistry_resolves_lfp_bundle_and_divisor(self):
+        from src.core.config import CYCLE_COUNT_NORM, LFP_CYCLE_COUNT_NORM
+        from src.services.inference import _resolve_artifacts
+
+        (nsc, nfs, nm, niso), (lsc, lfs, lm, liso) = self._distinct_sets()
+        with patch("src.services.inference.model_loader") as ml:
+            ml.scaler, ml.feature_scaler, ml.soh_model, ml.iso_model = nsc, nfs, nm, niso
+            ml.lfp_scaler, ml.lfp_feature_scaler = lsc, lfs
+            ml.lfp_soh_model, ml.lfp_iso_model = lm, liso
+
+            lfp = _resolve_artifacts("LFP")
+            assert lfp.soh_model is lm and lfp.scaler is lsc
+            assert lfp.iso_model is liso and lfp.feature_scaler is lfs
+            assert lfp.artifact_set == "LFP"
+            # The divisor MUST travel with the weights: Severson cells run to ~2300
+            # cycles, NASA to ~197. Mixing them silently shifts an input channel.
+            assert lfp.cycle_count_norm == LFP_CYCLE_COUNT_NORM == 2300.0
+
+            for chem in (None, "NMC", "unknown"):
+                nasa = _resolve_artifacts(chem)
+                assert nasa.soh_model is nm, f"chemistry={chem!r} must keep NASA weights"
+                assert nasa.cycle_count_norm == CYCLE_COUNT_NORM == 200.0
+                assert nasa.artifact_set == "NASA"
+
+    def test_lfp_requested_but_not_loaded_raises_instead_of_silent_fallback(self):
+        from src.services.inference import _resolve_artifacts
+
+        (nsc, nfs, nm, niso), _ = self._distinct_sets()
+        with patch("src.services.inference.model_loader") as ml:
+            ml.scaler, ml.feature_scaler, ml.soh_model, ml.iso_model = nsc, nfs, nm, niso
+            ml.lfp_soh_model = None  # artifacts absent (NASA-only deploy)
+
+            with pytest.raises(RuntimeError, match="chemistry='LFP'"):
+                _resolve_artifacts("LFP")
+            # and the default path still works — a missing LFP set must not break
+            # batteries that never asked for it
+            assert _resolve_artifacts(None).soh_model is nm
+
+    def test_metadata_reports_which_artifact_set_ran(self):
+        from src.core.config import LFP_MODEL_VERSION, MODEL_VERSION
+        from src.services.inference import run_inference
+
+        (nsc, nfs, nm, niso), (lsc, lfs, lm, liso) = self._distinct_sets()
+        readings = np.random.rand(WINDOW_SIZE, BASE_N).astype(np.float32)
+        readings[:, 0] = np.linspace(3.35, 2.95, WINDOW_SIZE)  # per-cell LFP volts
+        readings[:, 1] = -1.0
+        readings[:, 2] = 30.0
+        readings[:, 3] = np.arange(WINDOW_SIZE) * 10.0
+
+        with patch("src.services.inference.model_loader") as ml:
+            ml.scaler, ml.feature_scaler, ml.soh_model, ml.iso_model = nsc, nfs, nm, niso
+            ml.lfp_scaler, ml.lfp_feature_scaler = lsc, lfs
+            ml.lfp_soh_model, ml.lfp_iso_model = lm, liso
+
+            nasa = run_inference(readings.tolist())
+            lfp = run_inference(readings.tolist(), chemistry="LFP")
+
+        assert nasa["metadata"]["artifact_set"] == "NASA"
+        assert nasa["metadata"]["model_version"] == MODEL_VERSION
+        assert lfp["metadata"]["artifact_set"] == "LFP"
+        assert lfp["metadata"]["model_version"] == LFP_MODEL_VERSION
+
+
+class TestSocModeGuard:
+    """GH-67: artifacts trained with soc_mode='cycle' need the 6-column payload.
+
+    The window-local fallback defines SOC relative to the window, so it always
+    starts at 100% and spans ~[0.91, 1.0]; the LFP artifacts were trained on soc
+    spanning the whole discharge (~[0.09, 1.0]). A stateless 30-row window cannot
+    reconstruct the real value, so this must fail loudly instead of silently
+    shifting that input channel.
+    """
+
+    def _art(self, soc_mode, model_dim=6):
+        from src.services import inference
+
+        class _M:
+            input_features = model_dim
+
+        return inference._Artifacts(
+            scaler=None, feature_scaler=None, soh_model=_M(), iso_model=None,
+            cycle_count_norm=2300.0, artifact_set="LFP",
+            model_version="2.0-lfp", soc_mode=soc_mode,
+        )
+
+    def _payload(self, n_cols):
+        return np.array(
+            [[3.3, -4.0, 30.0, float(i), 900.0, 80.0][:n_cols] for i in range(30)],
+            dtype=np.float32,
+        )
+
+    def test_cycle_mode_rejects_4_column_payload(self):
+        from src.services import inference
+        raw = self._payload(4)
+        x_scaled = raw[:, :4]
+        with pytest.raises(ValueError, match="soc_mode='cycle'"):
+            inference._append_derived_features(x_scaled, raw, None, self._art("cycle"))
+
+    def test_cycle_mode_accepts_6_column_payload(self):
+        from src.services import inference
+        raw = self._payload(6)
+        x_scaled = raw[:, :4]
+        out = inference._append_derived_features(x_scaled, raw, None, self._art("cycle"))
+        assert out.shape == (30, 6)
+        # soc comes straight from BE's column 6 (80%), not the window-local estimate
+        assert np.allclose(out[:, 5], 0.8)
+
+    def test_window_mode_still_accepts_4_column_payload(self):
+        """Back-compat: NASA artifacts (soc_mode='window') are unaffected."""
+        from src.services import inference
+        raw = self._payload(4)
+        x_scaled = raw[:, :4]
+        out = inference._append_derived_features(x_scaled, raw, None, self._art("window"))
+        assert out.shape == (30, 6)
+        assert out[0, 5] == pytest.approx(1.0)  # window-local SOC starts at 100%

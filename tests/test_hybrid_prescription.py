@@ -10,7 +10,7 @@ from unittest import mock
 
 from src.services.prescription.rule_prescription import build_rule_prescription
 from src.services.prescription.llm import chain
-from src.services.prescription import orchestrator
+from src.services.prescription import observability, orchestrator
 from src.services.prescription.orchestrator import _enrich, _dedup
 from src.services.prescription.history_store import PrescriptionHistoryStore
 
@@ -275,3 +275,83 @@ class TestHistoryFewShotIntegration:
         orchestrator.run_prescription(self._READINGS, "B0002", enrich=True)
 
         assert captured["past_cases"] == []
+
+
+class TestPrescribePackConfigForwarding:
+    """GH-67: pack_config must survive the Prescribe path and reach run_inference.
+
+    Regression guard for a bug where PrescribeRequest.pack_config was accepted by
+    both transports but only `n_series` was forwarded — `chemistry` and
+    `capacity_ah` were silently dropped in run_prescription(). On the Prescribe
+    path (the one docs/overall.md tells BE to use for everything) that meant an
+    LFP pack got NMC voltage thresholds, no C-rate current normalisation, and the
+    NASA weights instead of the LFP artifact set, with nothing raised.
+    """
+
+    _PREDICTION_RESULT = {
+        "prediction": {"soh_percent": 90.0, "soh_std": 1.0, "health_stage": "Healthy"},
+        "anomaly": {"anomaly_status": "Normal", "anomaly_score": 0.1, "anomaly_confidence": 0.1},
+        "risk": {"risk_level": "Low", "priority": "P3", "action_code": "MONITOR"},
+        "evidence": {"warnings": []},
+        "metadata": {"inference_ms": 1.0},
+    }
+    _READINGS = [[3.3, -4.0, 30.0, float(i)] for i in range(30)]
+
+    def _spy(self, monkeypatch):
+        calls = []
+
+        def _fake(*args, **kwargs):
+            calls.append(kwargs)
+            return self._PREDICTION_RESULT
+
+        monkeypatch.setattr(orchestrator, "run_inference", _fake)
+        observability._cache.clear()
+        return calls
+
+    def test_chemistry_and_capacity_reach_run_inference(self, monkeypatch):
+        calls = self._spy(monkeypatch)
+        orchestrator.run_prescription(
+            self._READINGS, "B0001", n_series=4, chemistry="LFP", capacity_ah=2.5
+        )
+        assert calls[0]["chemistry"] == "LFP"
+        assert calls[0]["capacity_ah"] == 2.5
+        assert calls[0]["n_series"] == 4
+
+    def test_defaults_unchanged_when_no_pack_config(self, monkeypatch):
+        calls = self._spy(monkeypatch)
+        orchestrator.run_prescription(self._READINGS, "B0001")
+        assert calls[0]["chemistry"] is None
+        assert calls[0]["capacity_ah"] is None
+        assert calls[0]["n_series"] == 1
+
+    def test_lfp_request_not_served_from_nmc_cache(self, monkeypatch):
+        """Idempotency cache (GH-84) must key on pack_config too."""
+        calls = self._spy(monkeypatch)
+        first = orchestrator.run_prescription(self._READINGS, "B0001", n_series=4)
+        second = orchestrator.run_prescription(
+            self._READINGS, "B0001", n_series=4, chemistry="LFP"
+        )
+        assert first["cached"] is False
+        assert second["cached"] is False, "LFP request served the cached NMC response"
+        assert len(calls) == 2
+        assert calls[0]["chemistry"] is None and calls[1]["chemistry"] == "LFP"
+
+    def test_cache_still_hits_for_identical_pack_config(self, monkeypatch):
+        calls = self._spy(monkeypatch)
+        kw = dict(n_series=4, chemistry="LFP", capacity_ah=2.5)
+        orchestrator.run_prescription(self._READINGS, "B0001", **kw)
+        again = orchestrator.run_prescription(self._READINGS, "B0001", **kw)
+        assert again["cached"] is True
+        assert len(calls) == 1
+
+    def test_cache_key_distinguishes_each_pack_field(self):
+        base = dict(
+            battery_id="B0001", readings=self._READINGS, enrich=False, agentic=False
+        )
+        keys = {
+            observability.cache_key(**base),
+            observability.cache_key(**base, n_series=4),
+            observability.cache_key(**base, chemistry="LFP"),
+            observability.cache_key(**base, capacity_ah=2.5),
+        }
+        assert len(keys) == 4

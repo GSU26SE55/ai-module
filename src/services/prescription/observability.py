@@ -47,11 +47,23 @@ def cache_key(
     enrich: bool,
     agentic: bool,
     ticket_history: list | None = None,
+    n_series: int = 1,
+    chemistry: str | None = None,
+    capacity_ah: float | None = None,
 ) -> str:
     # GH-105: ticket_history is part of the LLM context now (diagnosis
     # statement) — must be in the key, or a changed history within the TTL
     # window would silently serve a stale cached response.
-    payload = json.dumps([battery_id, readings, enrich, agentic, ticket_history or []])
+    #
+    # GH-67: pack_config must be in the key too. All three of these change the
+    # prediction for identical `readings`: n_series divides voltage per-cell,
+    # capacity_ah rescales current to the NASA C-rate, and chemistry selects both
+    # the voltage warning profile AND (Mức 2) the whole artifact set. Without them
+    # a 4S LFP request could be served a cached 1S NMC response.
+    payload = json.dumps(
+        [battery_id, readings, enrich, agentic, ticket_history or [],
+         n_series, chemistry, capacity_ah]
+    )
     return hashlib.sha256(payload.encode()).hexdigest()
 
 

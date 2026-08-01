@@ -217,6 +217,15 @@ def dummy_models():
         patch.object(model_loader, "feature_scaler", feat_scaler),
         patch.object(model_loader, "soh_model", model),
         patch.object(model_loader, "iso_model", iso),
+        # GH-67: chemistry="LFP" now selects a SEPARATE artifact set, and
+        # run_inference() refuses to fall back to the default weights. These
+        # transport tests assert request/response plumbing, not which weights ran,
+        # so point the LFP set at the same dummies. Real selection is covered by
+        # tests/test_inference.py::TestChemistryArtifactSelection.
+        patch.object(model_loader, "lfp_scaler", scaler),
+        patch.object(model_loader, "lfp_feature_scaler", feat_scaler),
+        patch.object(model_loader, "lfp_soh_model", model),
+        patch.object(model_loader, "lfp_iso_model", iso),
     ):
         yield
 

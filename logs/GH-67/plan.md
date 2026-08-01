@@ -788,3 +788,223 @@ bẩy dQ/dV hoặc window dài hơn.
 - [ ] Chemistry-aware artifact selection (vẫn chưa làm) — nhớ `LFP_CYCLE_COUNT_NORM` (2300),
   xem cảnh báo ở mục trên.
 - [ ] Model LFP hiện CHƯA được wire vào inference — `chemistry=="LFP"` vẫn dùng artifact NASA.
+
+## Plan — Chemistry-aware artifact selection (mục "chưa làm" cuối cùng của GH-67)
+
+- Status: PLANNING → IMPLEMENTING | Ngày: 2026-07-31
+- Điều kiện cần: đã có checkpoint LFP thật (run 8: MAE 1.3495% / RMSE 1.7904%, đã commit)
+
+### Mục tiêu
+
+Model LFP đã train xong và commit, nhưng `chemistry == "LFP"` ở request **vẫn dùng artifact
+NASA**. Bước này wire bộ artifact LFP vào `run_inference()` để request khai báo LFP thực sự
+được chấm bằng model LFP.
+
+### Hiện trạng (đã verify trong code)
+
+- `model_loader.py` giữ 4 global module-level: `scaler`, `feature_scaler`, `soh_model`,
+  `iso_model` — nạp trong `load_models()` lúc startup, có assert version (fail-fast).
+- `load_long_model()` là tiền lệ sẵn có cho việc nạp **bộ artifact thứ 2** (lazy, global riêng,
+  assert version riêng). Sẽ theo đúng pattern này.
+- `run_inference()` đọc thẳng `model_loader.<global>` ở 8 chỗ; 2 helper module-level
+  (`_expected_feature_count`, `_append_derived_features`) cũng đọc thẳng.
+- `chemistry` đã chạy tới `run_inference()` từ GH-67 Mức 1 — chỉ mới dùng để chọn ngưỡng cảnh
+  báo voltage, chưa dùng để chọn artifact.
+- Test patch `model_loader` globals rất nhiều (`test_inference.py` 24 chỗ) → **giữ nguyên tên và
+  ý nghĩa 4 global hiện tại** (= bộ NASA) để không phá test; bộ LFP đi vào global mới.
+
+### Quyết định thiết kế (nêu rõ để bạn bác nếu không đồng ý)
+
+1. **Nạp bộ LFP lúc startup, best-effort.** `load_long_model()` là lazy, nhưng long-model không
+   nằm trên hot path production. LFP thì có (BE gửi `chemistry="LFP"` thật), nên lazy sẽ khiến
+   **request đầu tiên** gánh toàn bộ chi phí nạp + `torch.compile` → nguy cơ vỡ SLA <100ms đúng
+   ở request đầu. Nạp lúc startup; **thiếu artifact thì KHÔNG crash server** (chỉ log warning),
+   vì deploy chỉ chạy NASA vẫn phải bật được.
+2. **Request `chemistry="LFP"` mà không có artifact LFP → raise lỗi rõ ràng**, KHÔNG âm thầm rơi
+   về weight NASA. Chấm dữ liệu LFP bằng model NASA đúng là kiểu "silent wrong prediction" mà
+   `.claude/rules/tech/ai.md` yêu cầu tránh.
+3. **`cycle_count_norm` phải theo chemistry**: LFP dùng `LFP_CYCLE_COUNT_NORM=2300`, NASA dùng
+   `CYCLE_COUNT_NORM=200`. Đây là cảnh báo đã ghi từ trước — sai chỗ này lệch train/inference mà
+   không raise lỗi nào.
+4. **Không đổi ngưỡng anomaly theo chemistry** ở bước này. `classify_anomaly()` dùng ngưỡng
+   score cố định (-0.1/-0.3) vốn hiệu chỉnh cho iso-forest NASA; iso-forest LFP có phân phối
+   score riêng. Đây là việc riêng, cần dữ liệu để hiệu chỉnh — ghi vào "còn lại", không đoán bừa.
+
+### Files
+
+| File | Action | Ghi chú |
+|------|--------|---------|
+| `src/core/model_loader.py` | modify | Thêm global `lfp_scaler/lfp_feature_scaler/lfp_soh_model/lfp_iso_model` + `load_lfp_models()` (assert version `LFP_MODEL_VERSION`, warm-up `torch.compile` cả eval+train mode như bộ NASA). `load_models()` gọi best-effort ở cuối. |
+| `src/services/inference.py` | modify | `_resolve_artifacts(chemistry)` trả bundle (scaler, feature_scaler, soh_model, iso_model, cycle_count_norm, artifact_set). `run_inference()` dùng bundle thay vì đọc global. 2 helper nhận thêm tham số. Metadata thêm `artifact_set` + `model_version`. |
+| `src/routers/health.py` | modify | Báo `lfp_loaded` để biết bộ LFP có sẵn sàng không |
+| `tests/test_model_loader.py` | modify | `load_lfp_models()` assert version sai → raise; thiếu file → raise |
+| `tests/test_inference.py` | modify | `chemistry="LFP"` dùng bundle LFP + `cycle_count_norm=2300`; `chemistry=None` giữ nguyên NASA; LFP thiếu artifact → raise |
+
+### Ngoài scope bước này
+
+- Hiệu chỉnh ngưỡng anomaly cho iso-forest LFP (cần dữ liệu, không đoán)
+- Sửa `scripts/preprocess.py` (NASA) cho bug #10 — model v1.6 đã ship, cần issue riêng
+- Đặc trưng dQ/dV
+- gRPC: `chemistry` đã có sẵn trong `PackConfig` từ Mức 1 nên không phải đụng proto
+
+### Lưu ý bắt buộc ghi vào docs
+
+Model LFP được train với `soc_mode=cycle` (soc tính trên toàn đoạn xả). Payload **4 cột** khiến
+inference tính soc window-local → lệch hẳn phân bố. **LFP nên luôn dùng payload 6 cột** (BE gửi
+SOC thật) — đúng default BE đang dùng.
+
+### Steps
+
+- [x] 1. `model_loader.py`: `load_lfp_models()` + globals + gọi best-effort trong `load_models()`
+- [x] 2. `inference.py`: `_resolve_artifacts()` + đổi `run_inference` sang dùng bundle
+- [x] 3. `health.py`: báo trạng thái bộ LFP
+- [x] 4. Tests — 8 test mới (`TestChemistryArtifactSelection` ×3, `load_lfp_models` ×4, FTZ ×1)
+- [x] 5. `pytest tests/ -q`: **547 passed**; ruff không thêm lỗi mới (6 lỗi E402/F401 có sẵn)
+
+### Kết quả
+
+**Selection hoạt động thật** — cùng 1 payload pack LFP 4S (cycle 900):
+
+| Request | artifact_set | model_version | SOH | health_stage |
+|---------|--------------|---------------|-----|--------------|
+| `chemistry=None` | NASA | 1.6 | 97.19% | **Healthy** |
+| `chemistry="LFP"` | LFP | 2.0-lfp | 85.13% | **Degrading** |
+
+Đây đúng là lỗi mà bước này sửa: trước đó pin LFP đang suy giảm bị model NASA chấm là "Healthy".
+`cycle_count_norm` đi kèm đúng bộ weight (NASA 200 / LFP 2300).
+
+### 🚀 Phát hiện ngoài kế hoạch — `torch.set_flush_denormal(True)`
+
+Khi benchmark, LFP p95 = **101.7ms → VƯỢT SLA <100ms**. Truy nguyên: cùng kiến trúc, cùng
+79.467 tham số, cả 2 đều eager (torch.compile fail trên Windows) — chênh lệch chỉ đến từ **giá
+trị trọng số** sinh ra số subnormal. x86 xử lý subnormal bằng microcode, chậm hơn hàng bậc, và
+vòng lặp SSM (h nhân dồn qua 30 bước × 10 mẫu MC Dropout) sinh ra chúng hàng loạt.
+
+`torch.set_flush_denormal(True)` trong `load_models()`:
+
+| | avg trước | avg sau | p95 trước | p95 sau |
+|---|---|---|---|---|
+| NASA | 51.0 ms | **21.2 ms** | 70.8 ms | **24.6 ms** |
+| LFP | 73.0 ms | **26.5 ms** | 101.7 ms (FAIL) | **30.6 ms** (PASS) |
+
+**Dự đoán không đổi một chút nào** — cùng seed cho kết quả bit-identical (chênh lệch max
+0.000000% qua 8 lần MC Dropout, trên **cả hai** bộ artifact). Subnormal < 1.2e-38, quá nhỏ để
+dịch được một phần trăm SOH. Nên đây là tăng tốc thuần, không đánh đổi độ chính xác.
+
+> ⚠️ Đây là thay đổi **ngoài scope plan** vì nó chạm cả đường NASA production. Lý do vẫn làm:
+> (a) nếu không có nó thì chính việc wire LFP vừa làm sẽ vỡ SLA, (b) đã chứng minh không đổi
+> kết quả, (c) 1 dòng. Nếu bạn muốn tách ra thành issue riêng thì nói, tôi revert khỏi commit này.
+
+### Còn lại sau bước này — đã xử lý 2/3
+
+**✅ Ngưỡng anomaly cho iso-forest LFP — KHÔNG cần sửa (đo được, không phải đoán).**
+`decision_function = score_samples - offset_`, mà `offset_` được hiệu chỉnh từ `contamination`.
+Hai forest đo ra gần như trùng nhau:
+
+| | n_est | contamination | max_samples | `offset_` |
+|---|---|---|---|---|
+| NASA v1.6 | 100 | 0.1 | 256 | −0.553905 |
+| LFP v2.0 | 100 | 0.1 | 256 | −0.551829 |
+
+Lệch 0.002 → hai forest **cùng thang điểm**, nên ngưỡng −0.1/−0.3 mang cùng ý nghĩa cho cả hai.
+Lo ngại "LFP có phân phối score riêng" của tôi là thừa.
+
+**✅ `scripts/preprocess.py` (NASA) bug #10 — đã thêm `--soc-mode`, cố ý KHÔNG đổi mặc định.**
+
+Xác nhận NASA dính đúng bug: `compute_soc_percent(raw_win[:, 1], raw_win[:, 3])` gọi trên lát
+30 dòng → mọi window đều bắt đầu 100%. Đo trên chu kỳ xả NASA mô phỏng:
+`window` → range [0.919, 1.000] (biến thiên 0.081) vs `cycle` → [0.169, 1.000] (biến thiên 0.831).
+
+**Mặc định giữ `window`** — đây là quyết định quan trọng: `train.py` ghi ra
+`soh_mamba_v{MODEL_VERSION}.pth`, nên nếu đổi mặc định thì **một lần chạy lại bình thường sẽ ghi
+đè artifact v1.6 đang ship bằng ngữ nghĩa KHÁC dưới CÙNG số version** — đúng kiểu silent mismatch
+mà các version assert sinh ra để chặn. Verify: mặc định cho kết quả **byte-identical** với
+`soc_mode="window"`.
+
+Muốn sửa thật thì chạy `--soc-mode cycle` **kèm bump `MODEL_VERSION`**. `soc_mode` được ghi vào
+metadata `scaler.pkl` để artifact tự khai báo nó sinh ra bằng ngữ nghĩa nào.
+
+**⏳ Còn lại: đặc trưng dQ/dV** — đòn bẩy độ chính xác lớn nhất, cần đổi contract 57-dim + feature
+path riêng theo chemistry trong `inference.py`. Cần plan riêng.
+
+
+## Bug thứ 12 (2026-07-31) — `pack_config` bị bỏ rơi trên đường Prescribe
+
+**Audit nhánh trước khi ship, phát hiện lỗi phá cả GH-67 Mức 1 (đã merge PR #102) lẫn Mức 2.**
+
+`PrescribeRequest.pack_config` được **cả 2 transport chấp nhận** nhưng `run_prescription()` chỉ
+nhận `n_series`; `chemistry` và `capacity_ah` bị **âm thầm vứt đi** trước khi tới `run_inference`:
+
+```python
+# orchestrator.py — TRUOC khi sua
+prediction_result = run_inference(readings, n_series=n_series, battery_id=battery_id)
+```
+
+Hệ quả trên đường **Prescribe** — chính là đường `docs/overall.md` §1 bảo BE dùng cho **mọi**
+use-case tạo/enrich ticket:
+
+| Tính năng | Trạng thái trước fix |
+|---|---|
+| Voltage profile theo chemistry (Mức 1) | ❌ pack LFP nhận ngưỡng NMC → cảnh báo giả / bỏ sót overcharge |
+| Chuẩn hóa dòng theo C-rate `capacity_ah` (Mức 1) | ❌ không áp dụng |
+| Chọn artifact set theo chemistry (Mức 2) | ❌ luôn dùng weight NASA |
+
+Đường `Predict` thì đúng (`grpc_server.py:257` có truyền `chemistry`), nên lỗi chỉ lộ ra ở đúng
+đường BE được khuyến nghị dùng — kiểu lỗi khó thấy nhất.
+
+**Bug đi kèm: `cache_key` (GH-84) cũng thiếu `pack_config`.** Key chỉ gồm
+`battery_id/readings/enrich/agentic/ticket_history`. Nghĩa là pack 4S và 1S cùng readings dùng
+chung 1 cache entry, và sau khi thêm `chemistry` thì một request LFP có thể được trả về **kết quả
+cache của NMC**. Đây là lỗi có sẵn, độc lập với chuyện chemistry.
+
+**Đã fix:**
+- `run_prescription()` + `_run_prescription_uncached()`: thêm `chemistry`/`capacity_ah`, forward
+  xuống `run_inference`.
+- `observability.cache_key()`: thêm `n_series`/`chemistry`/`capacity_ah` vào payload hash.
+- `routers/prescribe.py` + `grpc_server.py`: forward đủ 3 field từ `pack_config` (parity 2 transport).
+- 5 test hồi quy mới trong `tests/test_hybrid_prescription.py::TestPrescribePackConfigForwarding`:
+  chemistry/capacity tới được `run_inference`; mặc định không đổi khi không có `pack_config`;
+  request LFP **không** bị trả cache của NMC; cache vẫn hit khi `pack_config` giống hệt;
+  `cache_key` phân biệt được từng field.
+
+`pytest tests/ -q`: **552 passed**. ruff trên các file đã sửa: **1 lỗi, y hệt bản đã commit**
+(có sẵn, không phải do thay đổi này).
+
+
+## Bug thứ 13 (2026-07-31) — artifact `soc_mode='cycle'` + payload 3/4 cột = lệch phân bố ngầm
+
+Mặt còn lại của bug #10. Model LFP được train với `soc_mode=cycle` (soc trải ~100% → ~9% suốt
+đoạn xả), nhưng nhánh fallback của `_append_derived_features()` khi payload chỉ có 3/4 cột lại
+tính soc **window-local** — luôn bắt đầu 100%, dải ~[0.91, 1.0].
+
+| Payload | soc lúc inference | Khớp với LFP artifact? |
+|---------|-------------------|------------------------|
+| 6 cột (BE default) | SOC thật BE gửi, ~[0.09, 1.0] | ✅ |
+| 3/4 cột | window-local, ~[0.91, 1.0] | ❌ lệch, không lỗi nào raise |
+
+Không thể sửa bằng cách tính đúng: `run_inference` **stateless**, chỉ có 1 window 30 dòng nên
+không thể dựng lại vị trí trong toàn đoạn xả.
+
+**Đã fix — fail-fast, dựa trên metadata chứ không hardcode:**
+- `preprocess_lfp.py` đã ghi `soc_mode` vào `scaler_lfp.pkl`; `model_loader` giữ lại thành
+  `lfp_soc_mode` (default `"window"` để artifact cũ vẫn chạy).
+- `_Artifacts` mang thêm `soc_mode`; `_append_derived_features()` **raise** khi
+  `soc_mode == "cycle"` mà payload < 6 cột, kèm thông báo chỉ rõ phải gửi payload 6 cột.
+- 3 test mới `tests/test_inference.py::TestSocModeGuard`: cycle-mode reject 4 cột / accept 6 cột
+  (và lấy đúng soc của BE, không phải ước lượng), window-mode vẫn nhận 4 cột (back-compat NASA).
+
+## ⚠️ Đã phát hiện, CHƯA sửa — mã lỗi sai contract (cần bạn quyết định)
+
+`docs/overall.md` §11 ghi: *"Input sai (window≠30, **feature count sai**, out-of-range, NaN) →
+`INVALID_ARGUMENT` / 422"*. Nhưng thực tế `grpc_server.py:261` bắt `except Exception` rồi
+`abort(INTERNAL)`, nên **mọi** `ValueError` từ `run_inference` — kể cả lỗi input của client như
+feature-count mismatch (`_align_features`) và guard `soc_mode` mới — đều báo `INTERNAL`/500.
+REST cũng không có handler nên thành 500.
+
+Đây là **lệch giữa tài liệu và code, có sẵn từ trước**, không phải do các thay đổi ở trên.
+
+**Chưa sửa vì đây là quyết định về contract API đang chạy, không phải bug rõ ràng:** map
+`ValueError → INVALID_ARGUMENT` sẽ đổi hành vi của các case đang tồn tại (BE có thể đang bắt theo
+`INTERNAL`), và ngược lại có rủi ro che một `ValueError` nội bộ thật thành lỗi client. Cách sạch
+nhất là tạo exception type riêng cho lỗi input rồi map type đó — nhưng đó là refactor nên cần
+issue riêng.

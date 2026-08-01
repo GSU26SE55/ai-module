@@ -285,4 +285,12 @@ message HealthResponse {
   bool scaler_loaded = 3;
   bool mamba_loaded = 4;
   bool isolation_forest_loaded = 5;
+  // GH-67: the LFP (Severson-trained) artifact set is OPTIONAL — a NASA-only
+  // deploy boots fine without it, but then every request carrying
+  // pack_config.chemistry="LFP" fails at inference instead of being silently
+  // mis-scored with the NASA weights. REST /health already exposed these; gRPC
+  // is the transport BE actually uses, so it needs them too or BE cannot check
+  // LFP readiness before shipping traffic.
+  bool lfp_loaded = 6;
+  string lfp_model_version = 7;
 }
