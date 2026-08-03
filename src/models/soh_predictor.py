@@ -1,4 +1,5 @@
 import math
+import threading
 
 import torch
 import torch.nn as nn
@@ -108,11 +109,33 @@ class MambaBlock(nn.Module):
             dt = F.softplus(self.dt_proj(dt_raw))         # (B, L, d_inner) fp32
             A  = -torch.exp(self.A_log.float())           # (d_inner, d_state)
 
-            if L <= 32:
-                # Sequential scan only for L=30 production inference window.
-                # Anything larger (including stage-1 L=256) uses the vectorized
-                # chunked path below — avoids a Python for-loop graph break that
-                # prevents torch.compile from fusing the scan into a single kernel.
+            if L <= 32 and threading.current_thread() is threading.main_thread():
+                # Short sequence AND on the main thread -> plain sequential loop.
+                #
+                # The loop issues ~30 tiny tensor ops per block. On the main thread
+                # that is the fastest option, but on ANY other thread each of those
+                # ops pays a much larger parallel-region setup cost, and the cost is
+                # high-variance — which is exactly where the serving p95 blew up.
+                # Measured (LFP artifacts, batch=10 MC-Dropout window, n=60):
+                #
+                #                    main p50/p95      worker p50/p95
+                #   sequential       24.2 / 29.5 ms    66.6 / 167.2 ms   <- p95 > SLA
+                #   chunked below    36.8 / 42.5 ms    70.3 /  76.8 ms
+                #
+                # gRPC and FastAPI both dispatch handlers onto a thread pool, so the
+                # serving path is ALWAYS a non-main thread: it takes the chunked
+                # branch and its p95 halves (167 -> 77 ms, back under the 100 ms P1
+                # SLA). Training/eval and batch scripts run on the main thread and
+                # keep the faster loop. Outputs are bit-identical between the two
+                # branches (verified to 0.000000 %SOH over a 5-point voltage sweep),
+                # so this only trades one execution schedule for another.
+                #
+                # NOTE: the original reason for pinning L<=32 to this loop was to
+                # avoid a torch.compile graph break — but compile is not enabled on
+                # this path (measured: 0 recompiles, model is not a compiled module),
+                # so that rationale does not currently apply. If compile is turned on
+                # later, prefer the chunked branch there too: it is the compile-
+                # friendly one.
                 dA  = torch.exp(dt.unsqueeze(-1) * A)
                 dBx = dt.unsqueeze(-1) * B_proj.unsqueeze(2) * x.unsqueeze(-1)
                 h = torch.zeros(B, d_inner, self.d_state, device=x.device, dtype=torch.float32)

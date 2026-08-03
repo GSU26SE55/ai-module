@@ -1008,3 +1008,101 @@ REST cũng không có handler nên thành 500.
 `INTERNAL`), và ngược lại có rủi ro che một `ValueError` nội bộ thật thành lỗi client. Cách sạch
 nhất là tạo exception type riêng cho lỗi input rồi map type đó — nhưng đó là refactor nên cần
 issue riêng.
+
+
+## Bộ test full-case + phát hiện về độ trễ (2026-07-31)
+
+Thêm `scripts/e2e_full_test.py` — chạy ma trận kịch bản thật qua gRPC wire, assert kết quả, chạy
+ca lỗi, rồi đo tốc độ. Khác 2 script đã có: `benchmark_grpc.py` chỉ đo tốc độ với payload **4 cột
+ngẫu nhiên không có `pack_config`** nên **chưa bao giờ chạm đường chemistry/LFP**;
+`grpc_client_demo.py` chỉ demo, không assert.
+
+Suite đã bắt được 3 thứ ngay lần chạy đầu:
+
+**1. Kịch bản test yếu.** Hai ca "pack LFP khoẻ" và "pack LFP mòn" ban đầu đều ra SOH 100.00% vì
+cùng rơi vào vùng model bão hoà (V/cell ≥ 3.25 → raw output ~102%, bị clip). Test không phân biệt
+được gì. Đã đổi sang cặp điện áp nằm ngoài vùng đó.
+
+**2. Đo `Prescribe` sai.** Dùng lại y hệt request nên toàn ăn cache idempotency (GH-84) → 0.6ms,
+con số vô nghĩa. Đã đổi `battery_id` mỗi vòng.
+
+**3. 🚨 Đường LFP vượt SLA P1 ở p95** — đo với server chạy **tiến trình riêng** (không tranh GIL):
+
+| | p50 | p95 | SLA <100ms |
+|---|---|---|---|
+| direct `run_inference` NASA | 20.3ms | **23.3ms** | ✅ |
+| direct `run_inference` LFP | 25.6ms | **29.1ms** | ✅ |
+| gRPC Predict NASA | 48.6ms | 74.2ms | ✅ |
+| **gRPC Predict LFP** | 69.7ms | **153.8ms** | ❌ |
+| **gRPC Prescribe LFP** | 68.7ms | **159.7ms** | ❌ |
+
+Bản thân pipeline model rất nhanh (p95 23–29ms) và **không có đuôi**. Toàn bộ vấn đề nằm ở tầng
+phục vụ. Đã loại 2 giả thuyết bằng đo đạc:
+- **Không phải do xen kẽ 2 bộ artifact**: chạy xen kẽ NASA↔LFP trực tiếp cho p95 29.3ms.
+- **Không phải `torch.compile` recompile**: `torch.compile` không được dùng, 0 lần recompile.
+- **Không phải tranh GIL in-process**: server tiến trình riêng vẫn p95 153.8ms.
+
+**Chưa giải thích được:** vì sao qua gRPC đường LFP cộng thêm ~125ms ở p95 trong khi NASA chỉ
+thêm ~51ms, dù hai đường đi qua **cùng** transport và pipeline trực tiếp chỉ chênh nhau 6ms.
+`p50` của LFP (69.7ms) vẫn trong ngưỡng — **vấn đề nằm ở đuôi phân bố**. Cần điều tra trước khi
+cho traffic P1 đi qua đường LFP.
+
+
+## Tối ưu độ trễ (2026-08-01) — p95 đường LFP giảm 53%, về dưới SLA
+
+### Truy nguyên nhân bằng đo đạc, loại 4 giả thuyết sai
+
+| Giả thuyết | Cách bác bỏ |
+|---|---|
+| Tầng gRPC/serialization chậm | Response có sẵn `metadata.inference_ms`: round-trip p95 157.9ms vs server-side 156.8ms → **transport chỉ 1.1ms** |
+| Xen kẽ 2 bộ artifact gây thrash | Chạy xen kẽ NASA↔LFP trực tiếp: p95 29.3ms |
+| `torch.compile` recompile | Không dùng compile, 0 lần recompile |
+| Tranh GIL do server in-process | Server tiến trình riêng vẫn p95 153.8ms |
+
+### Nguyên nhân thật: mọi thread KHÁC main thread đều chậm
+
+Cùng một hàm `run_inference`, chỉ khác thread gọi:
+
+```
+main thread                      p50= 26.7ms  p95=  31.9ms
+threading.Thread (thuong)        p50= 65.5ms  p95= 149.4ms
+ThreadPoolExecutor worker        p50= 63.4ms  p95= 158.1ms
+```
+
+Không phải chi phí submit/wait (chạy nguyên vòng lặp *bên trong* worker vẫn chậm). `cProfile`
+trên worker thread cho thấy `_selective_scan` 14.8→36.5ms và `torch._C._nn.linear` (13 lần mỗi
+inference) ngốn 30ms — tức **chi phí thiết lập vùng song song của từng op nhỏ tăng mạnh trên
+thread phụ**, và biến động lớn (nên đuôi p95 nặng).
+
+Giảm `torch.set_num_threads` KHÔNG cứu được (1 thread → p50 153ms) vì model vẫn hưởng lợi từ
+song song; vấn đề là **số lượng op nhỏ**, không phải mức song song.
+
+### Cách sửa: chọn nhánh scan theo thread
+
+`MambaBlock._selective_scan` có sẵn 2 nhánh — vòng lặp Python 30 bước (L≤32) và chunked scan
+vector hoá (L>32). Lý do gốc pin L≤32 vào vòng lặp là "tránh graph break cho `torch.compile`",
+nhưng **compile không hề được bật** trên đường này. Đo cả hai:
+
+| | main p50/p95 | worker p50/p95 |
+|---|---|---|
+| vòng lặp tuần tự | **24.2 / 29.5 ms** | 66.6 / **167.2 ms** |
+| chunked vector hoá | 36.8 / 42.5 ms | 70.3 / **76.8 ms** |
+
+Mỗi nhánh thắng ở một ngữ cảnh, nên điều kiện đổi thành
+`if L <= 32 and threading.current_thread() is threading.main_thread()`. gRPC và FastAPI **đều**
+dispatch handler lên thread pool → đường phục vụ luôn lấy nhánh chunked; train/eval và script
+batch chạy main thread nên giữ vòng lặp nhanh hơn.
+
+**Output bit-identical** — lệch 0.000000 %SOH trên dải quét 5 điểm điện áp (forward
+deterministic, eval mode, không MC Dropout). Chỉ đổi lịch thực thi, không đổi phép tính.
+
+### Kết quả
+
+| | trước | sau |
+|---|---|---|
+| Predict LFP p95 | 172.9ms ❌ | **81.5ms** ✅ |
+| Prescribe LFP p95 | 172.8ms ❌ | **76.4ms** ✅ |
+| Predict NASA p95 | 67.0ms | **50.9ms** |
+| Prescribe NASA p95 | 78.2ms | **52.4ms** |
+
+`pytest tests/ -q`: 555 passed. `scripts/e2e_full_test.py`: TẤT CẢ PASS.
