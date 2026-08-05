@@ -54,6 +54,11 @@ class AiServiceStub:
                 request_serializer=ai__service__pb2.PredictRequest.SerializeToString,
                 response_deserializer=ai__service__pb2.PredictResponse.FromString,
                 _registered_method=True)
+        self.VerifyTicket = channel.unary_unary(
+                '/aimodule.v1.AiService/VerifyTicket',
+                request_serializer=ai__service__pb2.VerifyTicketRequest.SerializeToString,
+                response_deserializer=ai__service__pb2.VerifyTicketResponse.FromString,
+                _registered_method=True)
 
 
 class AiServiceServicer:
@@ -87,6 +92,13 @@ class AiServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def VerifyTicket(self, request, context):
+        """Mirror of POST /verify-ticket — chấm điểm ticket thủ công thật/rác + dò trùng mô tả.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_AiServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -109,6 +121,11 @@ def add_AiServiceServicer_to_server(servicer, server):
                     servicer.PredictStream,
                     request_deserializer=ai__service__pb2.PredictRequest.FromString,
                     response_serializer=ai__service__pb2.PredictResponse.SerializeToString,
+            ),
+            'VerifyTicket': grpc.unary_unary_rpc_method_handler(
+                    servicer.VerifyTicket,
+                    request_deserializer=ai__service__pb2.VerifyTicketRequest.FromString,
+                    response_serializer=ai__service__pb2.VerifyTicketResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -219,6 +236,33 @@ class AiService:
             '/aimodule.v1.AiService/PredictStream',
             ai__service__pb2.PredictRequest.SerializeToString,
             ai__service__pb2.PredictResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def VerifyTicket(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/aimodule.v1.AiService/VerifyTicket',
+            ai__service__pb2.VerifyTicketRequest.SerializeToString,
+            ai__service__pb2.VerifyTicketResponse.FromString,
             options,
             channel_credentials,
             insecure,

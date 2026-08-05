@@ -285,3 +285,21 @@ kết quả cũ.
 - [ ] Hiểu `risk.priority` chỉ là urgency gợi ý, Priority thật do BE tính
 - [ ] Channel là singleton, không tạo mới mỗi request
 - [ ] Port 50051 **không** expose ra ngoài docker network
+
+
+---
+
+## 8. `VerifyTicket` — chấm điểm ticket khách tự tạo
+
+RPC thứ 5 (`rpc VerifyTicket`, REST `POST /verify-ticket/`), TicketService dùng để gắn nhãn
+ticket do khách tự khai là **hợp lệ** hay **đáng nghi**, đồng thời dò trùng với ticket đang mở.
+
+Ba điều quan trọng nhất:
+
+1. **AI chỉ gắn nhãn, KHÔNG tự chặn ticket.** Quyết định cuối là của Manager.
+2. **Rule-based, không gọi mạng** — cùng input luôn ra cùng output, không tốn chi phí LLM.
+3. **Lỗi RPC không được chặn việc tạo ticket** — bắt lỗi → `ai_verify_status = 4 (Skipped)`,
+   ticket vẫn tạo bình thường.
+
+Đặc tả đầy đủ (request/response từng field, công thức chấm điểm, mapping enum, bẫy
+`category` phải đồng bộ hai phía): xem [`grpc-integration-be.md` §7](grpc-integration-be.md).

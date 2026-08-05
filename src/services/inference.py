@@ -321,8 +321,17 @@ def run_inference(
 
     soh = float(max(0.0, min(100.0, float(np.mean(mc_preds)))))
     soh_std = float(np.std(mc_preds))
-    # confidence: std=0% → 1.0, std=5% → 0.0 (linear scale)
-    soh_confidence = round(float(max(0.0, min(1.0, 1.0 - soh_std / 5.0))), 3)
+    # confidence: exponential decay exp(-soh_std / 5.0) — std=0% → 1.0, 3.5% → 0.50,
+    # 5% → 0.37, 10% → 0.14. Never saturates to exactly 0, so the value stays
+    # informative across the whole range.
+    #
+    # Replaces the old linear `1 - soh_std/5`, which clipped to a flat 0.0 for every
+    # std >= 5. Measured MC spread on soh_mamba v1.6 reaches ~10% on low-signal
+    # windows (flat/idle packs), so that clip erased the difference between
+    # "uncertain" and "completely uncertain" — exactly where the caller needs the
+    # signal — and surfaced as a constant "Độ tin cậy 0%" in the UI.
+    # Same decay constant (5.0) keeps the scale comparable to the old formula.
+    soh_confidence = round(float(np.exp(-soh_std / 5.0)), 3)
     # GH-86: threshold decisions use the median (robust to MC outliers with
     # n=10); soh_percent stays the mean so reported numbers don't change.
     soh_median = float(max(0.0, min(100.0, float(np.median(mc_preds)))))

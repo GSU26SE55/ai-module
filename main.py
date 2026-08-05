@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from src.core.model_loader import load_models
-from src.routers import health, predict, prescribe
+from src.routers import health, predict, prescribe, verify
 
 
 @asynccontextmanager
@@ -22,3 +22,4 @@ app = FastAPI(
 app.include_router(health.router)
 app.include_router(predict.router)
 app.include_router(prescribe.router)
+app.include_router(verify.router)

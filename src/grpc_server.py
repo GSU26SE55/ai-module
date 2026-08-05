@@ -21,8 +21,10 @@ from src.core.config import LFP_MODEL_VERSION, MODEL_VERSION
 from src.grpc_gen import ai_service_pb2, ai_service_pb2_grpc
 from src.schemas.predict import PredictRequest
 from src.schemas.prescribe import PrescribeRequest
+from src.schemas.verify import VerifyTicketRequest
 from src.services.inference import run_inference
 from src.services.prescription import run_prescription
+from src.services.verify import run_verify
 
 logger = logging.getLogger(__name__)
 
@@ -329,6 +331,43 @@ class AiServiceServicer(ai_service_pb2_grpc.AiServiceServicer):
             # any chemistry="LFP" traffic (that request fails if not loaded).
             lfp_loaded=model_loader.lfp_soh_model is not None,
             lfp_model_version=LFP_MODEL_VERSION,
+        )
+
+    def VerifyTicket(self, request, context):
+        """Chấm điểm ticket thủ công thật/rác + dò trùng. Mirror POST /verify-ticket."""
+        payload = {
+            "title": request.title,
+            "description": request.description,
+            "detected_at": request.detected_at,
+            "category": request.category,
+            "sensor_snapshot": {
+                "soh_percent": request.sensor_snapshot.soh_percent,
+                "voltage": request.sensor_snapshot.voltage,
+                "current": request.sensor_snapshot.current,
+                "temperature": request.sensor_snapshot.temperature,
+                "soc_percent": request.sensor_snapshot.soc_percent,
+                "has_active_alert": request.sensor_snapshot.has_active_alert,
+            }
+            if request.has_sensor_snapshot
+            else None,
+            "candidates": [
+                {
+                    "ticket_id": c.ticket_id,
+                    "description": c.description,
+                    "category": c.category,
+                }
+                for c in request.candidates
+            ],
+        }
+        req = _validate(VerifyTicketRequest, payload, context)
+        result = run_verify(req)
+        return ai_service_pb2.VerifyTicketResponse(
+            verdict=result.verdict,
+            score=result.score,
+            reason=result.reason,
+            duplicate_of_ticket_id=result.duplicate_of_ticket_id,
+            duplicate_score=result.duplicate_score,
+            duplicate_reason=result.duplicate_reason,
         )
 
 

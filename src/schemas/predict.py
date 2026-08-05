@@ -220,7 +220,7 @@ class FeatureStat(BaseModel):
 
 class PredictionInfo(BaseModel):
     soh_percent: float
-    soh_confidence: float  # MC Dropout uncertainty [0,1]: 1=confident, 0=uncertain
+    soh_confidence: float  # MC Dropout uncertainty, exp(-soh_std/5) in (0,1]: 1=confident
     soh_std: float  # MC Dropout std in % SOH — raw uncertainty
     rul_cycles_estimate: int
     degradation_rate_per_cycle: float

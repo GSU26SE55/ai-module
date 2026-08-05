@@ -92,6 +92,7 @@ await foreach (var response in call.ResponseStream.ReadAllAsync())
 | 4 | **Error codes** | Input sai → `INVALID_ARGUMENT`; lỗi pipeline → `INTERNAL`; server chưa chạy → `UNAVAILABLE`. Không có 200-with-error như REST wrapper. |
 | 5 | **Insecure channel — nội bộ only** | Port 50051 không TLS/auth (scope capstone). KHÔNG expose ra ngoài docker network; dùng `http://` (không phải `https://`) trong `GrpcChannel.ForAddress`. |
 | 6 | **In-order, backpressure sẵn** | Responses đúng thứ tự requests; HTTP/2 flow control tự điều tiết — BE không cần rate-limit thủ công ở mức thấp. |
+| 8 | **`VerifyTicket` — xem §7** | RPC thứ 5 (GH-693). Rule-based, deterministic, không gọi mạng. AI chỉ gắn nhãn, KHÔNG tự chặn ticket. |
 | 7 | **Prescribe `enrich=false` mặc định** | Rule-based, hot-path (<100ms SLA). `enrich=true` chạy RAG+LLM (chậm, có thể vài giây) — chỉ dùng ngoài P1 hot-path. |
 
 ## 5. Chạy local để test
@@ -101,7 +102,7 @@ await foreach (var response in call.ResponseStream.ReadAllAsync())
 python -m src.grpc_server              # gRPC :50051
 uvicorn main:app --port 8000           # REST :8000 (song song, tùy chọn)
 
-# Demo đủ 4 RPC (thay Swagger)
+# Demo các RPC (thay Swagger)
 python scripts/grpc_client_demo.py
 
 # Benchmark
@@ -122,3 +123,112 @@ python scripts/benchmark_grpc.py --real-weights  # artifacts thật + enforce SL
 | **Transport overhead (phần gRPC thêm)** | **~1–28ms** | budget <50ms, PASS |
 
 SLA <100ms enforce trên môi trường deploy với weights thật (tiền lệ GH-10) — số dev CPU chỉ để tham khảo tương đối.
+
+---
+
+## 7. `VerifyTicket` — chấm điểm ticket do khách tự tạo (GH-693)
+
+> RPC thứ **5**, gộp vào `dev` ngày 2026-08-05. TicketService đang gọi thật.
+> Tương đương REST: `POST /verify-ticket/`.
+
+### 7.1. Mục đích và giới hạn
+
+AI **gắn nhãn** ticket khách tự khai là hợp lệ hay đáng nghi, và dò xem có trùng ticket
+đang mở nào không. **AI KHÔNG tự chặn ticket** — quyết định cuối cùng là của Manager
+(human-in-the-loop). Nhãn chỉ để xếp thứ tự xử lý và cảnh báo trùng lặp.
+
+Toàn bộ chấm điểm là **rule-based, deterministic, không gọi mạng** — cùng input luôn ra
+cùng output, không phụ thuộc LLM và không tốn chi phí API.
+
+### 7.2. Signature
+
+```protobuf
+rpc VerifyTicket(VerifyTicketRequest) returns (VerifyTicketResponse);
+```
+
+**Request**
+
+| Field | Kiểu | Bắt buộc | Ghi chú |
+|-------|------|:---:|---------|
+| `title` | string | ✅ | Tiêu đề khách nhập |
+| `description` | string | ✅ | Mô tả khách nhập — nguồn tín hiệu chính |
+| `detected_at` | string | — | ISO UTC. `""` nếu không có |
+| `category` | int32 | ✅ | **`TicketCategoryEnum` của BE** — xem §7.5 |
+| `sensor_snapshot` | `TicketSensorSnapshot` | — | Số đo pin tại thời điểm tạo ticket |
+| `has_sensor_snapshot` | bool | ✅ | `false` → bỏ qua hoàn toàn phần đối chiếu sensor |
+| `candidates[]` | `DuplicateCandidate` | — | Ticket đang mở **cùng pin** để so trùng |
+
+```protobuf
+message TicketSensorSnapshot {
+  double soh_percent = 1;  double voltage = 2;  double current = 3;
+  double temperature = 4;  double soc_percent = 5;
+  bool has_active_alert = 6;   // pin có alert đang mở tại thời điểm đó
+}
+message DuplicateCandidate {
+  string ticket_id = 1;  string description = 2;
+  int32 category = 3;          // cùng category → nghi trùng cao hơn
+}
+```
+
+**Response**
+
+| Field | Kiểu | Ghi chú |
+|-------|------|---------|
+| `verdict` | string | `"legitimate"` \| `"suspicious"` |
+| `score` | double | `[0..1]` — độ hợp lệ, `1` = chắc chắn thật |
+| `reason` | string | **Tiếng Việt**, viết cho Manager đọc trực tiếp |
+| `duplicate_of_ticket_id` | string | `""` nếu không nghi trùng |
+| `duplicate_score` | double | `[0..1]` — độ tương đồng cao nhất với `candidates` |
+| `duplicate_reason` | string | Lý do nghi trùng |
+
+### 7.3. Cách tính điểm (để BE giải thích được cho Manager)
+
+Điểm khởi đầu **0.5** (trung tính), rồi cộng/trừ:
+
+| Tín hiệu | Ảnh hưởng |
+|---|---|
+| Mô tả quá ngắn | **−0.30** |
+| Mô tả đủ chi tiết | **+0.15** |
+| Tiêu đề rỗng hoặc trùng y hệt mô tả | **−0.10** |
+| Có từ khoá bất thường (nóng, phồng, khói…) | **+0.20** |
+| Spam rõ rệt (1 ký tự lặp, toàn số) | **−0.40** |
+| **Sensor xác nhận có bất thường thật** | **+0.30** |
+| Sensor bình thường, không có gì bất thường | **−0.10** |
+
+Kết quả clip về `[0, 1]`. **`score >= 0.5` → `legitimate`, ngược lại `suspicious`.**
+Dò trùng dùng Jaccard trên token đã bỏ dấu; **`duplicate_score >= 0.45`** thì báo trùng,
+cùng `category` được cộng thêm trọng số.
+
+> Trọng số lớn nhất là **sensor** (±0.30/0.40 cả cụm). Gửi `has_sensor_snapshot=true` kèm
+> số đo thật làm kết quả tin cậy hơn hẳn so với chỉ chấm chữ.
+
+### 7.4. Mapping sang `TicketVerifyStatusEnum`
+
+| Kết quả AI | `ai_verify_status` |
+|---|---|
+| `verdict = "legitimate"` | `2` — Legitimate |
+| `verdict = "suspicious"` | `3` — Suspicious |
+| RPC lỗi bất kỳ (`UNAVAILABLE`, `UNIMPLEMENTED`, timeout…) | `4` — Skipped |
+
+BE **không được** để lỗi verify chặn việc tạo ticket — bắt lỗi, set `Skipped`, ghi log, ticket
+vẫn tạo bình thường.
+
+### 7.5. ⚠️ `category` phải đồng bộ hai phía
+
+`category` là `int32` thô, **không** có enum trong proto. AI dùng nó để so trùng
+(cùng category → nghi trùng cao hơn). Nếu BE đổi thứ tự/giá trị `TicketCategoryEnum` mà
+AI không đổi theo, **không có lỗi nào được raise** — chỉ là kết quả dò trùng kém đi âm thầm.
+
+**Quy tắc:** đổi `TicketCategoryEnum` phải báo AI team và cập nhật cùng lúc.
+
+### 7.6. Ticket tồn đọng không tự verify lại
+
+`TicketVerifyRunner` bỏ qua ticket có `AiVerifyStatus != Pending`, và consumer chỉ chạy trên
+`TicketCreatedEvent`. Muốn xử lý số tồn phải gọi tay:
+
+```
+POST /api/admin/tickets/{id:guid}/re-verify     [Authorize(Roles = "Manager")]
+```
+
+Chỉ nhận ticket `Origin == ManualByCustomer` **và** status hiện tại là `Skipped`/`Pending`.
+→ **Ticket auto-tạo từ alert KHÔNG re-verify được.**

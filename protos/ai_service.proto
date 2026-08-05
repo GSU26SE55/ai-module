@@ -24,6 +24,8 @@ service AiService {
   rpc Health(HealthRequest) returns (HealthResponse);
   // Bidirectional streaming variant of Predict (server impl lands in GH-41)
   rpc PredictStream(stream PredictRequest) returns (stream PredictResponse);
+  // Mirror of POST /verify-ticket — chấm điểm ticket thủ công thật/rác + dò trùng mô tả.
+  rpc VerifyTicket(VerifyTicketRequest) returns (VerifyTicketResponse);
 }
 
 // ── Predict ────────────────────────────────────────────────────────────
@@ -31,8 +33,22 @@ service AiService {
 // One timestep of sensor values. Window = 30 timesteps. Accepted lengths:
 //   6 (preferred, GH-56) — [voltage, current, temperature, time, cycle_count,
 //      soc_percent]. cycle_count (raw cycle index) is constant across the
-//      window; soc_percent (raw 0-100, from the battery's full charge/
-//      discharge history) varies per timestep. Used as-is, no re-derivation.
+//      window; soc_percent (0-100) varies per timestep. Both are used AS-IS,
+//      with no re-derivation and no validation — so a wrong soc_percent is a
+//      SILENT failure, not an INVALID_ARGUMENT.
+//
+//      ⚠️ soc_percent semantics depend on WHICH ARTIFACT SET scores the request,
+//      because each set was trained on a different definition:
+//        pack_config.chemistry = "LFP"  -> LFP artifacts (soc_mode="cycle").
+//            Send SOC scoped to the DISCHARGE: ~100% at the start of the
+//            discharge, falling through it (~9% at the end). This is what a real
+//            battery SOC looks like across one discharge, so BE's own SOC works.
+//        anything else (NASA/NMC default, soc_mode="window")
+//            Send WINDOW-LOCAL SOC: ~100% at the FIRST ROW OF THIS WINDOW,
+//            decreasing across the 30 rows only. Feeding full-discharge SOC here
+//            is out of the training distribution.
+//      Getting it wrong shifts predicted SOH with no error raised. If unsure for
+//      the non-LFP path, send 4 columns and let the server derive it.
 //   4 — [voltage, current, temperature, time]. cycle_count/soc_percent are
 //      derived server-side (GH-54: window-local Coulomb counting; cycle_count
 //      defaults to 0 unless the RPC's cycle_idx is set — REST has no such field).
@@ -91,7 +107,7 @@ message FeatureStat {
 
 message PredictionInfo {
   double soh_percent = 1;
-  double soh_confidence = 2;               // MC Dropout uncertainty [0,1]
+  double soh_confidence = 2;               // MC Dropout, exp(-soh_std/5) in (0,1]
   double soh_std = 3;                      // MC Dropout std in % SOH
   int32 rul_cycles_estimate = 4;
   double degradation_rate_per_cycle = 5;
@@ -293,4 +309,44 @@ message HealthResponse {
   // LFP readiness before shipping traffic.
   bool lfp_loaded = 6;
   string lfp_model_version = 7;
+}
+
+// ── VerifyTicket ───────────────────────────────────────────────────────
+// Chấm điểm ticket thủ công (thật/rác) + dò trùng mô tả với ticket đang mở.
+// Human-in-the-loop: AI chỉ gắn nhãn + lý do, Manager quyết định cuối.
+
+// Snapshot sensor pin tại thời điểm phát hiện — để AI đối chiếu mô tả với thực tế.
+message TicketSensorSnapshot {
+  double soh_percent = 1;
+  double voltage = 2;
+  double current = 3;
+  double temperature = 4;
+  double soc_percent = 5;
+  bool has_active_alert = 6;   // pin có alert đang mở tại thời điểm đó
+}
+
+// 1 ticket ứng viên để so trùng (đang mở, cùng pin).
+message DuplicateCandidate {
+  string ticket_id = 1;
+  string description = 2;
+  int32 category = 3;          // TicketCategoryEnum (khớp BE) — cùng category → nghi trùng cao hơn
+}
+
+message VerifyTicketRequest {
+  string title = 1;
+  string description = 2;
+  string detected_at = 3;                        // ISO UTC, optional ("" nếu không có)
+  int32 category = 4;                             // TicketCategoryEnum ticket mới
+  TicketSensorSnapshot sensor_snapshot = 5;      // optional
+  bool has_sensor_snapshot = 6;                  // false → bỏ qua đối chiếu sensor
+  repeated DuplicateCandidate candidates = 7;    // ticket đang mở cùng pin để so trùng
+}
+
+message VerifyTicketResponse {
+  string verdict = 1;              // "legitimate" | "suspicious"
+  double score = 2;                // [0..1] — độ hợp lệ (1 = chắc chắn thật)
+  string reason = 3;               // lý do (tiếng Việt, cho Manager đọc)
+  string duplicate_of_ticket_id = 4;  // "" nếu không nghi trùng
+  double duplicate_score = 5;      // [0..1] độ tương đồng cao nhất với candidate
+  string duplicate_reason = 6;     // lý do nghi trùng
 }
