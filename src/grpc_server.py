@@ -20,10 +20,10 @@ from src.core import model_loader
 from src.core.config import LFP_MODEL_VERSION, MODEL_VERSION
 from src.grpc_gen import ai_service_pb2, ai_service_pb2_grpc
 from src.schemas.predict import PredictRequest
-from src.schemas.prescribe import PrescribeRequest
+from src.schemas.prescribe import PrescribeRequest, PrescriptionFeedbackRequest
 from src.schemas.verify import VerifyTicketRequest
 from src.services.inference import run_inference
-from src.services.prescription import run_prescription
+from src.services.prescription import run_prescription, submit_prescription_feedback
 from src.services.verify import run_verify
 
 logger = logging.getLogger(__name__)
@@ -369,6 +369,32 @@ class AiServiceServicer(ai_service_pb2_grpc.AiServiceServicer):
             duplicate_score=result.duplicate_score,
             duplicate_reason=result.duplicate_reason,
         )
+
+    def SubmitFeedback(self, request, context):
+        """Ghi phản hồi KTV cho 1 prescription. Mirror POST /prescribe/feedback."""
+        req = _validate(
+            PrescriptionFeedbackRequest,
+            {
+                "prescription_id": request.prescription_id,
+                "status": request.status,
+                # proto không có optional cho repeated/string: rỗng ⇒ None để khớp
+                # đúng payload REST (schema cho phép None, không cho phép [] rỗng
+                # mang nghĩa "đã sửa nhưng không còn bước nào").
+                "edited_steps": list(request.edited_steps) or None,
+                "note": request.note or None,
+            },
+            context,
+        )
+        ok = submit_prescription_feedback(
+            prescription_id = req.prescription_id,
+            status          = req.status,
+            edited_steps    = req.edited_steps,
+            note            = req.note,
+        )
+        if not ok:
+            # REST trả 404 ở đúng nhánh này — giữ parity bằng NOT_FOUND.
+            context.abort(grpc.StatusCode.NOT_FOUND, "prescription_id not found")
+        return ai_service_pb2.SubmitFeedbackResponse(success=True)
 
 
 def _validate(schema_cls, payload: dict, context):

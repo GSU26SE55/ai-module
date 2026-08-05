@@ -1106,3 +1106,98 @@ deterministic, eval mode, không MC Dropout). Chỉ đổi lịch thực thi, kh
 | Prescribe NASA p95 | 78.2ms | **52.4ms** |
 
 `pytest tests/ -q`: 555 passed. `scripts/e2e_full_test.py`: TẤT CẢ PASS.
+
+---
+
+## Đợt 2026-08-05 — 5 việc sau khi chốt thông số pin thật (LFP 24V/8S/30Ah)
+
+| # | Việc | Trạng thái |
+|---|------|-----------|
+| 1 | Cụm nhiệt độ train theo chemistry | ✅ |
+| 2 | RPC `SubmitFeedback` | ✅ |
+| 3 | Dải điện áp per-cell theo chemistry | ✅ |
+| 4 | Sửa ví dụ 4S/12.8V → 8S/24V/30Ah | ✅ |
+| 5 | Đính chính comment issue backend #1005 | ✅ |
+
+### 1. Cụm nhiệt độ train theo chemistry (bug #14)
+
+`TEMPERATURE_TRAIN_CLUSTERS = (4, 24, 44)` là setpoint buồng của NASA, nhưng bộ LFP
+train trên Severson — **toàn bộ dataset chạy ở 30 °C**. Dùng cụm NASA cho LFP:
+
+```
+30 °C -> khoảng cách 6.0 -> OOD    (thực tế đúng tâm miền train)
+35 °C -> khoảng cách 9.0 -> OOD
+```
+
+Nghĩa là gần như **mọi đọc số ngoài trời của pin mặt trời đều bị gắn cờ ngoài miền**.
+
+Sửa: `LFP_TEMPERATURE_TRAIN_CLUSTERS = (30.0,)`, `temperature_domain_distance()` nhận
+tham số `clusters`, `_Artifacts` mang theo `temp_clusters`. Đo lại sau khi sửa:
+
+| Nhiệt độ | LFP (mới) | Không khai chemistry (NASA, không đổi) |
+|---|---|---|
+| 25 °C | 5.0 — OK | — |
+| 30 °C | **0.0 — OK** | 6.0 — OOD |
+| 35 °C | **5.0 — OK** | 9.0 — OOD |
+| 40 °C | 10.0 — OOD | — |
+
+Test: `tests/test_models.py::TestTemperatureDomainClusters` (4 ca, gồm 1 ca chốt đường
+NASA không hồi quy).
+
+### 3. Dải điện áp per-cell theo chemistry
+
+Dải chung `[2.0, 4.5]` phải đủ rộng cho NMC sạc đầy 4.2 V ⇒ quá lỏng với LFP
+(cell LFP tối đa vật lý 3.65 V). Thêm `VOLTAGE_CELL_RANGE_BY_CHEMISTRY = {"LFP": (2.0, 3.8)}`.
+
+Đo trên pack 8S ở 26.4 V:
+
+| `n_series` BE gửi | per-cell | trước | sau |
+|---|---|---|---|
+| 6 | 4.40 V | lọt | **chặn** |
+| 7 | 3.77 V | lọt | lọt |
+| 8 ✅ | 3.30 V | lọt | lọt (đúng) |
+| 10 | 2.64 V | lọt | lọt |
+
+Chỉ chặn được chiều "chia thiếu". Chiều "chia thừa" ra 2.6–2.9 V là điện áp xả sâu hợp
+lệ — không thể phân biệt từ 1 cửa sổ. Cách chắc chắn duy nhất: đối chiếu
+`evidence.feature_summary.voltage.mean ≈ 3.2–3.3 V` một lần lúc tích hợp.
+Đã ghi ca này thành test `test_n_series_too_high_still_slips_through` để giới hạn không
+bị quên.
+
+### 2. RPC `SubmitFeedback`
+
+Proto chỉ **thêm** (RPC mới + 2 message mới, không đụng field number cũ). Servicer dùng
+chung `submit_prescription_feedback()` với REST, validate bằng chính
+`PrescriptionFeedbackRequest`. Parity: id sai → `NOT_FOUND` (REST 404), status sai →
+`INVALID_ARGUMENT` (REST 422). Tài liệu BE: `docs/grpc-integration-be.md` §8.
+
+Bẫy đã xử: proto không có `optional` cho `repeated`/`string`, nên rỗng phải chuyển thành
+`None` mới khớp payload REST bỏ trống field.
+
+### 4. Ví dụ 8S/24V/30Ah
+
+`scripts/e2e_full_test.py` + `docs/be-huong-dan-tich-hop.md`: 12.8 V/4S → 25.6 V/8S,
+`capacity_ah` 2.5 → 30.0, dòng −5 A → −30 A (1C thật của pack 30 Ah).
+Thêm cảnh báo trần dòng 75 A vào doc BE.
+
+Đồng thời sửa 2 chỗ trong test cũ:
+- Fixture `_LFP_PACK_READINGS` sinh 4.1 V/cell (dạng NMC) — dải LFP mới chặn đúng, sửa
+  fixture sinh thẳng 3.20–3.35 V/cell.
+- Mục 1b (khảo sát độ nhạy) ghi tiêu đề "không tính FAIL" nhưng code vẫn append vào
+  `failures` — sửa thành cảnh báo.
+
+### Kết quả đo lại
+
+```
+pytest: 576 passed, coverage 92%
+ruff  : 5 lỗi (E402 có sẵn trong inference.py) — không phát sinh lỗi mới
+e2e   : TAT CA PASS
+        Predict   LFP p95 = 82.1ms   (SLA 100ms)
+        Prescribe LFP p95 = 82.2ms
+```
+
+### Còn chờ người khác
+
+- **#67** — cần dump telemetry thật (DB có 120.770 reading), không đóng bằng dữ liệu giả
+- **Chu kỳ lấy mẫu** — phải ≤ 50 s/dòng; model chỉ từng thấy tối đa 1454 s mỗi cửa sổ
+- **`CURRENT_RANGE`** — tải đỉnh có vượt 75 A không? BMS JK rated 100–200 A, chưa quyết

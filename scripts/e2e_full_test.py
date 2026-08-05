@@ -81,8 +81,8 @@ def to_proto(rows) -> list:
     return [pb.Reading(values=r) for r in rows]
 
 
-LFP_PACK = pb.PackConfig(n_series=4, chemistry="LFP", capacity_ah=2.5)
-NMC_PACK = pb.PackConfig(n_series=4, chemistry="NMC", capacity_ah=2.5)
+LFP_PACK = pb.PackConfig(n_series=8, chemistry="LFP", capacity_ah=30.0)
+NMC_PACK = pb.PackConfig(n_series=8, chemistry="NMC", capacity_ah=30.0)
 
 # ---------------------------------------------------------------------------
 # Ma trận kịch bản hành vi
@@ -99,12 +99,13 @@ def behaviour_cases():
     cell_healthy = window(4.05, 3.85, -2.0, cycle=20, soc_start=95.0)
     cell_eol = window(3.30, 2.85, -2.0, cycle=190, soc_start=40.0)
 
-    # --- pack LFP 4S: điện áp PACK (~4× per-cell), dòng pack, capacity thật ---
+    # --- pack LFP 8S/24V/30Ah (pin thật của dự án): điện áp PACK (~8× per-cell),
+    #     dòng pack (-30 A = 1C), capacity thật ---
     # 3.30 V/cell nam trong vung model bao hoa o 100% (raw ~102, bi clip). Chon
     # 3.20 va 3.05 V/cell de hai kich ban tach nhau that su — neu khong, test
     # "khoe" vs "mon" deu ra 100.00% va khong kiem duoc gi.
-    lfp_healthy = window(12.80, 12.68, -5.0, cycle=300, soc_start=90.0, capacity_ah=2.5)
-    lfp_worn = window(12.20, 12.08, -5.0, cycle=900, soc_start=80.0, capacity_ah=2.5)
+    lfp_healthy = window(25.60, 25.36, -30.0, cycle=300, soc_start=90.0, capacity_ah=30.0)
+    lfp_worn = window(24.40, 24.16, -30.0, cycle=900, soc_start=80.0, capacity_ah=30.0)
 
     return [
         (
@@ -121,18 +122,18 @@ def behaviour_cases():
                               f"SOH phai thap hon ca khoe, nhan {r.prediction.soh_percent:.2f}"),
         ),
         (
-            "pack LFP 4S khoe",
+            "pack LFP 8S khoe",
             lfp_healthy, LFP_PACK,
             lambda r: _expect(r.metadata.model_version == "2.0-lfp",
                               f"phai dung model LFP, nhan {r.metadata.model_version}")
             or _expect(r.metadata.chemistry == "LFP", "metadata.chemistry phai la LFP")
-            or _expect(r.metadata.n_series == 4, "n_series phai = 4")
+            or _expect(r.metadata.n_series == 8, "n_series phai = 8")
             # feature_summary la gia tri PER-CELL sau khi chia n_series
             or _expect(2.0 <= r.evidence.feature_summary["voltage"].mean <= 4.5,
                        "feature_summary.voltage phai la per-cell trong [2.0, 4.5]"),
         ),
         (
-            "pack LFP 4S da dung nhieu",
+            "pack LFP 8S da dung nhieu",
             lfp_worn, LFP_PACK,
             lambda r: _expect(r.metadata.model_version == "2.0-lfp", "phai dung model LFP")
             or _expect(r.prediction.soh_percent < 99.0,
@@ -140,7 +141,7 @@ def behaviour_cases():
                        "(dau hieu model bao hoa hoac input ngoai phan bo)"),
         ),
         (
-            "pack 4S NHUNG khai NMC -> dung artifact NASA",
+            "pack 8S NHUNG khai NMC -> dung artifact NASA",
             lfp_healthy, NMC_PACK,
             lambda r: _expect(r.metadata.model_version == "1.6",
                               f"chemistry=NMC phai dung NASA, nhan {r.metadata.model_version}"),
@@ -149,7 +150,7 @@ def behaviour_cases():
 
 
 def error_cases():
-    good = window(13.30, 13.16, -5.0, capacity_ah=2.5)
+    good = window(26.60, 26.32, -30.0, capacity_ah=30.0)
     short = good[:20]
     nan_rows = [r[:] for r in good]
     nan_rows[3][0] = float("nan")
@@ -160,7 +161,7 @@ def error_cases():
         # LFP + payload 4 cot: guard soc_mode. Hien tai map thanh INTERNAL —
         # xem docs/be-huong-dan-tich-hop.md muc 7c (lech contract da biet).
         ("LFP + payload 4 cot (thieu soc that)",
-         window(13.30, 13.16, -5.0, capacity_ah=2.5, n_cols=4), LFP_PACK, None),
+         window(26.60, 26.32, -30.0, capacity_ah=30.0, n_cols=4), LFP_PACK, None),
     ]
 
 
@@ -246,12 +247,12 @@ def main() -> int:
     print("=" * 78)
     print("  Quet dien ap, SOC di kem NHAT QUAN (xa sau -> ap thap + SOC thap):")
     for label, pack in (("LFP ", LFP_PACK),
-                        ("NASA", pb.PackConfig(n_series=4, capacity_ah=2.5))):
+                        ("NASA", pb.PackConfig(n_series=8, capacity_ah=30.0))):
         sohs = []
-        # Quet RONG hon: model LFP bao hoa o 100% khi V/cell >= 3.25 (13.0 V pack),
+        # Quet RONG hon: model LFP bao hoa o 100% khi V/cell >= 3.25 (26.0 V pack 8S),
         # nen dai hep chi nam trong vung do se cho spread ~0 va bao FAIL gia.
-        for vp, soc in ((13.4, 95.0), (12.8, 75.0), (12.4, 55.0), (11.8, 35.0), (11.2, 15.0)):
-            rows = window(vp, vp - 0.12, -5.0, cycle=800, soc_start=soc, capacity_ah=2.5)
+        for vp, soc in ((26.8, 95.0), (25.6, 75.0), (24.8, 55.0), (23.6, 35.0), (22.4, 15.0)):
+            rows = window(vp, vp - 0.12, -30.0, cycle=800, soc_start=soc, capacity_ah=30.0)
             req = pb.PredictRequest(battery_id="S", readings=to_proto(rows))
             req.pack_config.CopyFrom(pack)
             sohs.append(stub.Predict(req).prediction.soh_percent)
@@ -259,13 +260,16 @@ def main() -> int:
         print(f"    {label} " + " -> ".join(f"{v:5.1f}%" for v in sohs)
               + f"   (spread {spread:.1f} diem)")
         if spread < 1.0:
-            failures.append(f"do nhay {label.strip()}: spread {spread:.2f} diem "
-                            "— model gan nhu tra hang so, kiem tra artifact")
+            # CANH BAO, khong FAIL — muc 1b la bao cao tinh chat model (xem ghi chu
+            # dau muc). Truoc day dong nay van append vao failures nen suite bao
+            # FAIL du tieu de ghi "khong tinh FAIL".
+            print(f"    CANH BAO: {label.strip()} gan nhu tra hang so trong dai quet "
+                  "nay — SOH bi chi phoi boi cycle_count chu khong phai dien ap.")
 
     print("\n  Giu nguyen dien ap+SOC, chi doi cycle_count (LFP):")
     row = []
     for cyc in (50, 500, 1400, 2200):
-        rows = window(12.2, 12.08, -5.0, cycle=cyc, soc_start=80.0, capacity_ah=2.5)
+        rows = window(24.4, 24.16, -30.0, cycle=cyc, soc_start=80.0, capacity_ah=30.0)
         req = pb.PredictRequest(battery_id="S", readings=to_proto(rows))
         req.pack_config.CopyFrom(LFP_PACK)
         row.append((cyc, stub.Predict(req).prediction.soh_percent))
@@ -280,11 +284,11 @@ def main() -> int:
     print("=" * 78)
     print("2. HANH VI — Prescribe (duong BE nen dung)")
     print("=" * 78)
-    lfp_rows = window(13.30, 13.16, -5.0, cycle=300, soc_start=90.0, capacity_ah=2.5)
+    lfp_rows = window(26.60, 26.32, -30.0, cycle=300, soc_start=90.0, capacity_ah=30.0)
     p_lfp = pb.PrescribeRequest(battery_id="T", readings=to_proto(lfp_rows), enrich=False)
     p_lfp.pack_config.CopyFrom(LFP_PACK)
     p_nasa = pb.PrescribeRequest(battery_id="T2", readings=to_proto(lfp_rows), enrich=False)
-    p_nasa.pack_config.CopyFrom(pb.PackConfig(n_series=4))  # khong khai chemistry
+    p_nasa.pack_config.CopyFrom(pb.PackConfig(n_series=8, capacity_ah=30.0))  # khong khai chemistry
 
     r_lfp, r_nasa = stub.Prescribe(p_lfp), stub.Prescribe(p_nasa)
     print(f"  chemistry=LFP    SOH={r_lfp.prediction.soh_percent:6.2f}%  "
@@ -351,12 +355,12 @@ def main() -> int:
         # ~70-176ms. Chenh lech do la tang phuc vu, KHONG phai model.
         from src.services.inference import run_inference as _direct
         cell_rows = window(4.05, 3.85, -2.0, cycle=20, soc_start=95.0)
-        lfp_rows_d = window(12.80, 12.68, -5.0, cycle=300, soc_start=90.0, capacity_ah=2.5)
+        lfp_rows_d = window(25.60, 25.36, -30.0, cycle=300, soc_start=90.0, capacity_ah=30.0)
 
         jobs = [
             ("direct    NASA", lambda: _direct(cell_rows)),
-            ("direct    LFP ", lambda: _direct(lfp_rows_d, n_series=4,
-                                               chemistry="LFP", capacity_ah=2.5)),
+            ("direct    LFP ", lambda: _direct(lfp_rows_d, n_series=8,
+                                               chemistry="LFP", capacity_ah=30.0)),
             ("Predict   NASA", lambda: stub.Predict(nasa_pred)),
             ("Predict   LFP ", lambda: stub.Predict(lfp_pred)),
             ("Prescribe NASA", fresh_prescribe(p_nasa)),

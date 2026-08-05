@@ -232,3 +232,41 @@ POST /api/admin/tickets/{id:guid}/re-verify     [Authorize(Roles = "Manager")]
 
 Chỉ nhận ticket `Origin == ManualByCustomer` **và** status hiện tại là `Skipped`/`Pending`.
 → **Ticket auto-tạo từ alert KHÔNG re-verify được.**
+
+---
+
+## 8. `SubmitFeedback` — KTV phản hồi về prescription (GH-83)
+
+```protobuf
+rpc SubmitFeedback(SubmitFeedbackRequest) returns (SubmitFeedbackResponse);
+```
+
+Mirror của `POST /prescribe/feedback`. Gọi **sau khi kỹ thuật viên xử lý xong** một
+prescription mà AI đã trả.
+
+### Request
+
+| Field | Bắt buộc | Ghi chú |
+|---|---|---|
+| `prescription_id` | ✅ | lấy từ `PrescribeResponse.prescription_id` — chỉ có khi gọi `Prescribe` với `enrich = true` |
+| `status` | ✅ | đúng 1 trong 3: `"accepted"` / `"edited"` / `"rejected"`. Giá trị khác → `INVALID_ARGUMENT` |
+| `edited_steps` | — | các bước sau khi KTV sửa; để rỗng nếu `status != "edited"` |
+| `note` | — | ghi chú tự do, để `""` nếu không có |
+
+### Response
+
+`success = true`. Không có nhánh trả `false` — `prescription_id` không tồn tại thì RPC
+trả **`NOT_FOUND`** (tương ứng 404 bên REST), không phải `success = false`.
+
+### Vì sao nên gửi
+
+Prescription được đánh `"accepted"` sẽ thành **few-shot context** cho các ca tương tự
+sau này. Không gửi feedback thì AI không có đường học từ thực tế hiện trường — chất
+lượng prescription đứng yên ở mức rule + RAG ban đầu.
+
+### Lưu ý
+
+- `prescription_id` **rỗng** khi `enrich = false` (đường rule-only). Không có id thì
+  không gửi feedback được — đây là đánh đổi có chủ ý: đường rule-only tối ưu cho SLA
+  auto-ticket, không ghi lịch sử.
+- Idempotent theo `prescription_id`: gọi lại sẽ **ghi đè** feedback cũ, không cộng dồn.

@@ -26,6 +26,8 @@ service AiService {
   rpc PredictStream(stream PredictRequest) returns (stream PredictResponse);
   // Mirror of POST /verify-ticket — chấm điểm ticket thủ công thật/rác + dò trùng mô tả.
   rpc VerifyTicket(VerifyTicketRequest) returns (VerifyTicketResponse);
+  // Mirror of POST /prescribe/feedback — kỹ thuật viên phản hồi 1 prescription đã trả.
+  rpc SubmitFeedback(SubmitFeedbackRequest) returns (SubmitFeedbackResponse);
 }
 
 // ── Predict ────────────────────────────────────────────────────────────
@@ -349,4 +351,20 @@ message VerifyTicketResponse {
   string duplicate_of_ticket_id = 4;  // "" nếu không nghi trùng
   double duplicate_score = 5;      // [0..1] độ tương đồng cao nhất với candidate
   string duplicate_reason = 6;     // lý do nghi trùng
+}
+
+
+// ── SubmitFeedback (GH-83) ─────────────────────────────────────────────────
+// BE gọi sau khi kỹ thuật viên xử lý xong 1 prescription. Bản "accepted" được
+// dùng làm few-shot cho ca tương tự sau này, nên gửi feedback càng nhiều thì
+// prescription càng bám thực tế.
+message SubmitFeedbackRequest {
+  string prescription_id = 1;        // lấy từ PrescribeResponse.prescription_id
+  string status = 2;                 // "accepted" | "edited" | "rejected" — sai giá trị → INVALID_ARGUMENT
+  repeated string edited_steps = 3;  // các bước sau khi KTV sửa; rỗng nếu status != "edited"
+  string note = 4;                   // ghi chú tự do, "" nếu không có
+}
+
+message SubmitFeedbackResponse {
+  bool success = 1;                  // false không xảy ra — prescription_id sai thì trả NOT_FOUND
 }

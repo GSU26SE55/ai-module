@@ -386,3 +386,21 @@ class VerifyTicketResponse(_message.Message):
     duplicate_score: float
     duplicate_reason: str
     def __init__(self, verdict: _Optional[str] = ..., score: _Optional[float] = ..., reason: _Optional[str] = ..., duplicate_of_ticket_id: _Optional[str] = ..., duplicate_score: _Optional[float] = ..., duplicate_reason: _Optional[str] = ...) -> None: ...
+
+class SubmitFeedbackRequest(_message.Message):
+    __slots__ = ("prescription_id", "status", "edited_steps", "note")
+    PRESCRIPTION_ID_FIELD_NUMBER: _ClassVar[int]
+    STATUS_FIELD_NUMBER: _ClassVar[int]
+    EDITED_STEPS_FIELD_NUMBER: _ClassVar[int]
+    NOTE_FIELD_NUMBER: _ClassVar[int]
+    prescription_id: str
+    status: str
+    edited_steps: _containers.RepeatedScalarFieldContainer[str]
+    note: str
+    def __init__(self, prescription_id: _Optional[str] = ..., status: _Optional[str] = ..., edited_steps: _Optional[_Iterable[str]] = ..., note: _Optional[str] = ...) -> None: ...
+
+class SubmitFeedbackResponse(_message.Message):
+    __slots__ = ("success",)
+    SUCCESS_FIELD_NUMBER: _ClassVar[int]
+    success: bool
+    def __init__(self, success: _Optional[bool] = ...) -> None: ...

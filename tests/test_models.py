@@ -540,3 +540,44 @@ class TestTempOodWarning:
         # 9°C: distance == 5.0 == threshold, uses `>` so NOT flagged
         codes = [w["code"] for w in generate_warnings(self._raw(9.0), soh=95.0, classification="Normal")]
         assert "TEMP_OOD" not in codes
+
+
+class TestTemperatureDomainClusters:
+    """GH-67 — cụm nhiệt độ train khác nhau giữa 2 bộ artifact.
+
+    NASA chạy trong buồng 4/24/44 °C; Severson (bộ LFP) chạy TOÀN BỘ ở 30 °C.
+    Dùng nhầm cụm NASA cho LFP thì 30 °C ra khoảng cách 6 °C — vượt ngưỡng OOD,
+    nên gần như mọi đọc số ngoài trời của pin mặt trời đều bị gắn cờ sai.
+    """
+
+    def test_lfp_30c_is_in_domain(self):
+        from src.core.config import LFP_TEMPERATURE_TRAIN_CLUSTERS
+        from src.models.anomaly_detector import temperature_domain_distance
+
+        temps = np.full(30, 30.0)
+        assert temperature_domain_distance(temps, LFP_TEMPERATURE_TRAIN_CLUSTERS) == 0.0
+
+    def test_lfp_35c_closer_than_nasa_clusters(self):
+        """35 °C: LFP lệch 5 °C, còn cụm NASA lệch 9 °C (24 → 35)."""
+        from src.core.config import LFP_TEMPERATURE_TRAIN_CLUSTERS
+        from src.models.anomaly_detector import temperature_domain_distance
+
+        temps = np.full(30, 35.0)
+        assert temperature_domain_distance(temps, LFP_TEMPERATURE_TRAIN_CLUSTERS) == 5.0
+        assert temperature_domain_distance(temps) == 9.0
+
+    def test_default_stays_nasa_clusters(self):
+        """Không truyền clusters ⇒ giữ nguyên hành vi cũ (không hồi quy)."""
+        from src.models.anomaly_detector import temperature_domain_distance
+
+        assert temperature_domain_distance(np.full(30, 24.0)) == 0.0
+        assert temperature_domain_distance(np.full(30, 44.0)) == 0.0
+
+    def test_distance_is_worst_timestep(self):
+        """Lấy max — 1 timestep lệch xa đủ để cả cửa sổ bị coi là ngoài miền."""
+        from src.core.config import LFP_TEMPERATURE_TRAIN_CLUSTERS
+        from src.models.anomaly_detector import temperature_domain_distance
+
+        temps = np.full(30, 30.0)
+        temps[7] = 55.0
+        assert temperature_domain_distance(temps, LFP_TEMPERATURE_TRAIN_CLUSTERS) == 25.0

@@ -17,9 +17,11 @@ from src.core.config import (
     INPUT_FEATURES,
     LFP_CYCLE_COUNT_NORM,
     LFP_MODEL_VERSION,
+    LFP_TEMPERATURE_TRAIN_CLUSTERS,
     MODEL_VERSION,
     NOMINAL_CAPACITY_AH,
     TEMPERATURE_OOD_THRESHOLD,
+    TEMPERATURE_TRAIN_CLUSTERS,
     WINDOW_SIZE,
 )
 from src.features.extractor import (
@@ -53,10 +55,12 @@ class _Artifacts:
     """
 
     __slots__ = ("scaler", "feature_scaler", "soh_model", "iso_model",
-                 "cycle_count_norm", "artifact_set", "model_version", "soc_mode")
+                 "cycle_count_norm", "artifact_set", "model_version", "soc_mode",
+                 "temp_clusters")
 
     def __init__(self, scaler, feature_scaler, soh_model, iso_model,
-                 cycle_count_norm, artifact_set, model_version, soc_mode="window"):
+                 cycle_count_norm, artifact_set, model_version, soc_mode="window",
+                 temp_clusters=TEMPERATURE_TRAIN_CLUSTERS):
         self.scaler = scaler
         self.feature_scaler = feature_scaler
         self.soh_model = soh_model
@@ -65,6 +69,7 @@ class _Artifacts:
         self.artifact_set = artifact_set
         self.model_version = model_version
         self.soc_mode = soc_mode
+        self.temp_clusters = temp_clusters
 
 
 def _resolve_artifacts(chemistry: str | None) -> _Artifacts:
@@ -91,6 +96,9 @@ def _resolve_artifacts(chemistry: str | None) -> _Artifacts:
             model_loader.lfp_soh_model, model_loader.lfp_iso_model,
             LFP_CYCLE_COUNT_NORM, "LFP", LFP_MODEL_VERSION,
             model_loader.lfp_soc_mode,
+            # GH-67: Severson chạy toàn bộ ở 30 °C — dùng cụm NASA (4/24/44) sẽ
+            # gắn cờ OOD cho mọi reading 26–39 °C, tức gần như mọi pin solar.
+            LFP_TEMPERATURE_TRAIN_CLUSTERS,
         )
     return _Artifacts(
         model_loader.scaler, model_loader.feature_scaler,
@@ -362,7 +370,7 @@ def run_inference(
     # GH-91: distance from the window's temperature to the nearest NASA
     # training chamber setpoint (4/24/44°C) — also drives the TEMP_OOD
     # warning inside generate_warnings() above (same helper, same threshold).
-    temp_domain_dist = temperature_domain_distance(raw[:, 2])
+    temp_domain_dist = temperature_domain_distance(raw[:, 2], art.temp_clusters)
     risk = compute_risk_profile(
         health_stage=health_stage,
         anomaly_status=anomaly_status,

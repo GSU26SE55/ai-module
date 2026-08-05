@@ -48,11 +48,12 @@ def test_service_defines_expected_methods():
         "Health",
         "PredictStream",
         "VerifyTicket",
+        "SubmitFeedback",
     }
 
     stream = methods["PredictStream"]
     assert stream.client_streaming and stream.server_streaming
-    for name in ("Predict", "Prescribe", "Health", "VerifyTicket"):
+    for name in ("Predict", "Prescribe", "Health", "VerifyTicket", "SubmitFeedback"):
         assert not methods[name].client_streaming
         assert not methods[name].server_streaming
 

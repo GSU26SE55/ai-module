@@ -318,16 +318,21 @@ def get_recommended_action(classification: str, soh: float) -> str:
     return "MONITOR"
 
 
-def temperature_domain_distance(temps: np.ndarray) -> float:
+def temperature_domain_distance(
+    temps: np.ndarray, clusters: tuple[float, ...] | None = None
+) -> float:
     """GH-91: worst-case distance (°C) from any reading in the window to the
-    nearest NASA training chamber setpoint (4/24/44°C). The model never saw
-    temperatures between/beyond these 3 points, so a large distance means the
-    prediction is extrapolating even though the value passed the GH-66 flat
-    range guard. Uses max (not mean) so one anomalous reading in the window
-    isn't averaged away."""
-    distances = [
-        min(abs(float(t) - c) for c in TEMPERATURE_TRAIN_CLUSTERS) for t in temps
-    ]
+    nearest training chamber setpoint. The model never saw temperatures
+    between/beyond those points, so a large distance means the prediction is
+    extrapolating even though the value passed the GH-66 flat range guard.
+    Uses max (not mean) so one anomalous reading in the window isn't averaged away.
+
+    clusters defaults to the NASA setpoints (4/24/44 °C). GH-67: the LFP artifact
+    set must pass LFP_TEMPERATURE_TRAIN_CLUSTERS instead — Severson ran entirely at
+    30 °C, so scoring an LFP request against the NASA setpoints flags every normal
+    outdoor reading (26–39 °C) as out-of-distribution."""
+    setpoints = TEMPERATURE_TRAIN_CLUSTERS if clusters is None else clusters
+    distances = [min(abs(float(t) - c) for c in setpoints) for t in temps]
     return float(max(distances))
 
 

@@ -1003,12 +1003,20 @@ def test_prescribe_forwards_pack_config(servicer):
 
 # ── pack_config chemistry profile + capacity_ah C-rate (GH-67) ───────────
 
-# 4S LFP 50 Ah pack: voltage ×4 (≈3.5-4.1 V/cell after division — VALID_READINGS
-# is NMC-shaped; the point here is transport plumbing, not LFP realism),
-# current ×25 = same C-rate as the NASA 2 Ah cell.
+# 4S LFP 50 Ah pack: current ×25 = same C-rate as the NASA 2 Ah cell.
+# GH-67: điện áp phải nằm trong dải LFP thật (2.0-3.8 V/cell) — trước đây fixture
+# này lấy VALID_READINGS (dạng NMC, 3.5-4.1 V) nhân 4, ra 4.1 V/cell là mức bất
+# khả thi với LFP nên dải riêng theo chemistry chặn lại. Sinh thẳng per-cell
+# 3.20-3.35 V rồi nhân 4 cho ra điện áp pack.
+_lfp_rng = np.random.RandomState(42)
 _LFP_PACK_READINGS = [
     pb.Reading(
-        values=[r.values[0] * 4, r.values[1] * 25, r.values[2], r.values[3]]
+        values=[
+            (3.20 + 0.15 * _lfp_rng.rand()) * 4,  # pack V (4S)
+            r.values[1] * 25,
+            r.values[2],
+            r.values[3],
+        ]
     )
     for r in VALID_READINGS
 ]
@@ -1061,3 +1069,80 @@ def test_predict_high_current_without_capacity_parity_with_rest(
         )
     assert exc_info.value.code() == grpc.StatusCode.INVALID_ARGUMENT
     assert "capacity_ah" in exc_info.value.details()
+
+
+class TestSubmitFeedback:
+    """GH-83/GH-67 — SubmitFeedback RPC phải khớp POST /prescribe/feedback."""
+
+    KNOWN_ID = "11111111-1111-1111-1111-111111111111"
+
+    def _fake_store(self):
+        """Store giả — PrescriptionHistoryStore thật cần chromadb + sentence
+        transformers; ở tầng transport chỉ cần biết True/False đi đúng đường."""
+
+        class FakeStore:
+            def __init__(self):
+                self.calls = []
+
+            def update_feedback(self, prescription_id, status, edited_steps=None, note=None):
+                self.calls.append((prescription_id, status, edited_steps, note))
+                return prescription_id == TestSubmitFeedback.KNOWN_ID
+
+        return FakeStore()
+
+    def test_accepted_returns_success(self, grpc_stub):
+        store = self._fake_store()
+        with patch(
+            "src.services.prescription.orchestrator._get_history_store",
+            return_value=store,
+        ):
+            resp = grpc_stub.SubmitFeedback(
+                pb.SubmitFeedbackRequest(
+                    prescription_id=self.KNOWN_ID, status="accepted"
+                )
+            )
+        assert resp.success is True
+        assert store.calls == [(self.KNOWN_ID, "accepted", None, None)]
+
+    def test_edited_with_steps_and_note(self, grpc_stub):
+        store = self._fake_store()
+        with patch(
+            "src.services.prescription.orchestrator._get_history_store",
+            return_value=store,
+        ):
+            resp = grpc_stub.SubmitFeedback(
+                pb.SubmitFeedbackRequest(
+                    prescription_id=self.KNOWN_ID,
+                    status="edited",
+                    edited_steps=["Bước đã sửa."],
+                    note="KTV chỉnh lại",
+                )
+            )
+        assert resp.success is True
+        # proto không có optional: repeated/string rỗng phải thành None đúng như
+        # payload REST bỏ trống field, không phải [] / "".
+        assert store.calls == [
+            (self.KNOWN_ID, "edited", ["Bước đã sửa."], "KTV chỉnh lại")
+        ]
+
+    def test_unknown_id_maps_to_not_found(self, grpc_stub):
+        """REST trả 404 ở nhánh này — gRPC phải là NOT_FOUND, không phải INTERNAL."""
+        with pytest.raises(grpc.RpcError) as exc:
+            grpc_stub.SubmitFeedback(
+                pb.SubmitFeedbackRequest(
+                    prescription_id="00000000-0000-0000-0000-000000000000",
+                    status="accepted",
+                )
+            )
+        assert exc.value.code() == grpc.StatusCode.NOT_FOUND
+
+    def test_invalid_status_maps_to_invalid_argument(self, grpc_stub):
+        """REST trả 422 — cùng schema Pydantic nên gRPC phải là INVALID_ARGUMENT."""
+        with pytest.raises(grpc.RpcError) as exc:
+            grpc_stub.SubmitFeedback(
+                pb.SubmitFeedbackRequest(
+                    prescription_id="00000000-0000-0000-0000-000000000000",
+                    status="not-a-real-status",
+                )
+            )
+        assert exc.value.code() == grpc.StatusCode.INVALID_ARGUMENT

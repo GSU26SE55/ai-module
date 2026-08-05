@@ -74,13 +74,17 @@ which the model never saw. Send the 6-column payload ... with the battery's real
 ## 3. `pack_config` — khai báo pin của bạn là loại gì
 
 Model gốc được train trên **cell đơn 18650 NMC 2.0 Ah** (dataset NASA). Pin thật của dự án là
-**pack LFP 4S 12.8V**. `pack_config` là cầu nối giữa hai thứ đó.
+**pack LFP 8S 24V 30Ah** (pin thật của dự án). `pack_config` là cầu nối giữa hai thứ đó.
 
 ```protobuf
 PackConfig {
-  int32  n_series    = 1;   // số cell nối tiếp, vd 4
+  int32  n_series    = 1;   // số cell nối tiếp — pin dự án là 8 (24V / 3.2V)
   string chemistry   = 2;   // "LFP" | "NMC" | bỏ trống
-  double capacity_ah = 3;   // dung lượng thật của pack, vd 2.5
+  double capacity_ah = 3;   // dung lượng thật của pack — pin dự án là 30.0 (Ah)
+                            // ⚠️ Ah càng lớn thì trần dòng càng thấp: AI quy dòng về
+                            // C-rate (current × 2.0 / capacity_ah) rồi chặn ở ±5.
+                            // Với 30 Ah ⇒ dòng pack tối đa qua được là 75 A (2.5C).
+                            // Tải vượt 75 A sẽ bị 422 / INVALID_ARGUMENT, không có prediction.
 }
 ```
 
@@ -88,13 +92,13 @@ Mỗi field làm một việc **khác nhau**, không thay thế nhau được:
 
 | Field | AI làm gì với nó | Không gửi thì sao |
 |-------|------------------|-------------------|
-| `n_series` | Chia `voltage` ra per-cell **trước** mọi xử lý | Pack 12.8V bị coi là cell 12.8V → **reject 422** vì ngoài khoảng [2.0, 4.5] V |
+| `n_series` | Chia `voltage` ra per-cell **trước** mọi xử lý | Pack 25.6V bị coi là cell 25.6V → **reject 422** vì ngoài khoảng [2.0, 4.5] V |
 | `capacity_ah` | Quy `current` về C-rate tương đương cell 2 Ah | Dòng lớn của pack bị reject, hoặc bắn cảnh báo quá dòng giả |
 | `chemistry` | Chọn **ngưỡng cảnh báo điện áp** + **bộ model** | Dùng ngưỡng NMC cho pin LFP → cảnh báo giả liên tục, và **bỏ sót sạc quá áp thật** |
 
 ### `chemistry` quan trọng đến mức nào — số đo thật
 
-Cùng một payload pack LFP 4S, chỉ khác `chemistry`:
+Cùng một payload pack LFP 8S, chỉ khác `chemistry`:
 
 ```
 khong co chemistry   -> model 1.6      SOH = 87.72%   Degrading
@@ -238,8 +242,8 @@ nhưng request LFP sẽ fail thay vì bị chấm điểm sai. Kiểm tra field 
 
 **a) Quên `pack_config` khi gửi điện áp pack** → reject ngay, nhưng thông báo chỉ rõ cách sửa:
 
-> *"per-cell value 13.280 V outside allowed range [2.0, 4.5] V — if this is a multi-cell pack
-> (e.g. 12.8V ~ 4S LFP), send pack_config.n_series"*
+> *"per-cell value 25.600 V outside allowed range [2.0, 4.5] V — if this is a multi-cell pack
+> (e.g. 25.6V ~ 8S LFP), send pack_config.n_series"*
 
 **b) `evidence.feature_summary` là giá trị PER-CELL, không phải cái bạn gửi lên.** Nó đã bị chia
 cho `n_series` và quy C-rate rồi. Đừng hiểu nhầm là echo lại input.

@@ -27,6 +27,17 @@ WINDOW_STRIDE = 30
 # 422/INVALID_ARGUMENT (chặn silent garbage: 12V pack chưa quy đổi, cảm biến hỏng)
 # thay vì scaler transform ra ngoài [0,1] → SOH vô nghĩa với confidence bình thường.
 VOLTAGE_CELL_RANGE = (2.0, 4.5)  # V per-cell — check SAU khi chia pack_config.n_series (GH-65)
+# GH-67: dải chung 2.0–4.5 phải đủ rộng cho NMC (sạc đầy 4.2 V), nên với LFP nó quá
+# lỏng — cell LFP tối đa vật lý chỉ 3.65 V. Hệ quả đo được trên pack 8S/24V ở 26.4 V:
+# gửi nhầm n_series=6 ra 4.40 V/cell vẫn LỌT vì 4.40 < 4.5, dù giá trị đó bất khả thi
+# với LFP. Khai chemistry="LFP" thì dùng dải riêng bên dưới để chặn được ca đó.
+# LƯU Ý: chỉ chặn được chiều "chia thiếu" (n_series quá nhỏ → điện áp ảo cao). Chiều
+# "chia thừa" (n_series quá lớn → 2.6-2.9 V) KHÔNG chặn được vì đó là điện áp xả sâu
+# hợp lệ. Cách chắc chắn duy nhất là đối chiếu evidence.feature_summary.voltage.mean
+# một lần lúc tích hợp: LFP phải ra ~3.2-3.3 V.
+VOLTAGE_CELL_RANGE_BY_CHEMISTRY = {
+    "LFP": (2.0, 3.8),   # 2.5 cutoff .. 3.65 sạc đầy, cộng margin
+}
 CURRENT_RANGE = (-5.0, 5.0)  # A
 TEMPERATURE_RANGE = (-10.0, 60.0)  # °C
 SOC_RANGE = (0.0, 100.0)  # %
@@ -36,6 +47,11 @@ SOC_RANGE = (0.0, 100.0)  # %
 # the range guard above yet is silent extrapolation. Flag it instead of letting
 # it look in-distribution.
 TEMPERATURE_TRAIN_CLUSTERS = (4.0, 24.0, 44.0)  # °C — NASA chamber setpoints
+# GH-67: bộ LFP train trên Severson — TOÀN BỘ dataset chạy trong buồng 30 °C, nên
+# cụm nhiệt độ của nó khác hẳn 3 mốc NASA. Dùng nhầm cụm NASA cho request LFP làm
+# mọi giá trị 26–39 °C bị gắn cờ OOD sai (đo được: 30 °C → khoảng cách 6.0 > ngưỡng
+# 5.0), tức gần như MỌI request từ pin solar ngoài trời đều bị báo "ngoài phân bố".
+LFP_TEMPERATURE_TRAIN_CLUSTERS = (30.0,)  # °C — buồng duy nhất của Severson 2019
 TEMPERATURE_OOD_THRESHOLD = 5.0  # °C — max allowed distance to nearest cluster
 INPUT_FEATURES = 6  # model input dim = 4 base (BASE_FEATURES, API payload) + 2 derived (GH-54: cycle_count, soc_percent)
 CYCLE_COUNT_NORM = 200.0  # GH-54: chia cycle_idx cho hằng số này (cycle dài nhất quan sát ~197, B0033/34); KHÔNG clip >1

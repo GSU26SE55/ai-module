@@ -59,6 +59,11 @@ class AiServiceStub:
                 request_serializer=ai__service__pb2.VerifyTicketRequest.SerializeToString,
                 response_deserializer=ai__service__pb2.VerifyTicketResponse.FromString,
                 _registered_method=True)
+        self.SubmitFeedback = channel.unary_unary(
+                '/aimodule.v1.AiService/SubmitFeedback',
+                request_serializer=ai__service__pb2.SubmitFeedbackRequest.SerializeToString,
+                response_deserializer=ai__service__pb2.SubmitFeedbackResponse.FromString,
+                _registered_method=True)
 
 
 class AiServiceServicer:
@@ -99,6 +104,13 @@ class AiServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def SubmitFeedback(self, request, context):
+        """Mirror of POST /prescribe/feedback — kỹ thuật viên phản hồi 1 prescription đã trả.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_AiServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -126,6 +138,11 @@ def add_AiServiceServicer_to_server(servicer, server):
                     servicer.VerifyTicket,
                     request_deserializer=ai__service__pb2.VerifyTicketRequest.FromString,
                     response_serializer=ai__service__pb2.VerifyTicketResponse.SerializeToString,
+            ),
+            'SubmitFeedback': grpc.unary_unary_rpc_method_handler(
+                    servicer.SubmitFeedback,
+                    request_deserializer=ai__service__pb2.SubmitFeedbackRequest.FromString,
+                    response_serializer=ai__service__pb2.SubmitFeedbackResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -263,6 +280,33 @@ class AiService:
             '/aimodule.v1.AiService/VerifyTicket',
             ai__service__pb2.VerifyTicketRequest.SerializeToString,
             ai__service__pb2.VerifyTicketResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SubmitFeedback(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/aimodule.v1.AiService/SubmitFeedback',
+            ai__service__pb2.SubmitFeedbackRequest.SerializeToString,
+            ai__service__pb2.SubmitFeedbackResponse.FromString,
             options,
             channel_credentials,
             insecure,

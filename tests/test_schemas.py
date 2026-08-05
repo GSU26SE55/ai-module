@@ -182,3 +182,56 @@ def test_current_still_out_of_range_after_c_rate_rejected():
             readings=_window([12.8, -200.0, 25.0, 1.0]),
             pack_config={"n_series": 4, "capacity_ah": 50.0},
         )
+
+
+class TestLfpVoltageRange:
+    """GH-67 — dải per-cell riêng cho LFP.
+
+    Dải chung [2.0, 4.5] phải đủ rộng cho NMC (sạc đầy 4.2 V), nên với LFP nó
+    quá lỏng: pack 8S/24V ở 26.4 V mà khai nhầm n_series=6 ra 4.40 V/cell vẫn
+    lọt, dù cell LFP tối đa vật lý chỉ 3.65 V.
+    """
+
+    PACK_V = 26.4  # pin dự án: 8S LFP, đang sạc gần đầy
+
+    def _req(self, n_series, chemistry):
+        return PredictRequest(
+            battery_id="BAT-LFP",
+            readings=_window([self.PACK_V, -30.0, 30.0, 0.0, 800.0, 80.0]),
+            pack_config={
+                "n_series": n_series,
+                "chemistry": chemistry,
+                "capacity_ah": 30.0,
+            },
+        )
+
+    def test_correct_n_series_passes(self):
+        req = self._req(8, "LFP")
+        assert req.pack_config.n_series == 8
+
+    def test_n_series_too_low_now_rejected(self):
+        """26.4/6 = 4.40 V/cell — bất khả thi với LFP, dải chung không chặn được."""
+        with pytest.raises(ValidationError, match="n_series"):
+            self._req(6, "LFP")
+
+    def test_same_payload_passes_without_chemistry(self):
+        """Không khai chemistry ⇒ vẫn dải chung — chứng minh đúng dải LFP mới chặn."""
+        PredictRequest(
+            battery_id="BAT",
+            readings=_window([self.PACK_V, -30.0, 30.0, 0.0, 800.0, 80.0]),
+            pack_config={"n_series": 6, "capacity_ah": 30.0},
+        )
+
+    def test_nmc_keeps_the_wide_range(self):
+        """NMC sạc đầy 4.2 V/cell phải tiếp tục qua được — không hồi quy."""
+        PredictRequest(
+            battery_id="BAT-NMC",
+            readings=_window([4.2, -2.0, 30.0, 0.0, 800.0, 80.0]),
+            pack_config={"n_series": 1, "chemistry": "NMC"},
+        )
+
+    def test_n_series_too_high_still_slips_through(self):
+        """Ghi lại giới hạn đã biết: 26.4/10 = 2.64 V/cell là điện áp xả sâu hợp
+        lệ, không có cách nào chặn từ 1 cửa sổ. BE phải đối chiếu
+        evidence.feature_summary.voltage.mean ≈ 3.2-3.3 V một lần lúc tích hợp."""
+        self._req(10, "LFP")

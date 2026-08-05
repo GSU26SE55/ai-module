@@ -11,6 +11,7 @@ from src.core.config import (
     SOC_RANGE,
     TEMPERATURE_RANGE,
     VOLTAGE_CELL_RANGE,
+    VOLTAGE_CELL_RANGE_BY_CHEMISTRY,
     WINDOW_SIZE,
 )
 
@@ -162,7 +163,10 @@ class PredictRequest(BaseModel):
         n_series = self.pack_config.n_series if self.pack_config else 1
         capacity_ah = self.pack_config.capacity_ah if self.pack_config else None
         i_scale = NOMINAL_CAPACITY_AH / capacity_ah if capacity_ah else 1.0
-        v_lo, v_hi = VOLTAGE_CELL_RANGE
+        # GH-67: dải per-cell theo chemistry khi có khai báo — xem
+        # VOLTAGE_CELL_RANGE_BY_CHEMISTRY để biết vì sao dải chung quá lỏng cho LFP.
+        _chem = self.pack_config.chemistry if self.pack_config else None
+        v_lo, v_hi = VOLTAGE_CELL_RANGE_BY_CHEMISTRY.get(_chem, VOLTAGE_CELL_RANGE)
         i_lo, i_hi = CURRENT_RANGE
         t_lo, t_hi = TEMPERATURE_RANGE
         s_lo, s_hi = SOC_RANGE
