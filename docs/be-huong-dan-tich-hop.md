@@ -293,7 +293,7 @@ kết quả cũ.
 
 ---
 
-## 8. `VerifyTicket` — chấm điểm ticket khách tự tạo
+## 9. `VerifyTicket` — chấm điểm ticket khách tự tạo
 
 RPC thứ 5 (`rpc VerifyTicket`, REST `POST /verify-ticket/`), TicketService dùng để gắn nhãn
 ticket do khách tự khai là **hợp lệ** hay **đáng nghi**, đồng thời dò trùng với ticket đang mở.
@@ -307,7 +307,6 @@ Ba điều quan trọng nhất:
 
 Đặc tả đầy đủ (request/response từng field, công thức chấm điểm, mapping enum, bẫy
 `category` phải đồng bộ hai phía): xem [`grpc-integration-be.md` §7](grpc-integration-be.md).
-
 
 ---
 
@@ -353,3 +352,91 @@ kiểu này lại cho confidence *cao nhất*, nên BE **không thể lọc bằ
 
 > Khoảng trống **đơn lẻ** không bị chặn riêng: đã đo 15 mẫu + trống 1400 s +
 > 15 mẫu (cửa sổ dài 1429 s) vẫn ra SOH 100.00%. Chỉ **độ dài cửa sổ** mới quyết định.
+
+---
+
+## 10. `SubmitFeedback` — khép vòng học của AI
+
+RPC `SubmitFeedback` (REST tương đương `POST /prescribe/feedback`). Kỹ thuật viên nói lại
+prescription vừa nhận là **đúng / phải sửa / sai**, AI dùng các ca `accepted` làm few-shot
+context cho những ca tương tự sau này.
+
+```
+prescription_id  ← lấy từ PrescribeResponse.prescription_id
+status           ← "accepted" | "edited" | "rejected"   (giá trị khác → INVALID_ARGUMENT)
+edited_steps     ← các bước sau khi KTV sửa; để rỗng nếu status != "edited"
+note             ← ghi chú tự do, "" nếu không có
+```
+
+**Bốn điểm dễ vấp:**
+
+1. **`prescription_id` chỉ có khi `enrich=true`.** Đường rule-based (`enrich=false`) không
+   sinh gì để học nên trả `""`. BE phải coi `""` là "không có gì để phản hồi", đừng gửi lên.
+2. **`prescription_id` KHÔNG mất khi LLM fallback.** Chỉ cần `enrich=true` là AI đã ghi bản
+   ghi lịch sử, kể cả khi không có API key và prescription cuối là rule-based. Nên vòng phản
+   hồi vẫn chạy được ở môi trường chưa cắm LLM.
+3. **`prescription_id` sai/hết hạn → `NOT_FOUND`, KHÔNG phải lỗi hạ tầng.** Retry vô ích.
+   Phân biệt với `UNAVAILABLE` (AI sập — cái này mới đáng retry).
+4. **`success=false` không bao giờ xảy ra.** Thất bại luôn đi bằng status code, nên đừng viết
+   nhánh xử lý `success == false`; nó là code chết.
+
+> Trước GH-778, cả hai client Battery đều **bỏ** `prescription_id` khi map response ⇒ id chết
+> ngay tại ranh giới bridge và vòng học không bao giờ khép lại. Nếu thêm client mới, nhớ
+> mang field này qua.
+
+---
+
+## 11. `PredictLong` — SOH từ chuỗi dài (GH-10)
+
+RPC `PredictLong` (REST `POST /predict/long`). Nhận **31..4096** timestep thay vì đúng 30.
+
+**Khác `Predict` ở ba điểm, đọc kỹ trước khi dùng:**
+
+| | `Predict` | `PredictLong` |
+|---|---|---|
+| Độ dài | đúng 30 | 31..4096 |
+| MC-dropout | có → `soh_confidence`, `soh_std`, `health_stage` | **không có** |
+| IsolationForest | có → `anomaly`, `risk`, `warnings` | **không có** |
+| Artifact | `MODEL_VERSION` | `long_model_version` (khác hẳn) |
+
+Bỏ anomaly là **có chủ ý**: IsolationForest được fit trên phân bố feature của window=30;
+chấm một chuỗi 4096 bước bằng nó là ngoài phân bố — ra một con số trông hợp lệ nhưng vô nghĩa.
+
+**Dùng cho:** biểu đồ/phân tích lịch sử dài.
+**KHÔNG dùng cho:** luồng tạo ticket — luồng đó vẫn phải là `Prescribe` (xem §1).
+
+Chỉ cần 4 cột `[voltage, current, temperature, time]`; `cycle_count`/`soc_percent` gửi thừa
+sẽ bị bỏ qua (model long tự sinh IC-curve + discharge-progress), nên **đường này không dính
+bẫy `soc_mode`** ở §12.
+
+`pack_config` vẫn áp dụng y hệt `Predict`: `n_series` chia điện áp, `capacity_ah` quy đổi
+C-rate. Riêng `chemistry` **không** chọn artifact ở đường này — model long chỉ có một bộ (NASA).
+
+> **`long_loaded=false` không phải lỗi.** Model long nạp **lười** ở lần gọi đầu tiên, nên
+> `Health` trả `false` nghĩa là "chưa ai gọi", không phải "thiếu artifact".
+
+---
+
+## 12. `soc_mode` — đọc từ `Health`, ĐỪNG hardcode theo chemistry
+
+`Health` trả thêm hai field:
+
+```
+soc_mode      ← của bộ mặc định (NASA/NMC):  "window" | "cycle" | "unknown"
+lfp_soc_mode  ← của bộ LFP:  "" (chưa nạp) | "window" | "cycle" | "unknown"
+```
+
+Ý nghĩa:
+
+| Giá trị | Nghĩa là caller phải gửi `soc_percent` kiểu nào |
+|---|---|
+| `"cycle"` | SOC scope theo **cả chu kỳ xả**: ~100% đầu chu kỳ → ~9% cuối. Đây đúng là SOC thật của pin, nên số đo của BE dùng được thẳng. |
+| `"window"` | SOC **window-local**: ~100% ở **hàng đầu của chính window này**, giảm dần qua 30 hàng. Không chắc thì **gửi 4 cột** và để AI tự tính. |
+| `"unknown"` | Artifact khai một giá trị build này không hiểu → **đừng gửi 6 cột**, gửi 4 cột. |
+
+**Vì sao phải đọc từ server:** `soc_mode` là thuộc tính của **bộ artifact**, không phải của
+chemistry. Suy ra từ chemistry sẽ hỏng âm thầm đúng vào ngày một bộ được retrain với định
+nghĩa kia. Mà `soc_percent` sai thì `Predict` **không bao giờ báo lỗi** — nó chỉ dịch SOH đi.
+
+> Đo được: cùng seed cùng model, 4 cột ra SOH 67.33 · 6 cột (cycle=150, SOC=20) ra 40.46 —
+> **lệch 26.87 điểm**. Không có exception nào ở giữa.

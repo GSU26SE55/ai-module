@@ -28,6 +28,13 @@ service AiService {
   rpc VerifyTicket(VerifyTicketRequest) returns (VerifyTicketResponse);
   // Mirror of POST /prescribe/feedback — kỹ thuật viên phản hồi 1 prescription đã trả.
   rpc SubmitFeedback(SubmitFeedbackRequest) returns (SubmitFeedbackResponse);
+  // Mirror of POST /predict/long — SOH từ chuỗi dài (L ≤ 4096 timestep) bằng model
+  // long-sequence (attention pooling). KHÁC Predict: 1 forward pass, KHÔNG MC-dropout,
+  // KHÔNG anomaly (IsolationForest chỉ train trên phân bố feature của window=30).
+  rpc PredictLong(PredictLongRequest) returns (PredictLongResponse);
+  // Mirror of POST /predict/feedback — kỹ thuật viên chấm lại phân loại AI đã đưa ra.
+  rpc SubmitClassificationFeedback(ClassificationFeedbackRequest)
+      returns (ClassificationFeedbackResponse);
 }
 
 // ── Predict ────────────────────────────────────────────────────────────
@@ -311,6 +318,23 @@ message HealthResponse {
   // LFP readiness before shipping traffic.
   bool lfp_loaded = 6;
   string lfp_model_version = 7;
+
+  // GH-67 follow-up: soc_mode là thuộc tính của BỘ ARTIFACT, không phải của
+  // request — mỗi bộ được train với một ĐỊNH NGHĨA soc_percent khác nhau.
+  // Caller PHẢI đọc 2 field này để biết gửi soc_percent kiểu nào, thay vì
+  // hardcode theo chemistry (sẽ sai âm thầm nếu bộ NASA/NMC được retrain).
+  //   "window" → soc_percent phải là WINDOW-LOCAL: ~100% ở HÀNG ĐẦU của window
+  //              này, giảm dần qua 30 hàng. Không chắc thì gửi 4 cột.
+  //   "cycle"  → soc_percent phải scope theo CẢ CHU KỲ XẢ: ~100% đầu chu kỳ,
+  //              giảm tới ~9% cuối chu kỳ (đúng SOC thật của pin).
+  string soc_mode = 8;       // của bộ mặc định (NASA/NMC)
+  string lfp_soc_mode = 9;   // của bộ LFP; "" khi lfp_loaded=false
+
+  // Model long-sequence (L ≤ 4096) dùng cho rpc PredictLong. Nạp LƯỜI ở lần gọi
+  // đầu (không phải lúc boot), nên long_loaded=false chỉ nghĩa là "chưa ai gọi",
+  // KHÔNG phải "thiếu artifact".
+  bool long_loaded = 10;
+  string long_model_version = 11;
 }
 
 // ── VerifyTicket ───────────────────────────────────────────────────────
@@ -367,4 +391,65 @@ message SubmitFeedbackRequest {
 
 message SubmitFeedbackResponse {
   bool success = 1;                  // false không xảy ra — prescription_id sai thì trả NOT_FOUND
+}
+
+// ── PredictLong ────────────────────────────────────────────────────────
+// SOH từ chuỗi dài (GH-10). Khác Predict ở BA điểm, đọc kỹ trước khi dùng:
+//   1. Độ dài: 31..4096 timestep (Predict cố định đúng 30).
+//   2. KHÔNG có MC-dropout ⇒ KHÔNG có soh_confidence / soh_std / health_stage.
+//   3. KHÔNG có anomaly ⇒ KHÔNG có anomaly_score / risk / warnings.
+//      IsolationForest được train trên phân bố feature của window=30; chạy nó
+//      trên chuỗi dài là ngoài phân bố, nên đường này cố tình không trả.
+// Dùng cho phân tích/biểu đồ lịch sử dài, KHÔNG thay thế Predict ở hot-path
+// tạo ticket — luồng đó vẫn phải dùng Prescribe (xem §0 grpc-integration-be.md).
+message PredictLongRequest {
+  string battery_id = 1;
+  // 31..4096 hàng. Mỗi hàng 4 cột [voltage, current, temperature, time] hoặc
+  // legacy 3 cột. cycle_count/soc_percent KHÔNG dùng ở đường này (model long
+  // tự sinh IC-curve + discharge-progress từ 4 cột gốc) — gửi thừa cũng bị bỏ.
+  repeated Reading readings = 2;
+  // GH-65/67: chuẩn hoá pack→cell giống Predict. n_series chia voltage,
+  // capacity_ah quy đổi C-rate. chemistry KHÔNG chọn artifact ở đường này —
+  // model long chỉ có một bộ (NASA), gửi chemistry="LFP" cũng dùng bộ đó.
+  PackConfig pack_config = 3;
+}
+
+message PredictLongResponse {
+  string battery_id = 1;
+  double soh_percent = 2;      // [0, 100]
+  int32 seq_len = 3;           // số timestep thực nhận
+  string device = 4;           // "cpu" / "cuda" — model long chạy GPU nếu có
+  double inference_ms = 5;
+  string model_version = 6;    // LONG_MODEL_VERSION, khác MODEL_VERSION của Predict
+}
+
+// ── ClassificationFeedback ─────────────────────────────────────────────
+// F4 — khép vòng học cho nhánh anomaly. BE lưu staff_feedback từ lâu nhưng chưa có
+// đường gửi ngược về AI, nên AI không bao giờ biết mình phân loại sai.
+message ClassificationFeedbackRequest {
+  string battery_id = 1;
+  // Nhãn AI ĐÃ đưa ra: "Normal" | "Degrading" | "Failed". KHÔNG phải nhãn đúng —
+  // verdict mới nói AI đúng hay sai. Giá trị lạ → INVALID_ARGUMENT.
+  string classification = 2;
+  // "correct" | "false_positive" | "false_negative" — khớp StaffFeedbackEnum của BE
+  // (1/2/3). BE map số sang chuỗi trước khi gửi, để hợp đồng không phụ thuộc thứ tự
+  // enum của riêng bên nào.
+  string verdict = 3;
+  string model_version = 4;   // version đã sinh ra nhãn đó; "" nếu không rõ
+  string classified_at = 5;   // ISO UTC lúc phân loại; "" nếu không có
+  string note = 6;
+}
+
+message ClassificationFeedbackResponse {
+  bool success = 1;
+  int32 total = 2;
+  int32 correct = 3;
+  int32 false_positive = 4;
+  int32 false_negative = 5;
+  // ⚠️ has_precision/has_recall phân biệt "chưa ai chấm" với "đã chấm và sai hết".
+  // proto3 scalar không nullable nên 0.0 một mình là mơ hồ ở đúng chỗ nguy hiểm nhất.
+  double precision = 6;
+  bool has_precision = 7;
+  double recall = 8;
+  bool has_recall = 9;
 }
