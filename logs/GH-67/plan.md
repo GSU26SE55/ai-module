@@ -1279,3 +1279,155 @@ Fix cụm nhiệt độ theo chemistry hôm 05/08 mới sửa 1 trong 2 đườn
 `generate_warnings()` vẫn hardcode cụm NASA nên **mọi cửa sổ** của pin LFP thật
 (29–34.5 °C) đều dính cảnh báo `TEMP_OOD` sai kèm chuỗi `(4/24/44°C)`. Đã gộp cả
 hai đường về `TEMPERATURE_TRAIN_CLUSTERS_BY_CHEMISTRY` + 2 test khoá lại.
+
+---
+
+## Bug #16 — RUL dùng hằng số suy giảm của NASA cho pin LFP (2026-08-06)
+
+Phát hiện khi rà nốt các trường output trên dump IoT thật.
+
+### Triệu chứng
+
+Pin LFP 30Ah **mới tinh** (`cycle_count=0`, SOH 100%), 111/111 cửa sổ hợp lệ:
+
+```
+rul_cycles_estimate        = 133      <- hang so, giong het moi cua so
+degradation_rate_per_cycle = 0.15
+cycles_to_maintenance      = 100
+```
+
+Kiểm chứng: `(100 − 80) / 0.15 = 133`.
+
+### Nguyên nhân
+
+`DEGRADATION_RATE = 0.15  # NASA B0005-B0007 average` — tốc độ của cell NASA
+18650 NMC 2 Ah, chết sau ~150 chu kỳ. Pin LFP sống 2.000–6.000 chu kỳ ⇒ **lệch
+~17×**.
+
+Nặng hơn: tốc độ riêng từng pin chỉ tính khi `L >= _STEPS_PER_CYCLE`. Production
+dùng **window=30** nên **luôn** rơi vào hằng số dự phòng — `rul_cycles_estimate`
+không phải dự đoán, nó là hằng số.
+
+Cùng mẫu lỗi lần thứ 3: hằng số hiệu chỉnh theo NASA rò sang đường LFP
+(`TEMPERATURE_TRAIN_CLUSTERS`, `CYCLE_COUNT_NORM`, giờ là `DEGRADATION_RATE`).
+
+### Sửa
+
+`DEGRADATION_RATE_BY_CHEMISTRY = {"LFP": 0.0087}` — suy từ chính bộ Severson mà
+model LFP được train: EOL 80% ở ~2300 chu kỳ ⇒ `20 / 2300`. Chọn nguồn này để
+nhất quán với `LFP_CYCLE_COUNT_NORM = 2300`. User xác nhận **không có datasheet**
+cycle life của pack, nên Severson là nguồn tốt nhất hiện có.
+
+| | Trước | Sau |
+|---|---|---|
+| `degradation_rate_per_cycle` | 0.15 | 0.0087 |
+| `rul_cycles_estimate` | 133 | **2298** |
+| `cycles_to_maintenance` | 100 | **1724** |
+| Đường NASA (không khai chemistry) | 0.15 | 0.15 — không đổi |
+
+**Giới hạn còn lại đã ghi trong code:** `_VOLT_TO_SOH_RATE = 37.5` cũng suy từ
+NASA nên nhánh `L >= 500` vẫn lệch với LFP. Chưa sửa vì production luôn đi nhánh
+fallback; chỉ model long-seq chạm tới.
+
+---
+
+## Việc A1 — cờ `INSUFFICIENT_DISCHARGE` (2026-08-06)
+
+Cửa sổ không có mẫu xả nào (`current >= -0.1 A` ở mọi bước) ⇒ SOH chỉ là nội suy
+từ điện áp nghỉ. Đo trên dump thật (pin đứng im 17 giờ, 0 mẫu xả): mọi cửa sổ ra
+đúng 100.00%, kể cả khi ép điện áp xuống 23.9 V / SOC 8%.
+
+`severity = "info"` là **cố ý** — `compute_risk_profile()` chỉ leo thang với
+`warning`/`critical`. Đã đo lại toàn bộ 111 cửa sổ sau khi thêm cờ:
+
+```
+risk_level         : {'Low': 111}          <- KHONG bi day len
+recommended_action : {'MONITOR': 111}
+health_stage       : Healthy
+warnings           : {'info/INSUFFICIENT_DISCHARGE': 111}
+```
+
+Có test khoá: đổi severity thành `"warning"` sẽ biến mọi cửa sổ pin nằm im thành
+risk Medium/P3 → test đỏ.
+
+### Kết quả chung
+
+```
+pytest : 592 passed · ruff: không lỗi mới (5 E402 có sẵn)
+e2e    : TẤT CẢ PASS · Predict LFP p95 80.0ms · Prescribe LFP p95 86.1ms
+```
+
+Tài liệu BE: `docs/be-huong-dan-tich-hop.md` §10.
+
+---
+
+## Bug #17 — quy dòng về C-rate vẫn dùng cell NASA cho đường LFP (2026-08-06)
+
+Phát hiện khi user hỏi *"tại sao lại có cell NASA vì pin này là LFP"*.
+
+### Nguyên nhân
+
+`LFP_NOMINAL_CAPACITY_AH = 1.1` **chỉ được dùng lúc train** (`preprocess_lfp.py`).
+Lúc inference, `inference.py` quy dòng bằng `current × NOMINAL_CAPACITY_AH /
+capacity_ah` với `NOMINAL_CAPACITY_AH = 2.0` — **cell NASA** — cho CẢ HAI đường.
+
+Bằng chứng từ chính hai scaler (hai bộ có thang dòng khác hẳn nhau):
+
+```
+NASA: current fit tren [-4.039,  0.030] A / 2.0 Ah -> C-rate [-2.02, 0.02]
+LFP : current fit tren [-4.708, -0.100] A / 1.1 Ah -> C-rate [-4.28,-0.09]
+```
+
+Trên pack LFP 30 Ah: xả 1C (30 A) → quy thành 2.00 A → model đọc **1.82C**.
+Sai hệ số **1.82×** trên toàn bộ cột dòng.
+
+Đây là **lần thứ 4** cùng mẫu lỗi (sau `TEMPERATURE_TRAIN_CLUSTERS`,
+`CYCLE_COUNT_NORM`, `DEGRADATION_RATE`).
+
+### Sửa
+
+`NOMINAL_CAPACITY_AH_BY_CHEMISTRY = {"LFP": 1.1}`, gắn vào `_Artifacts.
+nominal_capacity_ah` (cùng kiểu với `temp_clusters`). Sửa cả **3 chỗ**:
+
+1. `inference.py` — phép nhân quy dòng
+2. `inference.py` — `compute_soc_percent()` ở nhánh SOC fallback. **Bắt buộc dùng
+   cùng một giá trị**: đẳng thức `∫|I×N/C|dt / N == ∫|I|dt / C_real` chỉ đúng khi
+   hai chỗ dùng chung N.
+3. `schemas/predict.py` — `i_scale` của range guard. Lệch với inference thì guard
+   chấp nhận thứ mà model không nhận đúng. Có test khoá 2 chỗ dùng chung hằng số.
+
+### Kết quả — trần dòng pack LFP 30 Ah
+
+| Dòng pack | C-rate | LFP (sau fix) | Không khai chemistry |
+|---|---|---|---|
+| 75 A | 2.50C | qua | qua |
+| **100 A** | 3.33C | **qua** | **chặn** |
+| 136 A | 4.53C | qua | chặn |
+| 140 A | 4.67C | chặn | chặn |
+
+Trần 136 A khớp dải train của LFP (tới 4.28C). **Giải quyết câu hỏi treo ở issue
+backend #1005** về BMS JK rated 100–200 A: tải 100 A trước bị từ chối thẳng.
+
+**Ảnh hưởng lên dữ liệu hiện tại = 0 điểm SOH** (dump IoT có 96.6% dòng = 0, không
+mẫu xả nào). Đây là thời điểm tốt nhất để sửa — có dữ liệu xả rồi mới sửa thì mọi
+số liệu cũ phải tính lại.
+
+### Rà soát đầy đủ hằng số gốc NASA — để không phải tìm từng cái
+
+| Hằng số | NASA | Trạng thái |
+|---|---|---|
+| `TEMPERATURE_TRAIN_CLUSTERS` | 4/24/44 °C | ✅ sửa → 30 °C |
+| `CYCLE_COUNT_NORM` | 200 | ✅ sửa → 2300 |
+| `DEGRADATION_RATE` | 0.15 | ✅ sửa → 0.0087 |
+| `VOLTAGE_CELL_RANGE` | [2.0, 4.5] V | ✅ sửa → [2.0, 3.8] V |
+| `NOMINAL_CAPACITY_AH` | 2.0 Ah | ✅ sửa → 1.1 Ah |
+| `_STEPS_PER_CYCLE` (285) · `_VOLT_TO_SOH_RATE` (37.5) | NASA | ⚠️ chỉ nhánh `L≥500`, production không chạm — đã ghi cảnh báo tại chỗ |
+| `EOL_SOH` = 80% | NASA | ✅ không cần — quy ước chung toàn ngành |
+| Ngưỡng an toàn áp/nhiệt | NMC | ✅ đã có hồ sơ LFP riêng |
+
+```
+pytest : 597 passed · coverage 92% · ruff không lỗi mới
+e2e    : TẤT CẢ PASS · Prescribe LFP p95 82.4ms
+```
+
+Tài liệu BE: `docs/be-huong-dan-tich-hop.md` §11.

@@ -10,6 +10,25 @@ from src.core.config import (
 # ── Thresholds ────────────────────────────────────────────────────────────────
 EOL_SOH = 80.0           # end-of-life threshold (NASA 18650 convention)
 DEGRADATION_RATE = 0.15  # % SOH lost per cycle (NASA B0005-B0007 average)
+# GH-67: 0.15 là tốc độ của cell NASA 18650 NMC 2 Ah — loại chết sau ~150 chu kỳ.
+# Dùng nguyên số đó cho pin LFP thì RUL sai ~17 lần: đo trên dump IoT thật
+# (LFP 8S/30Ah, cycle_count=0, SOH 100%) ra rul_cycles_estimate=133 và
+# cycles_to_maintenance=100 cho một quả pin MỚI — BE mà dùng để lên lịch bảo trì
+# thì gọi thợ sớm gấp 17 lần. Cùng mẫu lỗi với TEMPERATURE_TRAIN_CLUSTERS và
+# CYCLE_COUNT_NORM: hằng số hiệu chỉnh theo NASA rò sang đường LFP.
+#
+# 0.0087 suy từ chính bộ Severson mà model LFP được train: EOL 80% ở ~2300 chu kỳ
+# ⇒ 20 điểm SOH / 2300 = 0.0087 %/chu kỳ. Chọn nguồn này để nhất quán với
+# LFP_CYCLE_COUNT_NORM = 2300 trong config.
+# ⚠️ Nếu có datasheet cycle life của chính pack đang dùng thì số đó sát hơn
+# (Severson là cell 1.1 Ah bị ép sạc nhanh trong lab): thay = 20 / cycle_life.
+DEGRADATION_RATE_BY_CHEMISTRY = {
+    "LFP": 0.0087,
+}
+
+# GH-67: dưới ngưỡng này coi như không có dòng xả — cùng quy ước với
+# scripts/preprocess_lfp.py (discharge = current < -0.1 A).
+DISCHARGE_CURRENT_THRESHOLD = -0.1
 MAINTENANCE_SOH  = 85.0  # SOH threshold for scheduling maintenance
 
 # NASA 18650 empirical: voltage fade 0.004 V/cycle ≈ 0.15% SOH/cycle
@@ -227,6 +246,7 @@ def estimate_rul(soh: float, rate: float | None = None) -> int:
 def compute_degradation_metrics(
     raw: np.ndarray,
     soh_current: float,
+    chemistry: str | None = None,
 ) -> dict:
     """
     Estimate degradation rate and SOH trajectory from a multi-cycle window.
@@ -258,7 +278,9 @@ def compute_degradation_metrics(
     L = len(raw)
 
     if L < _STEPS_PER_CYCLE:
-        degradation_rate = DEGRADATION_RATE
+        # Đây là nhánh production (window=30) LUÔN đi vào, nên hằng số này chính
+        # là RUL mà BE nhận được — phải đúng theo chemistry.
+        degradation_rate = DEGRADATION_RATE_BY_CHEMISTRY.get(chemistry, DEGRADATION_RATE)
         trend = "stable"
     else:
         # Number of segments ≈ cycles covered by the window (min 2, max 10)
@@ -277,6 +299,9 @@ def compute_degradation_metrics(
         # Convert slope → %SOH / cycle
         cycles_per_seg   = seg / _STEPS_PER_CYCLE
         v_per_cycle      = slope / max(cycles_per_seg, 1e-6) # V / cycle
+        # ⚠️ GH-67: _VOLT_TO_SOH_RATE (37.5) cũng suy từ NASA 18650 nên nhánh này
+        # vẫn lệch với LFP. Chưa sửa vì production dùng window=30 (luôn vào nhánh
+        # fallback ở trên); chỉ model long-seq L>=500 mới chạm tới đây.
         degradation_rate = float(np.clip(abs(v_per_cycle) * _VOLT_TO_SOH_RATE, 0.0, 2.0))
 
         # Trend: compare first-half vs second-half fade rate
@@ -479,6 +504,28 @@ def generate_warnings(
         # GH-67: cụm phụ thuộc bộ artifact — NASA 4/24/44 °C, Severson (LFP) chỉ
         # 30 °C. Đây là đường sinh cờ THỨ HAI (đường kia là risk profile); cả hai
         # đọc chung TEMPERATURE_TRAIN_CLUSTERS_BY_CHEMISTRY để không lệch nhau.
+        # GH-67: SOH nghĩa là "xả ra được bao nhiêu Ah so với danh định", nên cửa
+        # sổ không có mẫu xả nào thì con số SOH không dựa trên phép đo nào — model
+        # chỉ đang nội suy từ điện áp nghỉ. Đo trên dump IoT thật (pin đứng im
+        # 17 giờ, 0 mẫu xả): mọi cửa sổ đều ra đúng 100.00%, kể cả khi ép điện áp
+        # xuống 23.9 V / SOC 8%. Con số 100% tình cờ đúng vì pin mới, không phải
+        # vì đo được.
+        #
+        # severity="info" là CỐ Ý: compute_risk_profile() chỉ leo thang với
+        # "warning"/"critical", nên cờ này KHÔNG đổi health_stage, anomaly_status
+        # hay recommended_action — pin vẫn được báo bình thường, không sinh ticket.
+        if raw.shape[1] >= 2 and float(raw[:, 1].min()) >= DISCHARGE_CURRENT_THRESHOLD:
+            warnings.append({
+                "code": "INSUFFICIENT_DISCHARGE",
+                "severity": "info",
+                "message": (
+                    "Cửa sổ không có mẫu xả nào (dòng chưa bao giờ dưới "
+                    f"{DISCHARGE_CURRENT_THRESHOLD} A) — SOH là ước lượng từ điện áp "
+                    "nghỉ, chưa dựa trên phép đo dung lượng. Đừng vẽ đồ thị suy "
+                    "giảm SOH từ các cửa sổ này."
+                ),
+            })
+
         clusters = TEMPERATURE_TRAIN_CLUSTERS_BY_CHEMISTRY.get(
             chemistry, TEMPERATURE_TRAIN_CLUSTERS
         )

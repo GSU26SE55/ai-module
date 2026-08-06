@@ -17,6 +17,7 @@ from src.core.config import (
     INPUT_FEATURES,
     LFP_CYCLE_COUNT_NORM,
     LFP_MODEL_VERSION,
+    LFP_NOMINAL_CAPACITY_AH,
     LFP_TEMPERATURE_TRAIN_CLUSTERS,
     MODEL_VERSION,
     NOMINAL_CAPACITY_AH,
@@ -56,11 +57,12 @@ class _Artifacts:
 
     __slots__ = ("scaler", "feature_scaler", "soh_model", "iso_model",
                  "cycle_count_norm", "artifact_set", "model_version", "soc_mode",
-                 "temp_clusters")
+                 "temp_clusters", "nominal_capacity_ah")
 
     def __init__(self, scaler, feature_scaler, soh_model, iso_model,
                  cycle_count_norm, artifact_set, model_version, soc_mode="window",
-                 temp_clusters=TEMPERATURE_TRAIN_CLUSTERS):
+                 temp_clusters=TEMPERATURE_TRAIN_CLUSTERS,
+                 nominal_capacity_ah=NOMINAL_CAPACITY_AH):
         self.scaler = scaler
         self.feature_scaler = feature_scaler
         self.soh_model = soh_model
@@ -70,6 +72,7 @@ class _Artifacts:
         self.model_version = model_version
         self.soc_mode = soc_mode
         self.temp_clusters = temp_clusters
+        self.nominal_capacity_ah = nominal_capacity_ah
 
 
 def _resolve_artifacts(chemistry: str | None) -> _Artifacts:
@@ -99,6 +102,9 @@ def _resolve_artifacts(chemistry: str | None) -> _Artifacts:
             # GH-67: Severson chạy toàn bộ ở 30 °C — dùng cụm NASA (4/24/44) sẽ
             # gắn cờ OOD cho mọi reading 26–39 °C, tức gần như mọi pin solar.
             LFP_TEMPERATURE_TRAIN_CLUSTERS,
+            # Severson là cell A123 1.1 Ah, không phải cell NASA 2.0 Ah — quy dòng
+            # bằng 2.0 làm model đọc xả 1C thành 1.82C.
+            LFP_NOMINAL_CAPACITY_AH,
         )
     return _Artifacts(
         model_loader.scaler, model_loader.feature_scaler,
@@ -206,7 +212,7 @@ def _append_derived_features(
             )
         current = raw[:, BASE_FEATURES.index("current")]
         time_col = raw[:, BASE_FEATURES.index("time")]
-        soc_norm = compute_soc_percent(current, time_col, NOMINAL_CAPACITY_AH) / 100.0
+        soc_norm = compute_soc_percent(current, time_col, art.nominal_capacity_ah) / 100.0
         cycle_count_norm = 0.0 if raw_cycle_count is None else raw_cycle_count / art.cycle_count_norm
 
     # GH-59: the divisor is fit to each dataset's observed max cycle count (NASA
@@ -291,11 +297,12 @@ def run_inference(
         # values; temperature stays as sent.
         raw[:, BASE_FEATURES.index("voltage")] /= n_series
     if capacity_ah:
-        # GH-67: pack current → NASA-2Ah C-rate equivalent, same in-place pattern
-        # as the voltage division above. This also keeps the Coulomb-counting SOC
-        # fallback in _append_derived_features() correct WITHOUT touching it:
-        # ∫|I×2/C|dt / 2Ah  ==  ∫|I|dt / C_real.
-        raw[:, BASE_FEATURES.index("current")] *= NOMINAL_CAPACITY_AH / capacity_ah
+        # GH-67: dòng pack → C-rate quy về cell danh định CỦA ĐÚNG BỘ ARTIFACT
+        # (NASA 2.0 Ah · LFP/Severson 1.1 Ah), cùng kiểu in-place với phép chia
+        # điện áp ở trên. Đẳng thức ∫|I×N/C|dt / N == ∫|I|dt / C_real đúng với mọi
+        # N, nên SOC Coulomb-counting fallback vẫn khớp — miễn là chỗ kia dùng
+        # CÙNG art.nominal_capacity_ah (đã sửa ở nhánh soc_norm phía trên).
+        raw[:, BASE_FEATURES.index("current")] *= art.nominal_capacity_ah / capacity_ah
     x = _align_features(raw, art)  # (30, F_scaler)
     x_scaled = art.scaler.transform(x)
     x_model = _append_derived_features(x_scaled, raw, cycle_idx, art)  # (30, 6) — GH-54
@@ -364,12 +371,12 @@ def run_inference(
     # Degradation metrics — battery-specific rate from multi-cycle window
     # More accurate when L >= 500 (spans multiple cycles); falls back to
     # population average (0.15%/cycle) for shorter windows.
-    degradation = compute_degradation_metrics(raw, soh)
+    degradation = compute_degradation_metrics(raw, soh, chemistry=chemistry)
     warnings = generate_warnings(raw, soh, classification, chemistry=chemistry)
     feature_summary = _compute_feature_summary(raw)
-    # GH-91: distance from the window's temperature to the nearest NASA
-    # training chamber setpoint (4/24/44°C) — also drives the TEMP_OOD
-    # warning inside generate_warnings() above (same helper, same threshold).
+    # GH-91: khoảng cách từ nhiệt độ cửa sổ tới cụm train GẦN NHẤT của đúng bộ
+    # artifact đang dùng (NASA 4/24/44 °C · LFP 30 °C) — cùng nguồn cụm với
+    # warning TEMP_OOD trong generate_warnings() ở trên (GH-67).
     temp_domain_dist = temperature_domain_distance(raw[:, 2], art.temp_clusters)
     risk = compute_risk_profile(
         health_stage=health_stage,

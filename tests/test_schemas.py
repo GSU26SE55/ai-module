@@ -308,3 +308,56 @@ def test_span_cap_stays_within_lfp_scaler_range():
     assert MAX_WINDOW_SPAN_S <= ceiling * 1.1, (
         f"MAX_WINDOW_SPAN_S={MAX_WINDOW_SPAN_S} vượt quá dải train {ceiling:.1f}s"
     )
+
+
+class TestCRateNominalByChemistry:
+    """GH-67 — quy dòng pack về C-rate phải dùng cell danh định của ĐÚNG bộ
+    artifact. Trước đây luôn dùng 2.0 Ah (cell NASA) kể cả cho LFP, trong khi bộ
+    LFP train trên cell Severson 1.1 Ah ⇒ xả 1C bị model đọc thành 1.82C.
+    """
+
+    def _accept(self, current, chemistry):
+        try:
+            PredictRequest(
+                battery_id="BAT-2026-REAL-001",
+                readings=_window([26.4, current, 30.0, 0.0, 800.0, 46.0]),
+                pack_config={"n_series": 8, "chemistry": chemistry, "capacity_ah": 30.0},
+            )
+            return True
+        except ValidationError:
+            return False
+
+    def test_1c_discharge_on_a_30ah_pack_passes(self):
+        assert self._accept(-30.0, "LFP")
+
+    def test_lfp_ceiling_is_about_136a_not_75a(self):
+        """5 A × 30/1.1 = 136 A. Trần cũ 75 A (5 × 30/2.0) chặn cả tải 100 A
+        trong khi BMS JK rated 100-200 A."""
+        assert self._accept(-136.0, "LFP")
+        assert not self._accept(-140.0, "LFP")
+
+    def test_nasa_path_keeps_the_old_75a_ceiling(self):
+        assert self._accept(-75.0, None)
+        assert not self._accept(-80.0, None)
+
+    def test_lfp_accepts_what_nasa_rejects_at_100a(self):
+        """Ca cụ thể đã đo: tải 100 A trên pack 30 Ah."""
+        assert self._accept(-100.0, "LFP")
+        assert not self._accept(-100.0, None)
+
+
+def test_schema_and_inference_use_the_same_nominal():
+    """Guard bên schema và phép nhân bên inference phải dùng CÙNG một cell danh
+    định — lệch nhau thì guard chấp nhận thứ mà model không nhận đúng."""
+    from unittest.mock import patch
+
+    from src.core import model_loader
+    from src.core.config import NOMINAL_CAPACITY_AH, NOMINAL_CAPACITY_AH_BY_CHEMISTRY
+    from src.services.inference import _resolve_artifacts
+
+    # _resolve_artifacts("LFP") từ chối chạy khi chưa nạp bộ LFP — test này chỉ
+    # kiểm hằng số đi đúng đường, không cần trọng số thật.
+    with patch.object(model_loader, "lfp_soh_model", object()):
+        for chemistry in ("LFP", None):
+            expected = NOMINAL_CAPACITY_AH_BY_CHEMISTRY.get(chemistry, NOMINAL_CAPACITY_AH)
+            assert _resolve_artifacts(chemistry).nominal_capacity_ah == expected

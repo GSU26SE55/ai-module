@@ -164,6 +164,18 @@ SEED = 42
 # model_loader.py/inference.py is a separate follow-up step, NOT part of this.
 LFP_MODEL_VERSION = "2.0-lfp"
 LFP_NOMINAL_CAPACITY_AH = 1.1  # A123 APR18650M1A (Severson et al. 2019) — vs NASA's 2.0 Ah
+# GH-67: dung lượng cell danh định dùng để quy dòng pack về C-rate lúc INFERENCE.
+# Trước đây LFP_NOMINAL_CAPACITY_AH chỉ được dùng lúc train (preprocess_lfp.py),
+# còn inference quy đổi bằng 2.0 (cell NASA) cho CẢ HAI đường. Bằng chứng từ
+# chính 2 scaler — hai bộ có thang dòng khác hẳn nhau:
+#     NASA: current fit trên [-4.039,  0.030] A / 2.0 Ah -> C-rate [-2.02, 0.02]
+#     LFP : current fit trên [-4.708, -0.100] A / 1.1 Ah -> C-rate [-4.28,-0.09]
+# Hệ quả trên pack LFP 30 Ah: xả 1C (30 A) bị quy thành 2.00 A, model đọc thành
+# 1.82C — sai hệ số 1.82x trên toàn bộ cột dòng.
+# Sửa cũng nới trần dòng cho pack 30 Ah từ 75 A lên 136 A (BMS JK rated 100-200 A).
+NOMINAL_CAPACITY_AH_BY_CHEMISTRY = {
+    "LFP": LFP_NOMINAL_CAPACITY_AH,
+}
 # Severson cells cycle up to ~2300 times (vs NASA's ~197) — reusing the NASA
 # CYCLE_COUNT_NORM=200 clips almost every Severson window's cycle_count_norm to
 # 1.0, destroying the feature. Whoever wires chemistry-aware artifact selection

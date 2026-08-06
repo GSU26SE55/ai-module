@@ -82,9 +82,11 @@ PackConfig {
   string chemistry   = 2;   // "LFP" | "NMC" | bỏ trống
   double capacity_ah = 3;   // dung lượng thật của pack — pin dự án là 30.0 (Ah)
                             // ⚠️ Ah càng lớn thì trần dòng càng thấp: AI quy dòng về
-                            // C-rate (current × 2.0 / capacity_ah) rồi chặn ở ±5.
-                            // Với 30 Ah ⇒ dòng pack tối đa qua được là 75 A (2.5C).
-                            // Tải vượt 75 A sẽ bị 422 / INVALID_ARGUMENT, không có prediction.
+                            // C-rate (current × cell_danh_dinh / capacity_ah) rồi chặn ở ±5.
+                            // cell_danh_dinh phụ thuộc chemistry: LFP 1.1 Ah · NASA 2.0 Ah.
+                            // Với 30 Ah + chemistry="LFP" ⇒ trần = 5 × 30/1.1 = 136 A.
+                            // KHÔNG khai chemistry ⇒ trần chỉ 75 A (5 × 30/2.0).
+                            // Tải vượt trần bị 422 / INVALID_ARGUMENT, không có prediction.
 }
 ```
 
@@ -353,3 +355,94 @@ kiểu này lại cho confidence *cao nhất*, nên BE **không thể lọc bằ
 
 > Khoảng trống **đơn lẻ** không bị chặn riêng: đã đo 15 mẫu + trống 1400 s +
 > 15 mẫu (cửa sổ dài 1429 s) vẫn ra SOH 100.00%. Chỉ **độ dài cửa sổ** mới quyết định.
+
+
+---
+
+## 10. RUL và cờ `INSUFFICIENT_DISCHARGE` (GH-67)
+
+### 10.1 `rul_cycles_estimate` — đã sửa hệ số cho LFP
+
+Trước đây mọi chemistry đều dùng tốc độ suy giảm **0.15 %/chu kỳ** — số của cell
+NASA 18650 NMC 2 Ah, loại chết sau ~150 chu kỳ. Đo trên pin LFP 8S/30Ah thật:
+
+| | Trước | Sau |
+|---|---|---|
+| `degradation_rate_per_cycle` | 0.15 | **0.0087** |
+| `rul_cycles_estimate` | **133** | **2298** |
+| `cycles_to_maintenance` | **100** | **1724** |
+
+Cả hai con số cũ đều nói về một quả pin **mới tinh** (`cycle_count = 0`, SOH 100%).
+BE mà dùng `cycles_to_maintenance` để lên lịch bảo trì thì gọi thợ sớm **~17 lần**.
+
+0.0087 suy từ bộ Severson mà model LFP được train: EOL 80% ở ~2300 chu kỳ
+⇒ `20 điểm SOH / 2300`. Chỉ áp dụng khi gửi `chemistry = "LFP"`; không khai
+chemistry thì vẫn là 0.15 (đường NASA, không đổi).
+
+> ⚠️ Nếu sau này có datasheet cycle life của chính pack đang dùng, con số đó sát
+> hơn Severson (cell 1.1 Ah bị ép sạc nhanh trong lab). Sửa
+> `DEGRADATION_RATE_BY_CHEMISTRY["LFP"] = 20 / cycle_life` bên repo ai-module.
+
+### 10.2 Cờ `INSUFFICIENT_DISCHARGE` — `severity: "info"`
+
+Xuất hiện khi cửa sổ **không có mẫu xả nào** (dòng chưa bao giờ dưới −0.1 A).
+
+SOH nghĩa là *"xả ra được bao nhiêu Ah so với danh định"*, nên cửa sổ không có
+mẫu xả thì con số SOH chỉ là nội suy từ điện áp nghỉ. Đo trên dump IoT thật (pin
+đứng im 17 giờ, 0 mẫu xả): **mọi cửa sổ đều ra đúng 100.00%**, kể cả khi ép điện
+áp xuống 23.9 V / SOC 8%.
+
+**BE cần làm gì:** đây **KHÔNG phải lỗi, KHÔNG tạo ticket.**
+
+| Trường | Có cờ này |
+|---|---|
+| `health_stage` | `Healthy` — không đổi |
+| `anomaly_status` | `Normal` — không đổi |
+| `recommended_action` | `MONITOR` — không đổi |
+| `risk.risk_level` | `Low` — không đổi |
+
+`severity = "info"` là cố ý: chỉ `warning`/`critical` mới đẩy risk lên. Đã có test
+khoá điều này.
+
+Chỉ dùng nó cho 2 việc:
+1. **Đừng vẽ đồ thị suy giảm SOH** từ các cửa sổ có cờ này — chúng luôn ~100%
+2. **Đừng hoảng** khi pin bắt đầu có tải thật rồi SOH tụt từ 100% xuống 94% — đó
+   là lần đầu tiên đo được thật, không phải pin đột ngột hỏng
+
+Cờ biến mất ngay khi cửa sổ có mẫu xả.
+
+
+---
+
+## 11. Trần dòng đã được sửa: 75 A → 136 A cho LFP (GH-67)
+
+AI quy dòng pack về C-rate của **cell danh định** rồi chặn ở `±5`. Cell danh định
+phải là của **đúng bộ artifact** — trước đây luôn dùng 2.0 Ah (cell NASA) kể cả
+cho request LFP, trong khi bộ LFP train trên cell Severson **1.1 Ah**.
+
+Bằng chứng từ chính hai scaler — hai bộ có thang dòng khác hẳn:
+
+```
+NASA: cột current fit trên [-4.039,  0.030] A / 2.0 Ah -> C-rate [-2.02, 0.02]
+LFP : cột current fit trên [-4.708, -0.100] A / 1.1 Ah -> C-rate [-4.28,-0.09]
+```
+
+Hệ quả trên pack LFP 30 Ah: xả **1C (30 A)** bị quy thành 2.00 A, model đọc thành
+**1.82C** — sai hệ số 1.82× trên toàn bộ cột dòng.
+
+### Trần dòng cho pack LFP 30 Ah, sau khi sửa
+
+| Dòng pack | C-rate thật | `chemistry="LFP"` | Không khai chemistry |
+|---|---|---|---|
+| 30 A | 1.00C | ✅ | ✅ |
+| 75 A | 2.50C | ✅ | ✅ |
+| **100 A** | 3.33C | ✅ | ❌ **chặn** |
+| 136 A | 4.53C | ✅ | ❌ chặn |
+| 140 A | 4.67C | ❌ chặn | ❌ chặn |
+
+BMS JK rated 100–200 A: tải 100 A trước đây **bị từ chối thẳng**, giờ qua được —
+**miễn là BE gửi `chemistry = "LFP"`**. Đây là thêm một lý do nữa để không bỏ sót
+`pack_config` (xem issue #1005).
+
+> Câu hỏi "tải đỉnh có vượt 75 A không" tôi hỏi trước đây bớt gấp: trần thật là
+> **136 A**. Chỉ cần trả lời nếu tải đỉnh có thể vượt 136 A.

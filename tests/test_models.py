@@ -612,3 +612,87 @@ class TestTemperatureDomainClusters:
         w = [x for x in generate_warnings(raw, 95.0, "Normal", chemistry="LFP")
              if x["code"] == "TEMP_OOD"]
         assert w and "(30°C)" in w[0]["message"]
+
+
+class TestDegradationRateByChemistry:
+    """GH-67 — tốc độ suy giảm 0.15%/chu kỳ là của cell NASA 18650 NMC (chết sau
+    ~150 chu kỳ). Dùng cho LFP thì RUL sai ~17 lần: đo trên dump IoT thật ra
+    rul_cycles_estimate=133 cho một quả pin LFP 30Ah MỚI TINH.
+    """
+
+    def _resting_window(self):
+        return np.column_stack([
+            np.full(30, 3.3), np.zeros(30), np.full(30, 30.0),
+            np.arange(30, dtype=np.float32) * 17.0,
+        ]).astype(np.float32)
+
+    def test_lfp_rul_matches_severson_cycle_life(self):
+        from src.models.anomaly_detector import compute_degradation_metrics
+
+        d = compute_degradation_metrics(self._resting_window(), 100.0, chemistry="LFP")
+        assert d["degradation_rate_per_cycle"] == 0.0087
+        # (100 - 80) / 0.0087 ≈ 2299 — khớp ~2300 chu kỳ của bộ Severson
+        assert 2200 <= d["rul_cycles_estimate"] <= 2400
+
+    def test_nasa_path_unchanged(self):
+        """Không khai chemistry ⇒ giữ nguyên hằng số NASA, không hồi quy."""
+        from src.models.anomaly_detector import DEGRADATION_RATE, compute_degradation_metrics
+
+        d = compute_degradation_metrics(self._resting_window(), 100.0)
+        assert d["degradation_rate_per_cycle"] == DEGRADATION_RATE
+        assert d["rul_cycles_estimate"] == 133
+
+    def test_production_window_always_uses_the_fallback_rate(self):
+        """window=30 < _STEPS_PER_CYCLE nên LUÔN đi nhánh hằng số — đó là lý do
+        hằng số này chính là RUL mà BE nhận được, không phải giá trị dự phòng
+        hiếm khi dùng."""
+        from src.models.anomaly_detector import _STEPS_PER_CYCLE
+
+        assert 30 < _STEPS_PER_CYCLE
+
+
+class TestInsufficientDischargeFlag:
+    """GH-67 — pin nằm im thì SOH không dựa trên phép đo nào."""
+
+    def _raw(self, currents):
+        return np.column_stack([
+            np.full(30, 3.3), np.asarray(currents, dtype=np.float32), np.full(30, 30.0),
+        ]).astype(np.float32)
+
+    def _flag(self, warnings):
+        return next((w for w in warnings if w["code"] == "INSUFFICIENT_DISCHARGE"), None)
+
+    def test_resting_window_raises_the_flag(self):
+        from src.models.anomaly_detector import generate_warnings
+
+        w = self._flag(generate_warnings(self._raw(np.zeros(30)), 100.0, "Normal",
+                                         chemistry="LFP"))
+        assert w is not None
+
+    def test_flag_is_info_so_it_cannot_escalate_risk(self):
+        """compute_risk_profile() chỉ leo thang với severity warning/critical.
+        Đổi severity của cờ này thành 'warning' sẽ biến MỌI cửa sổ pin nằm im
+        thành risk Medium/P3 — test này khoá lại."""
+        from src.models.anomaly_detector import compute_risk_profile, generate_warnings
+
+        ws = generate_warnings(self._raw(np.zeros(30)), 100.0, "Normal", chemistry="LFP")
+        assert self._flag(ws)["severity"] == "info"
+        risk = compute_risk_profile(
+            health_stage="Healthy", anomaly_status="Normal", warnings=ws,
+            soh=100.0, cycles_to_maintenance=1724,
+        )
+        assert risk["risk_level"] == "Low"
+
+    def test_window_with_discharge_has_no_flag(self):
+        from src.models.anomaly_detector import generate_warnings
+
+        currents = np.full(30, -2.0)
+        assert self._flag(generate_warnings(self._raw(currents), 95.0, "Normal",
+                                            chemistry="LFP")) is None
+
+    def test_charge_only_window_still_flagged(self):
+        """Sạc cũng không đo được dung lượng xả — model train trên đoạn xả."""
+        from src.models.anomaly_detector import generate_warnings
+
+        assert self._flag(generate_warnings(self._raw(np.full(30, 2.4)), 100.0,
+                                            "Normal", chemistry="LFP")) is not None

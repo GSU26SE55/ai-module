@@ -8,6 +8,7 @@ from src.core.config import (
     FEATURES,
     INPUT_FEATURES,
     NOMINAL_CAPACITY_AH,
+    NOMINAL_CAPACITY_AH_BY_CHEMISTRY,
     SOC_RANGE,
     TEMPERATURE_RANGE,
     MAX_WINDOW_SPAN_S,
@@ -157,13 +158,18 @@ class PredictRequest(BaseModel):
         Voltage is checked PER-CELL, i.e. after dividing by pack_config.n_series
         (GH-65) — so a 12V pack with n_series=3 passes, while 12V without
         pack_config is rejected with a hint. GH-67: current is checked on the
-        NASA-2Ah C-rate equivalent (current × 2.0 / pack_config.capacity_ah) —
+        C-rate equivalent của cell danh định theo chemistry (current × nominal / capacity_ah) —
         a 50 Ah pack discharging 10 A (0.2C) passes, while 10 A without
         capacity_ah is rejected. Ranges: src/core/config.py.
         `time` has no range (finite-checked above); cycle_count keeps GH-59 clip."""
         n_series = self.pack_config.n_series if self.pack_config else 1
         capacity_ah = self.pack_config.capacity_ah if self.pack_config else None
-        i_scale = NOMINAL_CAPACITY_AH / capacity_ah if capacity_ah else 1.0
+        _chem_cap = self.pack_config.chemistry if self.pack_config else None
+        # GH-67: cell danh định theo chemistry (NASA 2.0 Ah · LFP/Severson 1.1 Ah)
+        # — phải khớp art.nominal_capacity_ah bên inference, nếu không guard sẽ
+        # từ chối/chấp nhận lệch với thứ model thực sự nhận.
+        nominal = NOMINAL_CAPACITY_AH_BY_CHEMISTRY.get(_chem_cap, NOMINAL_CAPACITY_AH)
+        i_scale = nominal / capacity_ah if capacity_ah else 1.0
         # GH-67: dải per-cell theo chemistry khi có khai báo — xem
         # VOLTAGE_CELL_RANGE_BY_CHEMISTRY để biết vì sao dải chung quá lỏng cho LFP.
         _chem = self.pack_config.chemistry if self.pack_config else None
@@ -192,7 +198,7 @@ class PredictRequest(BaseModel):
                     "send pack_config.capacity_ah so current can be normalized "
                     "by C-rate"
                     if i_scale == 1.0
-                    else f" (current {row[1]} A × {NOMINAL_CAPACITY_AH} / capacity_ah {capacity_ah})"
+                    else f" (current {row[1]} A × {nominal} / capacity_ah {capacity_ah})"
                 )
                 raise ValueError(
                     f"readings[{i}].current: NASA-equivalent value {i_equiv:.3f} A "
