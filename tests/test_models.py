@@ -581,3 +581,34 @@ class TestTemperatureDomainClusters:
         temps = np.full(30, 30.0)
         temps[7] = 55.0
         assert temperature_domain_distance(temps, LFP_TEMPERATURE_TRAIN_CLUSTERS) == 25.0
+
+    def test_warning_path_is_chemistry_aware_too(self):
+        """GH-67: có HAI đường sinh cờ OOD nhiệt độ — risk profile và warning
+        TEMP_OOD. Sửa mỗi đường risk thì LFP ở 30 °C vẫn nhận cảnh báo sai kèm
+        chuỗi cụm NASA '(4/24/44°C)'. Test này khoá cả đường warning."""
+        from src.models.anomaly_detector import generate_warnings
+
+        raw = np.column_stack([
+            np.full(30, 3.3),    # voltage per-cell
+            np.zeros(30),        # current
+            np.full(30, 30.0),   # temperature — đúng buồng Severson
+        ]).astype(np.float32)
+
+        lfp = generate_warnings(raw, 95.0, "Normal", chemistry="LFP")
+        assert "TEMP_OOD" not in {w["code"] for w in lfp}
+
+        # không khai chemistry ⇒ vẫn cụm NASA, 30 °C cách 6 °C nên có cảnh báo
+        nasa = [w for w in generate_warnings(raw, 95.0, "Normal") if w["code"] == "TEMP_OOD"]
+        assert nasa and "4/24/44" in nasa[0]["message"]
+
+    def test_lfp_warning_message_names_the_lfp_cluster(self):
+        """Khi LFP thật sự ngoài miền, thông điệp phải in cụm 30 °C — in nhầm
+        cụm NASA làm người đọc log kết luận sai nguyên nhân."""
+        from src.models.anomaly_detector import generate_warnings
+
+        raw = np.column_stack([
+            np.full(30, 3.3), np.zeros(30), np.full(30, 45.0)
+        ]).astype(np.float32)
+        w = [x for x in generate_warnings(raw, 95.0, "Normal", chemistry="LFP")
+             if x["code"] == "TEMP_OOD"]
+        assert w and "(30°C)" in w[0]["message"]

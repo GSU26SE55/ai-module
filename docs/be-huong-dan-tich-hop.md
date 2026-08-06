@@ -307,3 +307,49 @@ Ba điều quan trọng nhất:
 
 Đặc tả đầy đủ (request/response từng field, công thức chấm điểm, mapping enum, bẫy
 `category` phải đồng bộ hai phía): xem [`grpc-integration-be.md` §7](grpc-integration-be.md).
+
+
+---
+
+## 9. ⚠️ Cửa sổ phải liền mạch về thời gian (GH-67)
+
+AI **từ chối** window trải quá **1500 giây (25 phút)** → `422` (REST) / `INVALID_ARGUMENT` (gRPC).
+
+### Vì sao
+
+30 bản ghi liên tiếp trong DB **không** đảm bảo liên tiếp về thời gian. Khi IoT
+mất kết nối, BE vẫn lấy được 30 dòng "kề nhau" nhưng chúng trải qua hàng giờ.
+
+Ca thật đo trên pin LFP 8S (2026-08-06) — IoT mất kết nối 76 phút giữa cửa sổ:
+
+| | |
+|---|---|
+| Nhịp bình thường | ~17 s/dòng → cửa sổ ~8 phút |
+| Cửa sổ dính khoảng trống | **94 phút** |
+| AI trả về | SOH **81.84%** · `Maintenance Required` · **`SCHEDULE_REPLACEMENT`** |
+| Thực tế | Pin hoàn toàn khoẻ, 111 cửa sổ còn lại đều `Healthy` |
+| `soh_confidence` | **0.799 — CAO NHẤT cả file** (trung vị 0.425) |
+
+Dòng cuối là lý do phải **từ chối hẳn** thay vì trả kèm cảnh báo: cửa sổ hỏng
+kiểu này lại cho confidence *cao nhất*, nên BE **không thể lọc bằng confidence**.
+
+Độ nhạy đo được (giãn đều khoảng lấy mẫu):
+
+| Khoảng/dòng | Độ dài cửa sổ | SOH |
+|---|---|---|
+| 17 s | 8 phút | 100.00% ✅ |
+| 30 s | 14 phút | 100.00% ✅ |
+| 60 s | 29 phút | 95.50% ❌ |
+| 120 s | 58 phút | 82.85% ❌ |
+
+### BE cần làm gì
+
+- Trước khi gọi AI, kiểm tra `readings[29].time - readings[0].time <= 1500`.
+  Vượt thì **bỏ qua cửa sổ**, đợi đủ 30 bản ghi liền mạch — đây là tình huống
+  bình thường sau khi IoT mất kết nối, **không phải lỗi cần tạo ticket**.
+- Cột `time` phải **không giảm** — sắp xếp theo thời gian trước khi gửi.
+- Suy ra ràng buộc nhịp lấy mẫu: **≤ 50 s/dòng** (30 dòng × 50 s = 1500 s).
+  Nhịp hiện tại 17 s/dòng thoải mái đạt.
+
+> Khoảng trống **đơn lẻ** không bị chặn riêng: đã đo 15 mẫu + trống 1400 s +
+> 15 mẫu (cửa sổ dài 1429 s) vẫn ra SOH 100.00%. Chỉ **độ dài cửa sổ** mới quyết định.

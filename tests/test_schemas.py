@@ -6,6 +6,7 @@ soc_percent [0, 100]. NaN/Inf rejected in every column. Hard reject only.
 """
 
 import math
+import os
 
 import pytest
 from pydantic import ValidationError
@@ -235,3 +236,75 @@ class TestLfpVoltageRange:
         lệ, không có cách nào chặn từ 1 cửa sổ. BE phải đối chiếu
         evidence.feature_summary.voltage.mean ≈ 3.2-3.3 V một lần lúc tích hợp."""
         self._req(10, "LFP")
+
+
+class TestWindowSpanGuard:
+    """GH-67 — chặn cửa sổ trải quá dài (mất kết nối giữa chừng).
+
+    Số đo trên dữ liệu IoT thật: cửa sọ 94 phút cho SOH 81.84% +
+    SCHEDULE_REPLACEMENT trên pin khoẻ, kèm confidence 0.799 (cao nhất cả file)
+    nên BE không lọc được bằng confidence.
+    """
+
+    def _rows(self, times):
+        return [[26.4, 0.0, 30.0, float(t), 0.0, 46.0] for t in times]
+
+    def _req(self, times):
+        return PredictRequest(
+            battery_id="BAT-2026-REAL-001",
+            readings=self._rows(times),
+            pack_config={"n_series": 8, "chemistry": "LFP", "capacity_ah": 30.0},
+        )
+
+    def test_normal_17s_sampling_passes(self):
+        """Nhịp thật của IoT là ~17s/dòng — không được chặn nhầm."""
+        self._req([i * 17 for i in range(30)])
+
+    def test_window_spanning_a_connection_gap_is_rejected(self):
+        """Đúng hình dạng cửa sổ đã gây báo lỗi giả: 17 mẫu sát nhau, mất kết
+        nối 76 phút, rồi 13 mẫu sát nhau."""
+        times = [i * 17 for i in range(17)] + [17 * 17 + 4572 + i * 17 for i in range(13)]
+        with pytest.raises(ValidationError, match="vượt trần"):
+            self._req(times)
+
+    def test_boundary_at_the_cap(self):
+        from src.core.config import MAX_WINDOW_SPAN_S
+
+        self._req([i * MAX_WINDOW_SPAN_S / 29 for i in range(30)])  # đúng trần → qua
+        with pytest.raises(ValidationError, match="vượt trần"):
+            self._req([i * (MAX_WINDOW_SPAN_S + 30) / 29 for i in range(30)])
+
+    def test_large_gap_but_short_window_still_passes(self):
+        """Đã đo: 15 mẫu + trống 1400s + 15 mẫu (dài 1429s) vẫn ra SOH 100.00%.
+        Độ dài cửa sổ mới là yếu tố quyết định, nên đừng thêm luật khoảng trống
+        riêng — sẽ chặn nhầm dữ liệu còn dùng được."""
+        self._req(list(range(15)) + [15 + 1400 + i for i in range(15)])
+
+    def test_time_going_backwards_is_rejected(self):
+        """Span = t[-1]-t[0] chỉ có nghĩa khi time không giảm — bản ghi đảo thứ
+        tự sẽ cho span nhỏ giả tạo và lọt qua."""
+        times = [i * 17 for i in range(30)]
+        times[20] = times[19] - 100
+        with pytest.raises(ValidationError, match="không giảm"):
+            self._req(times)
+
+    def test_legacy_3col_payload_skips_the_check(self):
+        """Payload 3 cột không có cột time — không được vỡ."""
+        PredictRequest(battery_id="B", readings=_window([3.7, -1.0, 25.0]))
+
+
+def test_span_cap_stays_within_lfp_scaler_range():
+    """GH-67 — trần này bắt nguồn từ dải `time` mà scaler LFP được fit (1453.9s).
+    Retrain làm hẹp dải đó mà quên sửa trần ⇒ lại nhận cửa sổ ngoài miền."""
+    import joblib
+
+    from src.core.config import FEATURES, LFP_SCALER_PATH, MAX_WINDOW_SPAN_S
+
+    if not os.path.exists(LFP_SCALER_PATH):
+        pytest.skip("chưa có artifact LFP")
+    art = joblib.load(LFP_SCALER_PATH)
+    scaler = art["scaler"] if isinstance(art, dict) else art
+    ceiling = float(scaler.data_max_[FEATURES.index("time")])
+    assert MAX_WINDOW_SPAN_S <= ceiling * 1.1, (
+        f"MAX_WINDOW_SPAN_S={MAX_WINDOW_SPAN_S} vượt quá dải train {ceiling:.1f}s"
+    )

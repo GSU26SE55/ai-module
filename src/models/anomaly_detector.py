@@ -1,6 +1,11 @@
 import numpy as np
 
-from src.core.config import RATE_THRESHOLD, TEMPERATURE_OOD_THRESHOLD, TEMPERATURE_TRAIN_CLUSTERS
+from src.core.config import (
+    RATE_THRESHOLD,
+    TEMPERATURE_OOD_THRESHOLD,
+    TEMPERATURE_TRAIN_CLUSTERS,
+    TEMPERATURE_TRAIN_CLUSTERS_BY_CHEMISTRY,
+)
 
 # ── Thresholds ────────────────────────────────────────────────────────────────
 EOL_SOH = 80.0           # end-of-life threshold (NASA 18650 convention)
@@ -469,17 +474,23 @@ def generate_warnings(
             })
 
         # GH-91: distinct from the safety thresholds above — flags when the
-        # reading is far from every NASA training chamber setpoint, i.e. the
-        # model is extrapolating, regardless of whether the temperature itself
-        # is safe.
-        domain_dist = temperature_domain_distance(raw[:, 2])
+        # reading is far from every training chamber setpoint, i.e. the model is
+        # extrapolating, regardless of whether the temperature itself is safe.
+        # GH-67: cụm phụ thuộc bộ artifact — NASA 4/24/44 °C, Severson (LFP) chỉ
+        # 30 °C. Đây là đường sinh cờ THỨ HAI (đường kia là risk profile); cả hai
+        # đọc chung TEMPERATURE_TRAIN_CLUSTERS_BY_CHEMISTRY để không lệch nhau.
+        clusters = TEMPERATURE_TRAIN_CLUSTERS_BY_CHEMISTRY.get(
+            chemistry, TEMPERATURE_TRAIN_CLUSTERS
+        )
+        domain_dist = temperature_domain_distance(raw[:, 2], clusters)
         if domain_dist > TEMPERATURE_OOD_THRESHOLD:
+            cluster_txt = "/".join(f"{c:g}" for c in clusters)
             warnings.append({
                 "code": "TEMP_OOD",
                 "severity": "warning",
                 "message": (
                     f"Temperature {domain_dist:.1f}°C from nearest training "
-                    "cluster (4/24/44°C) — prediction may be extrapolated."
+                    f"cluster ({cluster_txt}°C) — prediction may be extrapolated."
                 ),
             })
 

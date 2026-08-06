@@ -10,6 +10,7 @@ from src.core.config import (
     NOMINAL_CAPACITY_AH,
     SOC_RANGE,
     TEMPERATURE_RANGE,
+    MAX_WINDOW_SPAN_S,
     VOLTAGE_CELL_RANGE,
     VOLTAGE_CELL_RANGE_BY_CHEMISTRY,
     WINDOW_SIZE,
@@ -175,7 +176,7 @@ class PredictRequest(BaseModel):
             if not v_lo <= v_cell <= v_hi:
                 hint = (
                     " — if this is a multi-cell pack (e.g. 12V ~ 3S NMC or "
-                    "12.8V ~ 4S LFP), send pack_config.n_series so voltage can "
+                    "25.6V ~ 8S LFP), send pack_config.n_series so voltage can "
                     "be normalized per-cell"
                     if n_series == 1
                     else f" (pack voltage {row[0]} / n_series {n_series})"
@@ -207,6 +208,42 @@ class PredictRequest(BaseModel):
                     f"readings[{i}].soc_percent={row[5]} outside allowed range "
                     f"[{s_lo}, {s_hi}]"
                 )
+        return self
+
+
+    @model_validator(mode="after")
+    def validate_window_span(self) -> "PredictRequest":
+        """GH-67: chặn cửa sổ trải quá dài — lỗ hổng còn lại của range guard GH-66.
+
+        Cột `time` là cột DUY NHẤT không bị chặn dải, mà nó lại là cột làm vỡ dự
+        đoán. Ca thật đã gặp: IoT mất kết nối 76 phút giữa cửa sổ, 30 dòng vẫn
+        "liên tiếp" trong DB nên BE gửi lên bình thường; model đọc thành "điện áp
+        tụt trong 94 phút" và trả SOH 81.84% + SCHEDULE_REPLACEMENT cho pin khoẻ.
+
+        Từ chối hẳn thay vì trả kèm cảnh báo, vì cửa sổ hỏng kiểu này lại cho
+        confidence CAO NHẤT (0.799 so với trung vị 0.425) — BE không thể lọc ra
+        bằng confidence được. Ngưỡng + số đo: MAX_WINDOW_SPAN_S trong config.py.
+        """
+        if not self.readings or len(self.readings[0]) < 4:
+            return self  # payload 3 cột (legacy) không có cột time để kiểm
+        times = [row[3] for row in self.readings]
+        for i in range(1, len(times)):
+            if times[i] < times[i - 1]:
+                raise ValueError(
+                    f"readings[{i}].time={times[i]} nhỏ hơn readings[{i-1}].time="
+                    f"{times[i-1]} — cột time phải không giảm; sắp xếp lại theo "
+                    "thứ tự thời gian trước khi gửi"
+                )
+        span = times[-1] - times[0]
+        if span > MAX_WINDOW_SPAN_S:
+            raise ValueError(
+                f"window trải {span:.0f}s ({span/60:.0f} phút), vượt trần "
+                f"{MAX_WINDOW_SPAN_S:.0f}s ({MAX_WINDOW_SPAN_S/60:.0f} phút) — "
+                "thường là do mất kết nối giữa chừng nên 30 bản ghi liên tiếp "
+                "trong DB lại cách nhau rất xa. Bỏ qua cửa sổ này và chờ đủ 30 "
+                "bản ghi liền mạch; đo trên cửa sổ dài hơn trần cho ra SOH sai "
+                "kèm confidence cao giả tạo."
+            )
         return self
 
 

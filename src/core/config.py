@@ -35,6 +35,26 @@ VOLTAGE_CELL_RANGE = (2.0, 4.5)  # V per-cell — check SAU khi chia pack_config
 # "chia thừa" (n_series quá lớn → 2.6-2.9 V) KHÔNG chặn được vì đó là điện áp xả sâu
 # hợp lệ. Cách chắc chắn duy nhất là đối chiếu evidence.feature_summary.voltage.mean
 # một lần lúc tích hợp: LFP phải ra ~3.2-3.3 V.
+# GH-67: trần độ dài 1 cửa sổ (giây) — lỗ hổng còn lại của range guard GH-66.
+# Mọi cột đều bị chặn dải, RIÊNG cột `time` thì không, mà đó đúng là cột làm vỡ
+# dự đoán: MinMaxScaler của bộ LFP fit trên time ∈ [0, 1453.9]s, nên cửa sổ dài
+# hơn thế bị đẩy ra ngoài [0,1] y hệt ca mà GH-66 sinh ra để chặn.
+#
+# Đo trên dữ liệu IoT thật (pin LFP 8S, 2026-08-06), giãn đều khoảng lấy mẫu:
+#     17s/dòng ->   8 phút -> SOH 100.00%   (bình thường)
+#     30s/dòng ->  14 phút -> SOH 100.00%
+#     60s/dòng ->  29 phút -> SOH  95.50%   <- bắt đầu vỡ
+#    120s/dòng ->  58 phút -> SOH  82.85%
+# Và ca thật đã gặp: IoT mất kết nối 76 phút giữa cửa sổ -> cửa sổ dài 94 phút
+# -> SOH 81.84% + SCHEDULE_REPLACEMENT cho một quả pin hoàn toàn khoẻ, kèm
+# confidence 0.799 (CAO NHẤT cả file). Model tự tin nhất đúng lúc sai nhất, nên
+# BE không có cách nào lọc ra bằng confidence — buộc phải chặn ở đây.
+#
+# 1500 nằm giữa 14 phút (còn đúng) và 29 phút (đã vỡ), và sát trần train 1453.9s.
+# Khoảng trống ĐƠN LẺ không cần luật riêng: đã đo 15 mẫu + trống 1400s + 15 mẫu
+# (dài 1429s) vẫn ra SOH 100.00% — độ dài cửa sổ mới là yếu tố quyết định.
+MAX_WINDOW_SPAN_S = 1500.0
+
 VOLTAGE_CELL_RANGE_BY_CHEMISTRY = {
     "LFP": (2.0, 3.8),   # 2.5 cutoff .. 3.65 sạc đầy, cộng margin
 }
@@ -52,6 +72,12 @@ TEMPERATURE_TRAIN_CLUSTERS = (4.0, 24.0, 44.0)  # °C — NASA chamber setpoints
 # mọi giá trị 26–39 °C bị gắn cờ OOD sai (đo được: 30 °C → khoảng cách 6.0 > ngưỡng
 # 5.0), tức gần như MỌI request từ pin solar ngoài trời đều bị báo "ngoài phân bố".
 LFP_TEMPERATURE_TRAIN_CLUSTERS = (30.0,)  # °C — buồng duy nhất của Severson 2019
+# Tra cứu theo chemistry — dùng chung cho CẢ HAI đường sinh cờ OOD nhiệt độ:
+# risk profile (_Artifacts.temp_clusters) và warning TEMP_OOD (generate_warnings).
+# Sửa một chỗ này là đủ; đừng hardcode cụm ở nơi khác nữa.
+TEMPERATURE_TRAIN_CLUSTERS_BY_CHEMISTRY = {
+    "LFP": LFP_TEMPERATURE_TRAIN_CLUSTERS,
+}
 TEMPERATURE_OOD_THRESHOLD = 5.0  # °C — max allowed distance to nearest cluster
 INPUT_FEATURES = 6  # model input dim = 4 base (BASE_FEATURES, API payload) + 2 derived (GH-54: cycle_count, soc_percent)
 CYCLE_COUNT_NORM = 200.0  # GH-54: chia cycle_idx cho hằng số này (cycle dài nhất quan sát ~197, B0033/34); KHÔNG clip >1

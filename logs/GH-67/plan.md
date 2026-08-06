@@ -1201,3 +1201,81 @@ e2e   : TAT CA PASS
 - **#67** — cần dump telemetry thật (DB có 120.770 reading), không đóng bằng dữ liệu giả
 - **Chu kỳ lấy mẫu** — phải ≤ 50 s/dòng; model chỉ từng thấy tối đa 1454 s mỗi cửa sổ
 - **`CURRENT_RANGE`** — tải đỉnh có vượt 75 A không? BMS JK rated 100–200 A, chưa quyết
+
+---
+
+## Bug #15 — cửa sổ vắt qua khoảng trống thời gian (2026-08-06)
+
+Phát hiện khi chạy dump IoT thật đầu tiên (`iot_real_data_en.csv`, 3.363 dòng,
+pin LFP 8S/24V/30Ah, 17 giờ).
+
+### Triệu chứng
+
+Quét 112 cửa sổ không chồng nhau: 111 ra `Healthy`/`Normal`/`MONITOR`, đúng 1 ra
+
+```
+idx 1560 · 22:13 · SOH 81.84% · Maintenance Required · SCHEDULE_REPLACEMENT
+         · warning SOH_CRITICAL · soh_confidence 0.799  <- CAO NHẤT cả file
+```
+
+Đề nghị thay một quả pin hoàn toàn khoẻ.
+
+### Nguyên nhân
+
+IoT mất kết nối 76 phút (22:28:44 → 23:44:56). 30 bản ghi vẫn "liên tiếp" trong
+file nên trải 94 phút thay vì ~8 phút. Model đọc thành "điện áp tụt trong 94
+phút" → suy ra tốc độ suy giảm sai ~12 lần.
+
+Gốc rễ: đây là **lỗ hổng còn lại của range guard GH-66** — mọi cột đều bị chặn
+dải, riêng cột `time` được miễn ("`time` has no range"), mà đó đúng là cột làm
+vỡ dự đoán. Scaler LFP fit trên `time ∈ [0, 1453.9]s`; cửa sổ dài hơn bị đẩy ra
+ngoài [0,1] y hệt ca mà GH-66 sinh ra để chặn.
+
+### Đo độ nhạy (giãn đều khoảng lấy mẫu, dữ liệu thật)
+
+| Khoảng/dòng | Độ dài cửa sổ | SOH | conf |
+|---|---|---|---|
+| 17 s | 8 phút | 100.00% | 0.421 |
+| 30 s | 14 phút | 100.00% | 0.731 |
+| 60 s | 29 phút | **95.50%** | 0.864 |
+| 120 s | 58 phút | **82.85%** | 0.829 |
+
+Confidence **tăng** khi kết quả sai đi ⇒ BE không lọc được bằng confidence
+⇒ buộc phải **từ chối hẳn**, không phải trả kèm cảnh báo.
+
+### Khoảng trống đơn lẻ KHÔNG cần luật riêng — đã đo
+
+| Cấu hình | Độ dài cửa sổ | SOH |
+|---|---|---|
+| 15 mẫu + trống 600 s + 15 mẫu | 629 s | 100.00% |
+| 15 mẫu + trống 1400 s + 15 mẫu | 1429 s | 100.00% |
+
+Chỉ **độ dài cửa sổ** quyết định. Thêm luật khoảng trống riêng sẽ chặn nhầm dữ
+liệu còn dùng được → chỉ 1 luật.
+
+### Sửa
+
+- `MAX_WINDOW_SPAN_S = 1500.0` — nằm giữa 14 phút (còn đúng) và 29 phút (đã vỡ),
+  sát trần train 1453.9 s
+- `PredictRequest.validate_window_span()` — dùng chung REST + gRPC + Prescribe;
+  kèm check `time` không giảm (span chỉ có nghĩa khi time đơn điệu)
+- Thông báo lỗi nói rõ BE phải làm gì (bỏ qua cửa sổ, chờ dữ liệu liền mạch)
+- Test drift: `MAX_WINDOW_SPAN_S` không được vượt dải `time` của scaler LFP
+
+### Kết quả
+
+```
+Quét lại toàn bộ file: chấp nhận 111/112, từ chối đúng 1 cửa sổ hỏng (idx 1560)
+pytest: 585 passed · ruff: không lỗi mới · e2e: TẤT CẢ PASS
+Predict LFP p95 81.2ms · Prescribe LFP p95 86.3ms (SLA 100ms)
+```
+
+Nhân tiện sửa nốt ví dụ `12.8V ~ 4S LFP` còn sót trong thông báo lỗi n_series
+→ `25.6V ~ 8S LFP`. Tài liệu BE: `docs/be-huong-dan-tich-hop.md` §9.
+
+### Đồng thời — bug #14 chưa sửa hết
+
+Fix cụm nhiệt độ theo chemistry hôm 05/08 mới sửa 1 trong 2 đường. Đường
+`generate_warnings()` vẫn hardcode cụm NASA nên **mọi cửa sổ** của pin LFP thật
+(29–34.5 °C) đều dính cảnh báo `TEMP_OOD` sai kèm chuỗi `(4/24/44°C)`. Đã gộp cả
+hai đường về `TEMPERATURE_TRAIN_CLUSTERS_BY_CHEMISTRY` + 2 test khoá lại.
