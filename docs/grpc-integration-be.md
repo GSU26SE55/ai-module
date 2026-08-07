@@ -270,3 +270,124 @@ lượng prescription đứng yên ở mức rule + RAG ban đầu.
   không gửi feedback được — đây là đánh đổi có chủ ý: đường rule-only tối ưu cho SLA
   auto-ticket, không ghi lịch sử.
 - Idempotent theo `prescription_id`: gọi lại sẽ **ghi đè** feedback cũ, không cộng dồn.
+
+---
+
+## 9. `PredictLong` — SOH từ chuỗi dài (GH-10)
+
+```protobuf
+rpc PredictLong(PredictLongRequest) returns (PredictLongResponse);
+```
+
+Mirror của `POST /predict/long`. Nhận **31..4096** timestep thay vì đúng 30, chạy bằng
+model long-sequence (attention pooling) — **một artifact khác hẳn** model window=30.
+
+### Khác `Predict` ở ba điểm — đọc trước khi dùng
+
+| | `Predict` | `PredictLong` |
+|---|---|---|
+| Độ dài `readings` | đúng 30 | 31..4096 |
+| MC-dropout | có → `soh_confidence`, `soh_std`, `health_stage` | **không có** |
+| IsolationForest | có → `anomaly`, `risk`, `warnings` | **không có** |
+| Artifact | `model_version` | `model_version` = `long_model_version` (khác hẳn, **đừng so sánh 2 giá trị này**) |
+
+Bỏ anomaly là **có chủ ý**: IsolationForest được fit trên phân bố feature của window=30;
+chấm một chuỗi 4096 bước bằng nó là ngoài phân bố — ra con số trông hợp lệ nhưng vô nghĩa.
+
+### Request
+
+| Field | Bắt buộc | Ghi chú |
+|---|---|---|
+| `battery_id` | ✅ | |
+| `readings` | ✅ | 31..4096 hàng. Mỗi hàng 4 cột `[voltage, current, temperature, time]` hoặc legacy 3 cột. `cycle_count`/`soc_percent` **không dùng** ở đường này (model tự sinh IC-curve + discharge-progress) — gửi thừa cũng bị bỏ, nên **không có bẫy `soc_mode`** ở đây |
+| `pack_config` | — | `n_series` chia voltage, `capacity_ah` quy đổi C-rate — **giống hệt `Predict`**. `chemistry` KHÔNG chọn artifact ở đường này: model long chỉ có một bộ (NASA), gửi `"LFP"` vẫn dùng bộ đó |
+
+### Response
+
+| Field | Ghi chú |
+|---|---|
+| `soh_percent` | [0, 100] |
+| `seq_len` | số timestep thực nhận |
+| `device` | `"cpu"` / `"cuda"` — đường long dùng GPU nếu có |
+| `inference_ms` | |
+| `model_version` | `LONG_MODEL_VERSION` |
+
+### Lưu ý
+
+- **KHÔNG thay `Prescribe` ở hot-path tạo ticket.** Luồng đó vẫn phải dùng `Prescribe`
+  (xem đầu file) — `PredictLong` không trả risk/anomaly nên không đủ để sinh ticket.
+  Dùng cho phân tích/biểu đồ lịch sử dài.
+- Gửi ≤ 30 hàng → **`INVALID_ARGUMENT`** kèm gợi ý dùng `Predict`. Cố tình không im lặng
+  nhận, vì model long chưa từng thấy chuỗi ngắn như vậy.
+- Range guard giống hệt `Predict` (voltage per-cell, current theo C-rate, temperature,
+  soc) — cùng payload sai thì hai đường từ chối như nhau.
+- Model nạp **lười** ở lần gọi đầu, không phải lúc boot ⇒ `Health.long_loaded = false`
+  chỉ nghĩa là "chưa ai gọi", KHÔNG phải "thiếu artifact". Request đầu tiên vì vậy chậm
+  hơn hẳn các request sau.
+
+---
+
+## 10. `SubmitClassificationFeedback` — KTV chấm lại phân loại của AI (F4)
+
+```protobuf
+rpc SubmitClassificationFeedback(ClassificationFeedbackRequest)
+    returns (ClassificationFeedbackResponse);
+```
+
+Mirror của `POST /predict/feedback`. Khác `SubmitFeedback` ở §8: cái kia phản hồi về
+**prescription** (nội dung hướng dẫn), cái này phản hồi về **nhãn phân loại**
+(Normal/Degrading/Failed) mà nhánh anomaly đã đưa ra.
+
+BE đã lưu `staff_feedback` vào `anomaly_classifications` từ lâu nhưng chưa có đường gửi
+ngược về AI ⇒ vòng học đóng lại ở phía BE, AI không bao giờ biết mình phân loại sai.
+
+### Request
+
+| Field | Bắt buộc | Ghi chú |
+|---|---|---|
+| `battery_id` | ✅ | |
+| `classification` | ✅ | nhãn AI **đã** đưa ra: `"Normal"` / `"Degrading"` / `"Failed"`. **Không phải nhãn đúng** — `verdict` mới nói AI đúng hay sai. Giá trị lạ → `INVALID_ARGUMENT` |
+| `verdict` | ✅ | `"correct"` / `"false_positive"` / `"false_negative"` — khớp `StaffFeedbackEnum` của BE (1/2/3). **BE map số sang chuỗi trước khi gửi**, để hợp đồng không phụ thuộc thứ tự enum của riêng bên nào |
+| `model_version` | — | version đã sinh ra nhãn đó; `""` nếu không rõ |
+| `classified_at` | — | ISO UTC lúc phân loại; `""` nếu không có |
+| `note` | — | |
+
+### Response
+
+Trả bộ đếm chạy hiện tại để BE thấy đã ghi nhận và theo dõi được precision/recall thô:
+`total`, `correct`, `false_positive`, `false_negative`, `precision`, `recall`.
+
+⚠️ **Phải đọc `has_precision` / `has_recall` trước khi đọc `precision` / `recall`.**
+proto3 scalar không nullable nên `0.0` một mình là mơ hồ đúng ở chỗ nguy hiểm nhất:
+không phân biệt được "chưa ai chấm" với "đã chấm và sai hết". `has_* = false` ⇒ bỏ qua
+giá trị, đừng hiển thị 0%.
+
+### Lưu ý
+
+- `success = false` không bao giờ xảy ra — thất bại luôn đi bằng status code.
+- Bản ghi append vào `models/classification_feedback/feedback.jsonl` (không dùng ChromaDB
+  như prescription history: ở đây chỉ cần đếm đúng/sai và giữ dữ liệu cho lần retrain).
+- Hai container AI (REST + gRPC) phải **mount chung** thư mục này, nếu không bộ đếm trả
+  về sẽ khác nhau tuỳ transport.
+
+---
+
+## 11. `Health` — 4 field mới, BE **phải** đọc
+
+| Field | Ghi chú |
+|---|---|
+| `soc_mode` | định nghĩa `soc_percent` mà **bộ artifact mặc định (NASA/NMC)** được train |
+| `lfp_soc_mode` | như trên cho bộ LFP; `""` khi `lfp_loaded = false` |
+| `long_loaded` | model long đã nạp chưa — nạp **lười**, `false` = "chưa ai gọi", không phải "thiếu artifact" |
+| `long_model_version` | version của model long |
+
+**Vì sao bắt buộc đọc `soc_mode` thay vì hardcode theo chemistry:** `soc_mode` là thuộc
+tính của **bộ artifact**, không phải của request. Gửi sai `soc_percent` **không bao giờ bị
+từ chối** — nó chỉ lặng lẽ làm lệch SOH. Hardcode theo chemistry sẽ hỏng âm thầm đúng vào
+ngày một bộ được retrain với định nghĩa còn lại.
+
+| Giá trị | BE phải gửi `soc_percent` kiểu nào |
+|---|---|
+| `"window"` | **window-local**: ~100% ở **hàng đầu của window này**, giảm dần qua 30 hàng. Không chắc thì gửi 4 cột |
+| `"cycle"` | scope theo **cả chu kỳ xả**: ~100% đầu chu kỳ, giảm tới ~9% cuối chu kỳ (đúng SOC thật của pin) |
+| `"unknown"` | artifact khai báo giá trị lạ — **đừng đoán**, gửi 4 cột và báo cho AI team |

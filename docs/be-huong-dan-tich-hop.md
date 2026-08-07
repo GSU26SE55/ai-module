@@ -310,7 +310,7 @@ Ba điều quan trọng nhất:
 
 ---
 
-## 9. ⚠️ Cửa sổ phải liền mạch về thời gian (GH-67)
+## 10. ⚠️ Cửa sổ phải liền mạch về thời gian (GH-67)
 
 AI **từ chối** window trải quá **1500 giây (25 phút)** → `422` (REST) / `INVALID_ARGUMENT` (gRPC).
 
@@ -355,7 +355,7 @@ kiểu này lại cho confidence *cao nhất*, nên BE **không thể lọc bằ
 
 ---
 
-## 10. `SubmitFeedback` — khép vòng học của AI
+## 11. `SubmitFeedback` — khép vòng học của AI
 
 RPC `SubmitFeedback` (REST tương đương `POST /prescribe/feedback`). Kỹ thuật viên nói lại
 prescription vừa nhận là **đúng / phải sửa / sai**, AI dùng các ca `accepted` làm few-shot
@@ -386,7 +386,7 @@ note             ← ghi chú tự do, "" nếu không có
 
 ---
 
-## 11. `PredictLong` — SOH từ chuỗi dài (GH-10)
+## 12. `PredictLong` — SOH từ chuỗi dài (GH-10)
 
 RPC `PredictLong` (REST `POST /predict/long`). Nhận **31..4096** timestep thay vì đúng 30.
 
@@ -407,7 +407,7 @@ chấm một chuỗi 4096 bước bằng nó là ngoài phân bố — ra một 
 
 Chỉ cần 4 cột `[voltage, current, temperature, time]`; `cycle_count`/`soc_percent` gửi thừa
 sẽ bị bỏ qua (model long tự sinh IC-curve + discharge-progress), nên **đường này không dính
-bẫy `soc_mode`** ở §12.
+bẫy `soc_mode`** ở §13.
 
 `pack_config` vẫn áp dụng y hệt `Predict`: `n_series` chia điện áp, `capacity_ah` quy đổi
 C-rate. Riêng `chemistry` **không** chọn artifact ở đường này — model long chỉ có một bộ (NASA).
@@ -417,7 +417,7 @@ C-rate. Riêng `chemistry` **không** chọn artifact ở đường này — mod
 
 ---
 
-## 12. `soc_mode` — đọc từ `Health`, ĐỪNG hardcode theo chemistry
+## 13. `soc_mode` — đọc từ `Health`, ĐỪNG hardcode theo chemistry
 
 `Health` trả thêm hai field:
 
