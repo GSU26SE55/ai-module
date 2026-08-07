@@ -1,13 +1,14 @@
  # AI Module — Tài liệu tổng quan (gRPC-first, cho BE tích hợp)
 
 > **Dự án:** Solar Lithium-ion Battery Maintenance Management System — GSU26SE55
-> **Cập nhật:** 2026-07-22 (thay bản cũ 2026-06-21 — đã lệch nhiều version/field)
+> **Cập nhật:** 2026-08-07 (verify lại toàn bộ từ code — bản 2026-07-22 ghi 4 RPC, thực tế đã 8;
+> chưa có bộ LFP, chưa có guard cửa sổ, chưa có `soc_mode`)
 > **Đối tượng đọc:** BE dev (.NET) cần dựng gateway gọi sang AI module.
 > **Phạm vi:** Tài liệu này tập trung vào **gRPC (`aimodule.v1.AiService`, port 50051)** —
 > đây là transport BE dùng thật trong production (xem [[grpc-is-production-transport]]).
 > REST (`FastAPI`, port 8000) vẫn tồn tại và trả **cùng payload** (parity test field-by-field),
-> nhưng chỉ dùng cho dev/Swagger/local testing — **không phải đường tích hợp BE nên đi**,
-> ngoại trừ 1 endpoint chưa có ở gRPC (`POST /prescribe/feedback` — xem §11.4).
+> nhưng chỉ dùng cho dev/Swagger/local testing — **không phải đường tích hợp BE nên đi**.
+> Từ 2026-08, gRPC đã phủ **đủ** mọi chức năng (kể cả feedback loop) — BE không còn lý do chạm REST.
 
 ---
 
@@ -66,13 +67,18 @@ duy nhất.
 
 | Thành phần | Version | File |
 |---|---|---|
+| **Bộ mặc định — NASA / NMC** | | |
 | Mamba SOH (production, L=30) | **v1.6** (GH-88 split rebalance) | `models/weights/soh_mamba_v1.6.pth` |
 | MinMaxScaler (6-feature) | v1.3 | `models/weights/scaler.pkl` |
 | Feature StandardScaler (57-dim) | v1.5 | `models/weights/feature_scaler.pkl` |
 | IsolationForest | v1.6 (theo Mamba) | `models/weights/isolation_forest_v1.6.pkl` |
-| Mamba SOH Long (L=4096) | v2.2 (feature ablation 6→4 base) | `models/weights/soh_mamba_long_v2.2.pth` |
-| RUL Predictor (cycle-axis) | v1.0 | `models/weights/soh_mamba_rul_v1.0.pth` |
-| gRPC contract | `protos/ai_service.proto` (GH-39, đang ở field 91 = GH-91) | `src/grpc_gen/` (generated, committed) |
+| **Bộ LFP — Severson** (chọn khi `pack_config.chemistry="LFP"`) | | |
+| Mamba SOH LFP | **v2.0-lfp** | `models/weights/soh_mamba_v2.0-lfp.pth` |
+| Scaler + feature scaler + IsolationForest LFP | v2.0-lfp | `scaler_lfp.pkl`, `feature_scaler_lfp.pkl`, `isolation_forest_v2.0-lfp.pkl` |
+| **Ngoài luồng Predict** | | |
+| Mamba SOH Long (L≤4096) | v2.2 — dùng bởi `rpc PredictLong`, nạp **lười** | `models/weights/soh_mamba_long_v2.2.pth` |
+| RUL Predictor (cycle-axis) | v1.0 — ⚠️ **KHÔNG nạp bởi service**, không RPC/endpoint nào gọi | `models/weights/soh_mamba_rul_v1.0.pth` |
+| gRPC contract | `protos/ai_service.proto` — **8 RPC** | `src/grpc_gen/` (generated, committed) |
 | grpcio / grpcio-tools / protobuf | 1.81.1 / 1.81.1 / 6.33.6 | `requirements.txt` |
 
 Version mismatch giữa `scaler.pkl`/`feature_scaler.pkl`/model checkpoint làm server **crash ngay
@@ -103,7 +109,9 @@ lúc startup** (assertion trong `model_loader.py`) — không silent-fail, nên 
 
 ## 4. Dataset & Split hiện tại
 
-NASA Ames Battery Dataset (18650 Li-ion, 34 cells, nominal capacity 2.0 Ah).
+Hai bộ dữ liệu độc lập, chọn theo `pack_config.chemistry`.
+
+### 4.1. Bộ mặc định — NASA Ames (18650 NMC, nominal 2.0 Ah)
 
 | Split | Battery IDs | Số pin |
 |---|---|---|
@@ -122,6 +130,20 @@ val/test cần → model ngoại suy lệch dưới ngưỡng EOL 80%. Chi tiế
 v1.6 đạt MAE 1.34% / RMSE 1.84% (`docs/GH-88` ablation report). Anomaly F1 trên window-shape
 đơn thuần **chưa đạt** 0.80 (GH-70/GH-95) — xem §9.6.
 
+### 4.2. Bộ LFP — Severson et al. 2019 (A123 APR18650M1A, nominal **1.1 Ah**)
+
+Dùng khi request khai `pack_config.chemistry="LFP"`. Cell nhỏ hơn NASA và tuổi thọ dài hơn hẳn,
+nên **mọi hằng số hiệu chỉnh đều khác** — đây là nguồn của cả một lớp lỗi (xem §7.2):
+
+| Hằng số | NASA / NMC | LFP / Severson |
+|---|---|---|
+| Cell danh định (quy dòng về C-rate) | 2.0 Ah | **1.1 Ah** |
+| `cycle_count` chuẩn hoá chia cho | 200 | **2300** |
+| Cụm nhiệt độ lúc train | 4 / 24 / 44 °C | **30 °C** (Severson chạy 1 buồng duy nhất) |
+| Dải điện áp per-cell hợp lệ | [2.0, 4.5] V | **[2.0, 3.8] V** |
+| Tốc độ suy giảm quần thể | 0.15 %/chu kỳ | **0.0087 %/chu kỳ** (~2300 chu kỳ tới EOL) |
+| `soc_mode` | `"window"` | `"cycle"` |
+
 ---
 
 ## 5. Model Artifacts
@@ -133,7 +155,8 @@ v1.6 đạt MAE 1.34% / RMSE 1.84% (`docs/GH-88` ablation report). Anomaly F1 tr
 | `soh_mamba_v1.6.pth` | Production Mamba (L=30) | ✅ |
 | `isolation_forest_v1.6.pkl` | IsolationForest | ✅ |
 | `scaler_long.pkl`, `feature_scaler_long.pkl`, `soh_mamba_long_v2.2.pth` | Long model (L=4096, ngoài scope gRPC) | ✅ |
-| `feature_scaler_rul.pkl`, `soh_mamba_rul_v1.0.pth` | RUL Predictor (ngoài scope gRPC) | ✅ |
+| `scaler_lfp.pkl`, `feature_scaler_lfp.pkl`, `soh_mamba_v2.0-lfp.pth`, `isolation_forest_v2.0-lfp.pkl` | Bộ LFP — **tuỳ chọn**, thiếu thì service vẫn boot nhưng request `chemistry="LFP"` sẽ lỗi rõ ràng | ✅ |
+| `feature_scaler_rul.pkl`, `soh_mamba_rul_v1.0.pth` | RUL Predictor — ⚠️ `feat_dim=54` trong khi extractor sinh **57**, checkpoint này **đã chết** (lưu trước commit thêm Gini). Không code nào nạp nó | ✅ |
 
 `scaler.pkl`/`feature_scaler.pkl` KHÔNG được fit lại trên production data — load từ file lúc
 startup, mismatch version → server refuse to start (fail-fast, không silent wrong prediction).
@@ -152,10 +175,26 @@ service AiService {
   rpc Prescribe(PrescribeRequest) returns (PrescribeResponse);
   rpc Health(HealthRequest) returns (HealthResponse);
   rpc PredictStream(stream PredictRequest) returns (stream PredictResponse);
+  rpc VerifyTicket(VerifyTicketRequest) returns (VerifyTicketResponse);
+  rpc SubmitFeedback(SubmitFeedbackRequest) returns (SubmitFeedbackResponse);
+  rpc PredictLong(PredictLongRequest) returns (PredictLongResponse);
+  rpc SubmitClassificationFeedback(ClassificationFeedbackRequest)
+      returns (ClassificationFeedbackResponse);
 }
 ```
 
-Cả 4 RPC chạy trong **cùng process** với REST (`src/grpc_server.py`, `python -m src.grpc_server`,
+| RPC | Dùng để làm gì |
+|---|---|
+| `Prescribe` | **Đường BE nên dùng cho mọi ticket** — chạy `Predict` bên trong rồi trả kèm prescription |
+| `Predict` | Dashboard giám sát real-time, không cần prescription text |
+| `PredictStream` | Bidi stream — chấm nhiều window / nhiều pin trong 1 kết nối |
+| `Health` | Kiểm bộ artifact nào đã nạp + **`soc_mode`** (bắt buộc đọc, xem §7.1) |
+| `VerifyTicket` | Chấm ticket khách tự tạo là thật/rác + dò trùng mô tả |
+| `SubmitFeedback` | KTV phản hồi về một prescription (`accepted`/`edited`/`rejected`) |
+| `PredictLong` | SOH từ chuỗi **31–4096** timestep — phân tích lịch sử, vẽ chart. Trả **chỉ SOH**, không confidence/anomaly/risk |
+| `SubmitClassificationFeedback` | Staff chấm nhãn anomaly của AI đúng/sai → AI đo được precision/recall |
+
+Cả 8 RPC chạy trong **cùng process** với REST (`src/grpc_server.py`, `python -m src.grpc_server`,
 `GRPC_PORT` env, default 50051) — **cùng pipeline** `run_inference()` / `run_prescription()`,
 insecure channel (không TLS/auth — chỉ dùng nội bộ docker network, KHÔNG expose port 50051 ra
 ngoài).
@@ -198,13 +237,52 @@ message PrescribeResponse {
 }
 ```
 
+```protobuf
+message HealthResponse {
+  string status = 1; string model_version = 2;
+  bool scaler_loaded = 3; bool mamba_loaded = 4; bool isolation_forest_loaded = 5;
+  bool lfp_loaded = 6; string lfp_model_version = 7;
+  string soc_mode = 8;         // của bộ mặc định — "window"
+  string lfp_soc_mode = 9;     // của bộ LFP — "cycle"; "" khi lfp_loaded=false
+  bool long_loaded = 10;       // nạp LƯỜI: false = "chưa ai gọi", KHÔNG phải "thiếu file"
+  string long_model_version = 11;
+}
+message SubmitFeedbackRequest {
+  string prescription_id = 1;        // từ PrescribeResponse.prescription_id (chỉ có khi enrich=true)
+  string status = 2;                 // "accepted" | "edited" | "rejected" — khác → INVALID_ARGUMENT
+  repeated string edited_steps = 3;  // rỗng nếu status != "edited"
+  string note = 4;
+}
+message PredictLongRequest {
+  string battery_id = 1;
+  repeated Reading readings = 2;   // 31..4096 hàng, mỗi hàng 4 cột (cycle_count/soc_percent bị bỏ qua)
+  PackConfig pack_config = 3;      // chuẩn hoá pack→cell giống Predict
+}
+message PredictLongResponse {
+  string battery_id = 1; double soh_percent = 2; int32 seq_len = 3;
+  string device = 4; double inference_ms = 5;
+  string model_version = 6;        // LONG_MODEL_VERSION — KHÁC model_version của Predict
+}
+message VerifyTicketResponse {
+  string verdict = 1;              // "legitimate" | "suspicious"
+  double score = 2; string reason = 3;
+  string duplicate_of_ticket_id = 4; double duplicate_score = 5; string duplicate_reason = 6;
+}
+```
+
+> `SubmitFeedbackResponse.success` không bao giờ là `false` — `prescription_id` sai thì trả
+> **`NOT_FOUND`** (tương ứng `404` bên REST). Đừng viết nhánh xử lý `success=false`.
+
+> `ClassificationFeedbackResponse` có `has_precision`/`has_recall` (bool) vì proto3 scalar
+> **không phân biệt** được "chưa có mẫu nào" với "precision = 0.0" — hai chuyện khác hẳn.
+
 Toàn bộ field + comment gốc: xem `protos/ai_service.proto` trực tiếp (đã inline giải thích từng
 GH ticket ngay trong file — đọc file đó khi cần chi tiết field-level thay vì tài liệu này).
 
 ### 6.2. Ví dụ JSON request/response
 
 Xem file **`docs/examples/grpc-payloads.json`** — 3 kịch bản đầy đủ (Healthy/Normal,
-Maintenance-Required/Warning, Critical-EOL trên pack LFP 4S) cho cả `Predict` và `Prescribe`,
+Maintenance-Required/Warning, Critical-EOL trên pack LFP) cho cả `Predict` và `Prescribe`,
 đã verify bằng cách chạy trực tiếp `src/models/anomaly_detector.py` +
 `src/services/prescription/rule_prescription.py` + `safety_gate.py` thật (không phải số bịa) —
 BE có thể copy-paste field name (snake_case, khớp `.proto`) để test qua grpcurl/Postman gRPC.
@@ -230,14 +308,40 @@ BE có thể copy-paste field name (snake_case, khớp `.proto`) để test qua 
   có vừa thiếu 2 field này).
 - Window **PHẢI đúng 30 timestep** — khác 30 → `INVALID_ARGUMENT` (gRPC) / `422` (REST).
 
+> ### ⚠️ `soc_percent` — PHẢI đọc `soc_mode` từ `Health`, đừng suy theo chemistry
+>
+> Ý nghĩa cột `soc_percent` là **thuộc tính của bộ artifact**, không phải của request:
+>
+> | Bộ | `soc_mode` | Định nghĩa |
+> |---|---|---|
+> | NASA / NMC | `"window"` | SOC **cục bộ trong window** — ~100% ở hàng đầu, giảm dần qua 30 hàng |
+> | LFP | `"cycle"` | SOC theo **cả chu kỳ xả** — SOC thật của pin |
+>
+> Gửi sai định nghĩa **không bao giờ bị từ chối**. AI vẫn trả kết quả, chỉ là SOH lệch đi.
+> Đo trên một pin thật: thiếu `chemistry` → SOH **38.25%** *"End Of Life"*; có `chemistry` →
+> **98.29%** *"Healthy"*. **Lệch 60 điểm, không một dòng lỗi nào.**
+>
+> Không chắc thì **gửi 4 cột** — AI tự suy, an toàn hơn gửi 6 cột sai nghĩa.
+
 ### 7.2. `PackConfig` — pin nhiều cell (GH-65/67)
 
 ```
-voltage_cell = voltage_pack / n_series        (áp dụng TRƯỚC scaler + TRƯỚC warning threshold)
-current_equiv = current_pack × (2.0 / capacity_ah)   (chỉ khi capacity_ah được set)
+voltage_cell  = voltage_pack / n_series                      (TRƯỚC scaler + TRƯỚC threshold)
+current_equiv = current_pack × (nominal_cell / capacity_ah)  (chỉ khi capacity_ah được set)
+
+nominal_cell = 1.1 Ah nếu chemistry="LFP"  ·  2.0 Ah nếu không khai
 ```
 
-- `n_series` (mặc định 1 = single cell, legacy behavior). Ví dụ 12V ≈ 3S NMC, 12.8V ≈ 4S LFP.
+**`nominal_cell` phụ thuộc chemistry** — bộ LFP train trên cell Severson 1.1 Ah, không phải cell
+NASA 2.0 Ah. Hệ quả trực tiếp lên **trần dòng** của pack:
+
+| Pack | Khai `chemistry="LFP"` | Không khai |
+|---|---|---|
+| 30 Ah | trần **136 A** (`5 × 30/1.1`) | trần **75 A** (`5 × 30/2.0`) |
+
+Tải 100 A trên pack 30 Ah: khai chemistry thì **qua**, không khai thì **bị từ chối thẳng**.
+
+- `n_series` (mặc định 1 = single cell, legacy behavior). Ví dụ 12V ≈ 3S NMC, **25.6V ≈ 8S LFP** (pin thật của dự án).
 - `chemistry`: `"LFP"` chọn voltage warning profile riêng (LiFePO4 plateau phẳng 3.2-3.3V —
   profile NMC mặc định sẽ spam `VOLTAGE_LOW` sai và bỏ sót overcharge thật). Unset/unknown =
   NMC/NASA default. Tự động normalize `"lfp"/"lifepo4"` → `"LFP"`, `"nmc"` → `"NMC"`.
@@ -259,6 +363,41 @@ current_equiv = current_pack × (2.0 / capacity_ah)   (chỉ khi capacity_ah đ�
 | Current (NASA-equivalent) | `[-5.0, 5.0]` A | |
 | Temperature | `[-10.0, 60.0]` °C | không chia n_series |
 | SOC percent | `[0.0, 100.0]` | chỉ check nếu gửi đủ 6 cột |
+
+**Dải điện áp per-cell phụ thuộc chemistry:** `chemistry="LFP"` dùng **`[2.0, 3.8]`** V thay vì
+dải chung `[2.0, 4.5]` V. Dải chung phải đủ rộng cho NMC sạc đầy 4.2 V nên quá lỏng với LFP —
+cell LFP tối đa vật lý chỉ 3.65 V. Siết lại bắt được ca khai thiếu `n_series` (pack 8S/26.4 V mà
+gửi `n_series=6` ra 4.40 V/cell — bất khả thi với LFP, dải chung vẫn cho lọt).
+
+> Chiều ngược lại (`n_series` quá **lớn**) không chặn được: 26.4/10 = 2.64 V/cell trùng dải xả sâu
+> hợp lệ. Cách chắc chắn duy nhất là đối chiếu `evidence.feature_summary.voltage.mean` **một lần**
+> lúc tích hợp — LFP đúng `n_series` phải ra **≈ 3.2–3.3 V**.
+
+### 7.4. Cửa sổ phải liền mạch về thời gian (GH-67)
+
+Window trải quá **1500 giây (25 phút)** → `INVALID_ARGUMENT` / `422`. Cột `time` cũng phải
+**không giảm**.
+
+30 bản ghi liên tiếp trong DB **không** đảm bảo liên tiếp về thời gian. Ca thật đo trên pin LFP
+8S: IoT mất kết nối 76 phút giữa window → 30 hàng trải **94 phút** thay vì ~8 phút → AI trả
+SOH **81.84%** + `SCHEDULE_REPLACEMENT` cho một quả pin hoàn toàn khoẻ (111 window còn lại đều
+`Healthy`).
+
+**Vì sao từ chối hẳn thay vì trả kèm cảnh báo:** window hỏng kiểu này lại cho `soh_confidence`
+**cao nhất cả file — 0.799** (trung vị 0.425). BE **không thể lọc bằng confidence**.
+
+Độ nhạy đo được (giãn đều nhịp lấy mẫu):
+
+| Nhịp/hàng | Độ dài window | SOH |
+|---|---|---|
+| 17 s | 8 phút | 100.00% ✅ |
+| 30 s | 14 phút | 100.00% ✅ |
+| 60 s | 29 phút | 95.50% ❌ |
+| 120 s | 58 phút | 82.85% ❌ |
+
+⇒ Ràng buộc suy ra cho BE: **nhịp lấy mẫu ≤ 50 s/hàng** (30 × 50 = 1500 s). Vượt trần là tình
+huống **bình thường** sau khi IoT mất kết nối — bỏ qua window, đợi dữ liệu liền mạch, **không
+tạo ticket**.
 
 Ngoài khoảng → `INVALID_ARGUMENT` kèm message gợi ý (vd "gửi thêm `pack_config.n_series`") —
 chặn silent garbage (12V pack chưa quy đổi bị coi là voltage-per-cell 12V → out of range ngay,
@@ -317,38 +456,67 @@ REPLACE_IMMEDIATELY" sẽ sai. Luôn đọc `action_code` để biết hành đ�
 
 ### 8.4. `ResponseMetadata` — nhãn "extrapolation" (GH-91)
 
-`temperature_domain_distance` + `is_temperature_ood`: model chỉ từng train ở đúng 3 mốc nhiệt độ
-buồng NASA (4°C, 24°C, 44°C). Một giá trị PHÙ HỢP khoảng hợp lệ `[-10,60]` nhưng xa cả 3 mốc này
-(vd 15°C) **vẫn qua được range-guard §7.3** nhưng là extrapolation ngầm — field này bật cờ
-riêng để BE biết SOH lúc đó kém tin cậy hơn dù không có lỗi nào được raise.
+`temperature_domain_distance` + `is_temperature_ood`: khoảng cách tới cụm nhiệt độ train **gần
+nhất của đúng bộ artifact đang chấm**. Giá trị hợp lệ `[-10,60]` nhưng xa cụm train **vẫn qua
+range-guard §7.3** — cờ này báo cho BE biết đó là ngoại suy ngầm.
+
+| Bộ | Cụm train |
+|---|---|
+| NASA / NMC | 4 / 24 / 44 °C |
+| **LFP** | **30 °C** (Severson chạy 1 buồng duy nhất) |
+
+> Dùng nhầm cụm NASA cho LFP thì 30 °C ra khoảng cách 6 °C và 35 °C ra 9 °C — vượt ngưỡng OOD,
+> tức **gần như mọi đọc số ngoài trời của pin mặt trời đều bị gắn cờ sai**. Đã sửa (GH-67), và có
+> **hai** đường sinh cờ này (risk profile + warning `TEMP_OOD`) — cả hai đọc chung một bảng.
+
+### 8.5. Cờ `INSUFFICIENT_DISCHARGE` — `severity: "info"`, KHÔNG phải lỗi
+
+Xuất hiện khi window **không có mẫu xả nào** (dòng chưa bao giờ dưới −0.1 A).
+
+SOH nghĩa là *"xả ra được bao nhiêu Ah so với danh định"*, nên window không có mẫu xả thì con số
+SOH chỉ là nội suy từ điện áp nghỉ. Đo trên dump IoT thật (pin đứng im 17 giờ, 0 mẫu xả): **mọi
+window đều ra đúng 100.00%**, kể cả khi ép điện áp xuống 23.9 V / SOC 8%.
+
+`severity="info"` là **cố ý** — `compute_risk_profile()` chỉ leo thang với `warning`/`critical`,
+nên cờ này **không đổi** `health_stage` / `anomaly_status` / `recommended_action` / `risk_level`.
+Pin vẫn được báo bình thường, **không sinh ticket**. Chỉ dùng nó để:
+1. Đừng vẽ đồ thị suy giảm SOH từ các window có cờ này — chúng luôn ~100%
+2. Đừng hoảng khi pin bắt đầu có tải thật rồi SOH tụt từ 100% xuống ~94% — đó là lần đầu **đo
+   được thật**, không phải pin đột ngột hỏng
 
 ---
 
 ## 9. ⚠️ Giới hạn phải biết trước khi tích hợp
 
-### 9.1. `rul_cycles_estimate` / `degradation_rate_per_cycle` / `cycles_to_maintenance` / `soh_trajectory` — KHÔNG đáng tin ở window=30 (phát hiện khi viết tài liệu này, verify bằng code thật)
+### 9.1. `rul_cycles_estimate` / `degradation_rate_per_cycle` / `cycles_to_maintenance` là **công thức**, không phải dự đoán
 
-`compute_degradation_metrics()` chia window thành `n_seg = max(2, min(10, L // 285))` đoạn
-(`285` = độ dài trung bình 1 chu kỳ NASA thật). Với **window=30 (chuẩn production)**, `30 // 285
-= 0` → **luôn luôn đúng 2 đoạn**, bất kể window có thật sự trải dài nhiều chu kỳ hay không. Slope
-điện áp giữa 2 đoạn 15-bước này bị nhân với hệ số `285/15 = 19` rồi đổi sang `%SOH/cycle` (×37.5)
-để suy ra "tốc độ suy giảm mỗi chu kỳ" — chỉ cần độ dốc điện áp trong window **lớn hơn ~0.003V**
-(rất dễ xảy ra ngay cả ở pin khỏe mạnh, discharge bình thường) là kết quả bị **clip trần ở giá
-trị tối đa 2.0 %SOH/cycle**.
+`compute_degradation_metrics()` chỉ tính được tốc độ suy giảm riêng cho từng pin khi window trải
+`L >= 285` bước (~1 chu kỳ NASA). Production dùng **window=30** nên **luôn** rơi vào hằng số quần
+thể. Nói cách khác, các field này là **hàm của `soh_percent`**, không phải dự đoán:
 
-Hệ quả verify thực tế trên 1 kịch bản pin **93.3% SOH, `health_stage="Healthy"`, không cảnh báo
-nào**: response vẫn trả `rul_cycles_estimate: 6`, `cycles_to_maintenance: 4`,
-`degradation_rate_per_cycle: 2.0` — đọc qua tưởng pin sắp hỏng trong 6 chu kỳ, dù thực tế
-`soh_percent` + `health_stage` + `risk` đều nói pin khỏe bình thường.
+```
+rul_cycles_estimate   = (soh_percent - 80) / degradation_rate
+cycles_to_maintenance = (soh_percent - 85) / degradation_rate
+```
+
+Hằng số theo chemistry (GH-67 — trước đó dùng chung số của NASA cho cả LFP):
+
+| | NASA / NMC | LFP |
+|---|---|---|
+| `degradation_rate_per_cycle` | 0.15 | **0.0087** |
+| Pin mới (SOH 100%) → `rul_cycles_estimate` | 133 | **2298** |
+| Pin mới → `cycles_to_maintenance` | 100 | **1724** |
+
+> Trước khi sửa, một pack LFP 30 Ah **mới tinh** nhận `rul=133` / `cycles_to_maintenance=100` —
+> BE dùng để lên lịch bảo trì sẽ gọi thợ sớm gấp **~17 lần**.
 
 **BE PHẢI:**
 - Coi `soh_percent`, `health_stage`, `risk.*` là nguồn authoritative.
-- Coi `rul_cycles_estimate`/`degradation_rate_per_cycle`/`cycles_to_maintenance`/
-  `soh_trajectory` là **thử nghiệm/không đáng tin cho window=30** — không hiển thị trực tiếp cho
-  Customer như 1 con số dự báo chính xác (vd "pin sẽ hỏng sau N chu kỳ") nếu chưa có cải thiện
-  từ phía AI team cho trường hợp 1-window request. Các field này chỉ có ý nghĩa khi window thật
-  sự trải dài ≥ nhiều trăm timestep (nhiều chu kỳ thật) — không phải trường hợp chuẩn 30-timestep
-  mà production đang gửi.
+- Hiểu 3 field trên là **ước lượng tuyến tính theo tốc độ trung bình quần thể** — chúng **không**
+  bắt được "quả pin này đang xuống nhanh hơn bình thường". Hiển thị được cho khách, nhưng đừng
+  gọi nó là "dự báo".
+- ⚠️ Với LFP, `rul` ~2298 chu kỳ ≈ **6.3 năm** ở nhịp 1 chu kỳ/ngày. Đừng hiển thị độ chính xác
+  cấp chu kỳ cho một con số có chân trời 6 năm.
 
 ### 9.2. Escalation/safety text có thể lặp gần-giống nhau
 
@@ -358,19 +526,20 @@ P1 immediately." vs "escalate to P1 immediately" không dấu chấm) nên **kh�
 hiện gần-trùng lặp trong list. Nếu BE hiển thị trực tiếp lên UI ticket, cân nhắc dedup thêm theo
 similarity ở phía BE, hoặc chỉ hiển thị `n` item đầu.
 
-### 9.3. `prescription_id` / feedback loop — REST-only, chưa có ở gRPC
+### 9.3. ~~feedback loop REST-only~~ — ĐÃ CÓ `rpc SubmitFeedback`
 
-`PrescribeResponse.prescription_id` (GH-83, uuid4, chỉ set khi `enrich=true` và ghi history
-thành công) dùng để gọi **`POST /prescribe/feedback`** — endpoint này **CHỈ có ở REST**, `.proto`
-hiện KHÔNG có RPC tương ứng. Nếu BE cần vòng feedback (accepted/edited/rejected) mà muốn tránh
-hoàn toàn FastAPI, đây là khoảng trống cần 1 ticket bên AI team bổ sung RPC `SubmitFeedback` —
-hiện tại buộc phải gọi REST cho riêng bước này.
+Bản trước ghi là khoảng trống. Nay `.proto` **đã có** `rpc SubmitFeedback`, dùng chung hàm với
+`POST /prescribe/feedback`, parity đã có test: id sai → `NOT_FOUND` (REST `404`), status sai →
+`INVALID_ARGUMENT` (REST `422`). BE **không cần chạm FastAPI** cho bước này nữa.
 
-### 9.4. Idempotency — chưa có (GH-84)
+> `prescription_id` **rỗng** khi `enrich=false` — đường rule-only không ghi history. Đánh đổi có
+> chủ ý để giữ SLA hot-path.
 
-Gọi `Prescribe` nhiều lần với cùng input (event trùng/burst, retry MassTransit) sẽ chạy MC
-Dropout + rule/LLM lại từ đầu mỗi lần — không có cache/dedup phía AI. BE nên tự dedup phía
-consumer (theo event ID của chính BE) trong lúc chờ GH-84.
+### 9.4. Idempotency — ĐÃ CÓ
+
+`Prescribe` gọi lại với **cùng input** trả kết quả đã cache (`cached=true`), không chạy lại MC
+Dropout + LLM. Khoá cache gồm cả `n_series` / `chemistry` / `capacity_ah` — nếu không, một request
+pack 8S LFP có thể bị trả về response đã cache của pin 1 cell NMC.
 
 ### 9.5. Causal degradation rate (GH-95) cần cùng `battery_id` xuyên suốt
 
@@ -389,6 +558,28 @@ degradation (GH-70/GH-95) — đây là lý do GH-95 thêm causal rate (§9.5) l
 Đừng kỳ vọng `anomaly_score`/`anomaly_status` một mình phát hiện tốt degradation từ từ; chúng
 mạnh hơn ở phát hiện **bất thường đột ngột trong 1 window** (sensor spike, nhiễu) hơn là trend
 dài hạn.
+
+### 9.7. ⚠️ Với pin LFP, SOH bão hoà 100% ở đoạn phẳng OCV — giới hạn VẬT LÝ
+
+Đây là giới hạn quan trọng nhất khi chấm pin LFP, và **không phải lỗi model**.
+
+LFP có đường OCV cực phẳng: điện áp gần như không đổi từ 20% đến 90% SOC. Ở vùng đó **không tồn
+tại thông tin dung lượng** để bất kỳ model nào đọc. Đo trên `soh_mamba_v2.0-lfp.pth`:
+
+| Điện áp pack (8S) | V/cell | SOH trả về (cycle 100 → 2300) |
+|---|---|---|
+| 26.6 V | 3.33 V | 100.0% → 100.0% |
+| 25.0 V | 3.12 V | 100.0% → 100.0% |
+| 24.0 V | 3.00 V | 100.0% → 98.6% |
+| 23.2 V | 2.90 V | 100.0% → 90.3% |
+| 22.8 V | 2.85 V | 95.3% → 85.1% |
+
+Model **có** phân biệt — nhưng chỉ dưới ~**3.05 V/cell**, tức "đầu gối" cuối đoạn xả. Ở 26.4 V,
+ép sụt 0.96 V trong 87 giây (dốc bất thường) vẫn ra **100.0%**.
+
+**Hệ quả cho BE:** pin đang ở dải nghỉ/sạc bình thường (3.2–3.3 V/cell) sẽ **luôn** ra ~100% SOH.
+Đó là câu trả lời trung thực nhất có thể ở điểm vận hành đó, **không phải** bằng chứng pin hoàn
+hảo. Muốn có số SOH thật thì cần window rơi vào đoạn xả sâu.
 
 ---
 
@@ -449,6 +640,8 @@ Máy dev CPU, dummy weights trừ khi ghi chú khác (`scripts/benchmark_grpc.py
 | `Predict` unary | ~114ms | — | dummy weights |
 | `PredictStream` (per window) | ~116ms | — | không tốn thêm so với unary |
 | `Prescribe` (`enrich=false`) | ~116ms (dummy) / **54.1ms (real weights v1.6, n=50)** | 72.4ms (real) | Đạt cả SLA batch <500ms lẫn P1 hot-path <100ms |
+| `Predict` — bộ **LFP** (real weights, n=30) | 75.5ms | **80.0ms** | in-process, có tranh GIL |
+| `Prescribe` — bộ **LFP** (`enrich=false`, n=30) | 77.2ms | **82.4ms** | như trên |
 | Transport overhead (gRPC thêm so với gọi hàm trực tiếp) | ~1–28ms | — | budget <50ms — PASS |
 
 SLA `<100ms` (P1) enforce trên môi trường deploy với weights thật; số dev CPU chỉ tham khảo
@@ -485,7 +678,9 @@ foreach (var row in windowRows)              // 30 hàng, mỗi hàng 4 hoặc 6
     reading.Values.AddRange(row);
     request.Readings.Add(reading);
 }
-// Đa cell: request.PackConfig = new PackConfig { NSeries = 4, Chemistry = "LFP", CapacityAh = 2.5 };
+// Pack LFP 8S 24V 30Ah (pin thật của dự án):
+request.PackConfig = new PackConfig { NSeries = 8, Chemistry = "LFP", CapacityAh = 30.0 };
+// Bỏ Chemistry => rơi về bộ NASA: SOH lệch tới 60 điểm, trần dòng tụt 136A -> 75A
 
 var response = await client.PrescribeAsync(request);
 // response.Prediction.SohPercent, response.Prediction.HealthStage,
@@ -509,7 +704,8 @@ Chạy server local để test:
 
 ```bash
 python -m src.grpc_server              # gRPC :50051 (cần artifacts thật trong models/weights/)
-python scripts/grpc_client_demo.py     # demo đủ 4 RPC (thay Swagger)
+python scripts/grpc_client_demo.py     # demo các RPC (thay Swagger)
+python scripts/e2e_full_test.py        # test đầy đủ cả 2 bộ artifact + đo latency
 python scripts/benchmark_grpc.py --real-weights
 ```
 
