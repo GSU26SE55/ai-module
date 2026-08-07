@@ -64,6 +64,175 @@ class TestHealthRouter:
         assert "mamba_loaded" in data
         assert "isolation_forest_loaded" in data
 
+    def test_health_exposes_soc_mode_per_artifact_set(self, client):
+        """BE must read soc_mode from the server, not hardcode it by chemistry.
+
+        Asserts the STRING type too: a wrong soc_percent is never rejected by
+        /predict, it silently shifts SOH — so if this ever leaked a non-string
+        (a mock, None) BE's branch would fall through to the wrong payload shape
+        with no error anywhere.
+        """
+        data = client.get("/health").json()
+        assert isinstance(data["soc_mode"], str)
+        assert data["soc_mode"] in ("window", "cycle")
+        # "" = LFP artifacts not loaded; "unknown" = artifact declared something
+        # this build does not recognise. Both are strings the caller can branch on.
+        assert isinstance(data["lfp_soc_mode"], str)
+        assert data["lfp_soc_mode"] in ("", "window", "cycle", "unknown")
+
+    def test_health_exposes_long_model_readiness(self, client):
+        data = client.get("/health").json()
+        assert isinstance(data["long_loaded"], bool)
+        assert isinstance(data["long_model_version"], str)
+
+
+class TestClassificationFeedbackRouter:
+    """POST /predict/feedback — F4, khép vòng học nhánh anomaly."""
+
+    @pytest.fixture(autouse=True)
+    def _isolated_store(self, tmp_path, monkeypatch):
+        # Mỗi test một file riêng: store là append-only toàn cục, dùng chung sẽ khiến
+        # bộ đếm rò từ test này sang test khác và khẳng định về precision thành vô nghĩa.
+        import src.services.classification_feedback as cf
+
+        monkeypatch.setattr(cf, "FEEDBACK_DIR", str(tmp_path))
+        monkeypatch.setattr(cf, "FEEDBACK_PATH", str(tmp_path / "feedback.jsonl"))
+
+    def _payload(self, **over):
+        base = {
+            "battery_id": "B0005",
+            "classification": "Degrading",
+            "verdict": "correct",
+        }
+        base.update(over)
+        return base
+
+    def test_records_and_returns_counts(self, client):
+        resp = client.post("/predict/feedback", json=self._payload())
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["total"] == 1
+        assert data["correct"] == 1
+
+    def test_precision_is_null_before_any_feedback_not_zero(self, client):
+        """Chưa ai chấm ⇒ precision phải là null, KHÔNG phải 0.0.
+
+        0.0 đọc thành "model sai hết" — kết luận ngược hẳn với sự thật "chưa có dữ liệu".
+        Đây là chỗ một con số mặc định vô hại lại nói dối đúng lúc quan trọng nhất.
+        """
+        resp = client.post("/predict/feedback", json=self._payload(verdict="false_negative"))
+        data = resp.json()
+        # false_negative không vào mẫu số của precision ⇒ vẫn chưa tính được.
+        assert data["precision"] is None
+        assert data["recall"] == 0.0   # recall CÓ mẫu (tp=0, fn=1) ⇒ tính được, bằng 0
+
+    def test_counts_accumulate_across_calls(self, client):
+        client.post("/predict/feedback", json=self._payload(verdict="correct"))
+        client.post("/predict/feedback", json=self._payload(verdict="correct"))
+        resp = client.post("/predict/feedback", json=self._payload(verdict="false_positive"))
+        data = resp.json()
+        assert (data["total"], data["correct"], data["false_positive"]) == (3, 2, 1)
+        assert data["precision"] == round(2 / 3, 3)
+
+    def test_invalid_verdict_returns_422(self, client):
+        resp = client.post("/predict/feedback", json=self._payload(verdict="maybe"))
+        assert resp.status_code == 422
+
+    def test_invalid_classification_returns_422(self, client):
+        """Nhãn lạ phải bị TỪ CHỐI — file retrain lẫn nhãn rác tệ hơn file thiếu dòng."""
+        resp = client.post("/predict/feedback", json=self._payload(classification="Broken"))
+        assert resp.status_code == 422
+
+
+class TestPredictLongRouter:
+    """POST /predict/long — GH-10 long-sequence path."""
+
+    def _rows(self, n):
+        return [[3.7 + i * 0.0001, 1.5, 25.0, float(i)] for i in range(n)]
+
+    def test_long_happy_path(self, client):
+        fake = {
+            "soh_percent": 88.5,
+            "seq_len": 100,
+            "device": "cpu",
+            "inference_ms": 12.3,
+            "model_version": "2.2",
+        }
+        with patch("src.routers.predict.predict_soh_long", return_value=fake):
+            resp = client.post(
+                "/predict/long",
+                json={"battery_id": "B0005", "readings": self._rows(100)},
+            )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["battery_id"] == "B0005"
+        assert data["soh_percent"] == 88.5
+        assert data["model_version"] == "2.2"
+        # The long path must NOT pretend to have the window=30 extras.
+        for absent in ("confidence", "anomaly_score", "risk", "warnings"):
+            assert absent not in data
+
+    def test_long_rejects_exactly_window_size(self, client):
+        """30 rows belongs to /predict — which also returns anomaly/risk.
+
+        Accepting it here would hand back a bare SOH from a model that never saw
+        sequences that short, and the caller would never know it took a worse path.
+        """
+        resp = client.post(
+            "/predict/long",
+            json={"battery_id": "B0005", "readings": self._rows(WINDOW_SIZE)},
+        )
+        assert resp.status_code == 422
+
+    def test_long_rejects_over_max_seq_len(self, client):
+        from src.core.config import LONG_SEQ_LEN
+
+        resp = client.post(
+            "/predict/long",
+            json={"battery_id": "B0005", "readings": self._rows(LONG_SEQ_LEN + 1)},
+        )
+        assert resp.status_code == 422
+
+    def test_long_applies_same_range_guard_as_predict(self, client):
+        """A 12V pack without n_series must be rejected on BOTH paths.
+
+        Same physical limits, one shared implementation — otherwise one transport
+        accepts what the other rejects and the bug only shows up in production.
+        """
+        rows = self._rows(100)
+        rows[0][0] = 12.0  # pack voltage, no pack_config
+        resp = client.post(
+            "/predict/long", json={"battery_id": "B0005", "readings": rows}
+        )
+        assert resp.status_code == 422
+        assert "n_series" in resp.text
+
+    def test_long_forwards_pack_config(self, client):
+        rows = [[12.0, 1.5, 25.0, float(i)] for i in range(100)]
+        fake = {
+            "soh_percent": 90.0,
+            "seq_len": 100,
+            "device": "cpu",
+            "inference_ms": 5.0,
+            "model_version": "2.2",
+        }
+        with patch(
+            "src.routers.predict.predict_soh_long", return_value=fake
+        ) as mock_long:
+            resp = client.post(
+                "/predict/long",
+                json={
+                    "battery_id": "B0005",
+                    "readings": rows,
+                    "pack_config": {"n_series": 3, "capacity_ah": 50.0},
+                },
+            )
+        assert resp.status_code == 200
+        _, kwargs = mock_long.call_args
+        assert kwargs["n_series"] == 3
+        assert kwargs["capacity_ah"] == 50.0
+
 
 class TestPredictRouter:
     def _valid_payload(self):
