@@ -118,3 +118,29 @@ class TestComputeSocPercent:
         assert soc.shape == (30,)
         assert soc.dtype == np.float32
         assert soc.min() == 0.0 and soc.max() == 100.0
+
+
+def test_spectral_feat_dim_matches_the_real_extractor_width():
+    """Mắt xích giữa `SPECTRAL_FEAT_DIM` và chiều THẬT của extractor.
+
+    `TestExtractWindowFeatures.test_output_shape` chốt số 57 cứng, nhưng nó
+    không ràng buộc gì với config — sửa extractor rồi sửa luôn số 57 trong test
+    đó là suite vẫn xanh, trong khi `SPECTRAL_FEAT_DIM` đứng im và mọi checkpoint
+    cũ chết âm thầm.
+
+    Đó chính là chuyện đã xảy ra: commit e3f93da (2026-06-27) thêm Gini vào
+    `_spectral_features`, đẩy 9 → 10 đặc trưng/kênh, tức 3 × 18 = 54 → 3 × 19 = 57.
+    Checkpoint RUL lưu 2026-06-17 với `feat_dim=54` chết hẳn (ma trận lớp đầu
+    54 × 64, đưa vào 57 số là lỗi shape) và không ai biết trong hơn một tháng.
+
+    Test này đỏ NGAY khoảnh khắc extractor đổi chiều — trước khi kịp lưu
+    checkpoint nào. Nếu nó đỏ: cập nhật `SPECTRAL_FEAT_DIM` VÀ train lại toàn bộ
+    artifact, đừng chỉ sửa một trong hai.
+
+    3 kênh vì inference chấm trên (voltage, current, temperature):
+    xem `src/services/inference.py` — `extract_window_features(x_scaled[:, :3])`.
+    """
+    from src.core.config import SPECTRAL_FEAT_DIM
+
+    window = np.zeros((30, 3), dtype=np.float32)
+    assert extract_window_features(window).shape[0] == SPECTRAL_FEAT_DIM

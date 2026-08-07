@@ -55,6 +55,48 @@ lfp_iso_model      = None
 lfp_soc_mode       = "window"  # GH-67: how soc_percent was counted at train time
 
 
+def _resolve_feat_dim(checkpoint: dict, artifact_name: str) -> int:
+    """GH-67: chốt artifact khớp hợp đồng đặc trưng hiện tại của extractor.
+
+    `extract_window_features()` trông như hàm tiện ích, nhưng nó là HỢP ĐỒNG ĐẦU
+    VÀO của mọi model dùng nó. Đổi nó là đổi hồi tố hợp đồng của TẤT CẢ checkpoint
+    đã lưu trước đó — và kiểu hỏng này không sập lúc thay đổi, nó nằm im.
+
+    Ca thật: commit e3f93da (2026-06-27) thêm Gini vào `_spectral_features`, đẩy
+    9 → 10 đặc trưng/kênh (3 × 18 = 54 → 3 × 19 = 57). Checkpoint RUL lưu
+    2026-06-17 với feat_dim=54 chết hẳn (ma trận lớp đầu 54 × 64, đưa vào 57 số là
+    lỗi shape) và không ai biết hơn một tháng. Các model khác sống sót chỉ vì
+    TÌNH CỜ được train lại sau đó.
+
+    Luôn raise khi lệch — hậu quả do CALL SITE quyết định, không cần cờ ở đây:
+      · load_models()      không bọc try  ⇒ service không boot (đúng: thiếu bộ
+                                            mặc định thì service vô dụng)
+      · load_lfp_models()  đã bọc try     ⇒ chỉ log warning, artifact để None, và
+                                            _resolve_artifacts("LFP") sẽ từ chối
+                                            rơi về bộ NASA ⇒ request LFP nhận lỗi
+                                            rõ ràng thay vì bị chấm sai
+    """
+    saved = checkpoint.get("feat_dim")
+    if saved is None:
+        # Artifact cũ hơn khoá này (vd soh_mamba_v1.0.pth) — không nằm trên đường
+        # production, nên cảnh báo là đủ, không chặn.
+        logger.warning(
+            "%s khong co khoa 'feat_dim' — gia dinh %d. Artifact nay cu hon luc "
+            "feat_dim duoc luu; neu no nam tren duong production thi train lai.",
+            artifact_name, SPECTRAL_FEAT_DIM,
+        )
+        return SPECTRAL_FEAT_DIM
+    if saved != SPECTRAL_FEAT_DIM:
+        raise RuntimeError(
+            f"{artifact_name} luu voi feat_dim={saved} nhung extract_window_features() "
+            f"hien sinh {SPECTRAL_FEAT_DIM} dac trung (SPECTRAL_FEAT_DIM). Checkpoint "
+            f"duoc luu TRUOC mot thay doi cua extractor (vd commit e3f93da them Gini). "
+            f"Train lai artifact, hoac checkout dung commit extractor tuong ung — "
+            f"KHONG sua SPECTRAL_FEAT_DIM cho khop, lam the la cham bang dac trung sai."
+        )
+    return saved
+
+
 def load_models() -> None:
     global scaler, feature_scaler, soh_model, iso_model
 
@@ -106,7 +148,7 @@ def load_models() -> None:
             f"Model version mismatch: expected {MODEL_VERSION}, got {checkpoint['version']}"
         )
     input_features = checkpoint.get("input_features", 6)
-    feat_dim       = checkpoint.get("feat_dim", SPECTRAL_FEAT_DIM)
+    feat_dim       = _resolve_feat_dim(checkpoint, MAMBA_PATH)
     d_model        = checkpoint.get("d_model", 64)
     d_state        = checkpoint.get("d_state", 16)
     soh_model = MambaSOHPredictor(input_features=input_features, feat_dim=feat_dim, d_model=d_model, d_state=d_state)
@@ -240,7 +282,7 @@ def load_lfp_models() -> None:
             f"got {checkpoint['version']}"
         )
     input_features = checkpoint.get("input_features", 6)
-    feat_dim = checkpoint.get("feat_dim", SPECTRAL_FEAT_DIM)
+    feat_dim = _resolve_feat_dim(checkpoint, LFP_MAMBA_PATH)
     model = MambaSOHPredictor(
         input_features=input_features,
         feat_dim=feat_dim,
@@ -293,7 +335,7 @@ def load_long_model(device: str | None = None) -> MambaSOHPredictor:
         )
     model = MambaSOHPredictor(
         input_features=checkpoint.get("input_features", 8),
-        feat_dim=checkpoint.get("feat_dim", SPECTRAL_FEAT_DIM),
+        feat_dim=_resolve_feat_dim(checkpoint, LONG_MAMBA_PATH),
         d_model=checkpoint.get("d_model", 64),
         d_state=checkpoint.get("d_state", 16),
         pooling=checkpoint.get("pooling", "attention"),
