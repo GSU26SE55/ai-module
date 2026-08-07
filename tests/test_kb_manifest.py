@@ -18,8 +18,19 @@ MANIFEST_PATH = os.path.join(REPO_ROOT, "models", "embeddings", "manifest.json")
 
 
 def _sha256_file(path: str) -> str:
+    """Băm sha256 nội dung file, chuẩn hoá CRLF → LF trước.
+
+    Băm trên nội dung đã chuẩn hoá LF, KHÔNG phải byte thô trên đĩa.
+
+    manifest.json được sinh trong container Linux (LF), còn dev checkout trên
+    Windows nhận CRLF — băm byte thô thì 6/6 file lệch và test drift đỏ trên MỌI
+    máy Windows dù knowledge/ không hề đổi. Suite đỏ sẵn là suite không ai đọc.
+
+    ⚠️ Hai chỗ băm (scripts/ingest_rag.py và tests/test_kb_manifest.py) PHẢI
+    chuẩn hoá giống hệt nhau — sửa một chỗ chỉ đổi xem bên nào đỏ.
+    """
     with open(path, "rb") as f:
-        return hashlib.sha256(f.read()).hexdigest()
+        return hashlib.sha256(f.read().replace(b"\r\n", b"\n")).hexdigest()
 
 
 def _current_knowledge_files() -> dict[str, str]:

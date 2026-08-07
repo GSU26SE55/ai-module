@@ -172,3 +172,51 @@ def test_load_models_enables_flush_denormal(monkeypatch):
     assert seen and seen[0] is True, (
         "load_models() must enable flush-to-zero before any inference — got: " + repr(seen)
     )
+
+
+class TestFeatDimGuard:
+    """GH-67 — chặn artifact lệch hợp đồng đặc trưng của extractor.
+
+    Lớp lỗi này đã cắn 6 lần và đặc điểm chung là KHÔNG sập lúc thay đổi:
+    5 lần đầu là hằng số NASA rò sang đường LFP (trả số sai âm thầm), lần thứ 6
+    là Gini đẩy feat_dim 54 → 57 làm chết checkpoint RUL trong hơn một tháng.
+    """
+
+    def test_matching_feat_dim_passes(self):
+        from src.core.config import SPECTRAL_FEAT_DIM
+        from src.core.model_loader import _resolve_feat_dim
+
+        assert _resolve_feat_dim({"feat_dim": SPECTRAL_FEAT_DIM}, "x.pth") == SPECTRAL_FEAT_DIM
+
+    def test_stale_feat_dim_raises_with_actionable_message(self):
+        """Đúng con số của ca thật: checkpoint RUL lưu 54, extractor sinh 57."""
+        from src.core.model_loader import _resolve_feat_dim
+
+        with pytest.raises(RuntimeError) as exc:
+            _resolve_feat_dim({"feat_dim": 54}, "soh_mamba_rul_v1.0.pth")
+        msg = str(exc.value)
+        assert "54" in msg and "57" in msg
+        # Thông báo phải chặn cách "sửa" sai lầm tự nhiên nhất — hạ
+        # SPECTRAL_FEAT_DIM xuống cho khớp, tức chấm bằng đặc trưng sai.
+        assert "KHONG sua SPECTRAL_FEAT_DIM" in msg
+
+    def test_missing_key_only_warns(self):
+        """soh_mamba_v1.0.pth không có khoá feat_dim — artifact cũ hơn khoá này,
+        không nằm trên đường production nên không được chặn boot."""
+        from src.core.config import SPECTRAL_FEAT_DIM
+        from src.core.model_loader import _resolve_feat_dim
+
+        assert _resolve_feat_dim({}, "soh_mamba_v1.0.pth") == SPECTRAL_FEAT_DIM
+
+    def test_lfp_mismatch_degrades_instead_of_killing_the_service(self):
+        """load_lfp_models() đã được bọc try/except sẵn, nên artifact LFP hỏng
+        chỉ làm mất đường LFP chứ không chặn boot — deploy chỉ phục vụ NASA vẫn
+        chạy. Request chemistry='LFP' sau đó nhận lỗi rõ ràng từ
+        _resolve_artifacts(), không bị chấm bằng trọng số NASA."""
+        import inspect
+
+        import src.core.model_loader as ml
+
+        src = inspect.getsource(ml.load_models)
+        i = src.index("load_lfp_models()")
+        assert "try:" in src[:i], "load_lfp_models() phải nằm trong try — nếu không, artifact LFP hỏng sẽ chặn boot cả service"
