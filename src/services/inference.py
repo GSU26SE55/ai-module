@@ -19,6 +19,7 @@ from src.core.config import (
     LFP_MODEL_VERSION,
     LFP_NOMINAL_CAPACITY_AH,
     LFP_TEMPERATURE_TRAIN_CLUSTERS,
+    LONG_MODEL_VERSION,
     MODEL_VERSION,
     NOMINAL_CAPACITY_AH,
     TEMPERATURE_OOD_THRESHOLD,
@@ -111,6 +112,41 @@ def _resolve_artifacts(chemistry: str | None) -> _Artifacts:
         model_loader.soh_model, model_loader.iso_model,
         CYCLE_COUNT_NORM, "NASA", MODEL_VERSION,
     )
+
+
+def soc_mode_for(chemistry: str | None) -> str:
+    """Which soc_percent definition the artifact set for `chemistry` was trained with.
+
+    "window" -> caller must send WINDOW-LOCAL soc (100% at row 0 of THIS window).
+    "cycle"  -> caller must send DISCHARGE-SCOPED soc (the battery's real SOC).
+    ""       -> that artifact set is not loaded, so nothing can be scored with it.
+
+    Exposed through /health (and gRPC Health) because soc_mode is a property of
+    the ARTIFACTS, not of the request: hardcoding it caller-side by chemistry
+    breaks silently the day a set is retrained with the other definition, and a
+    wrong soc_percent is never rejected — it just shifts SOH. Callers should read
+    it from the server instead of assuming.
+    """
+    if chemistry == "LFP":
+        if model_loader.lfp_soh_model is None:
+            return ""
+        mode = model_loader.lfp_soc_mode
+    else:
+        mode = _resolve_artifacts(None).soc_mode
+    # The LFP value comes out of a pickled artifact (scaler_lfp.pkl["soc_mode"]),
+    # so a malformed or re-exported artifact can put anything here. Emitting that
+    # verbatim would put a non-value into /health, and the caller branches on this
+    # field to decide the payload shape — it would pick the wrong one and never
+    # see an error. Refuse to guess: report "unknown" and say so in the log.
+    if mode not in ("window", "cycle"):
+        logger.warning(
+            "Artifact set for chemistry=%r declares soc_mode=%r, which is neither "
+            "'window' nor 'cycle' — reporting 'unknown' so callers do not silently "
+            "pick a soc_percent definition the model was not trained on.",
+            chemistry, mode,
+        )
+        return "unknown"
+    return mode
 
 
 def _expected_feature_count(art: _Artifacts) -> int:
@@ -481,7 +517,12 @@ def _add_long_derived_features(x: np.ndarray) -> np.ndarray:
     )
 
 
-def predict_soh_long(readings: list[list[float]], device: str | None = None) -> dict:
+def predict_soh_long(
+    readings: list[list[float]],
+    device: str | None = None,
+    n_series: int = 1,
+    capacity_ah: float | None = None,
+) -> dict:
     """Fast-path SOH inference for long sequences (L up to 4096), GH-10.
 
     Single forward pass (no MC-dropout) with the attention-pooling long model on
@@ -501,6 +542,14 @@ def predict_soh_long(readings: list[list[float]], device: str | None = None) -> 
 
     start = time.perf_counter()
     raw = np.array(readings, dtype=np.float32)
+    # GH-65/67: same pack→cell normalisation as run_inference(), applied BEFORE the
+    # scaler for the same reason. Without this a 12V pack would be scaled as if it
+    # were a single cell and the long path would disagree with /predict on the very
+    # same battery — two numbers, one of them wrong, and no error either way.
+    if n_series > 1:
+        raw[:, BASE_FEATURES.index("voltage")] /= n_series
+    if capacity_ah:
+        raw[:, BASE_FEATURES.index("current")] *= NOMINAL_CAPACITY_AH / capacity_ah
     # The long path has always sized its base-feature alignment off the DEFAULT
     # scaler (both sets carry the same 4 base columns); resolving the default
     # bundle here keeps that behaviour byte-for-byte after the GH-67 refactor.
@@ -527,4 +576,7 @@ def predict_soh_long(readings: list[list[float]], device: str | None = None) -> 
         "seq_len": int(raw.shape[0]),
         "device": str(dev),
         "inference_ms": elapsed_ms,
+        # LONG_MODEL_VERSION, not MODEL_VERSION — a different artifact entirely.
+        # Callers that log "which model produced this SOH" need the right one.
+        "model_version": LONG_MODEL_VERSION,
     }

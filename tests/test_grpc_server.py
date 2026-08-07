@@ -267,6 +267,158 @@ def test_health(servicer):
     assert resp.scaler_loaded and resp.mamba_loaded and resp.isolation_forest_loaded
 
 
+def test_health_exposes_soc_mode_and_long_readiness(servicer):
+    """gRPC is the transport BE actually uses — it needs these as much as REST.
+
+    soc_mode tells the caller which soc_percent definition each artifact set was
+    trained with. Getting it wrong is never rejected by Predict, it just shifts
+    SOH, so the caller must read it rather than assume it from chemistry.
+    """
+    resp = servicer.Health(pb.HealthRequest(), None)
+    assert resp.soc_mode in ("window", "cycle", "unknown")
+    assert resp.lfp_soc_mode in ("", "window", "cycle", "unknown")
+    assert isinstance(resp.long_loaded, bool)
+    assert resp.long_model_version != ""
+
+
+# ── PredictLong ────────────────────────────────────────────────────────
+
+
+LONG_FAKE = {
+    "soh_percent": 87.25,
+    "seq_len": 120,
+    "device": "cpu",
+    "inference_ms": 9.5,
+    "model_version": "2.2",
+}
+
+
+def _long_readings(n):
+    return [
+        pb.Reading(values=[3.7 + i * 0.0001, 1.5, 25.0, float(i)]) for i in range(n)
+    ]
+
+
+def test_predict_long_returns_soh_only(servicer):
+    with patch("src.grpc_server.predict_soh_long", return_value=LONG_FAKE):
+        resp = servicer.PredictLong(
+            pb.PredictLongRequest(battery_id="B0005", readings=_long_readings(120)),
+            None,
+        )
+    assert resp.battery_id == "B0005"
+    assert resp.soh_percent == 87.25
+    assert resp.seq_len == 120
+    assert resp.model_version == "2.2"
+
+
+def test_predict_long_rest_grpc_parity(servicer, rest_client):
+    """Both transports must return the same numbers for the same input.
+
+    Same reason the unary parity tests exist: BE falls back from gRPC to HTTP, so
+    a divergence here shows up as the SOH changing when the primary transport
+    happens to be down — the hardest possible bug to attribute.
+    """
+    payload_rows = [[3.7 + i * 0.0001, 1.5, 25.0, float(i)] for i in range(120)]
+    with patch("src.grpc_server.predict_soh_long", return_value=LONG_FAKE), patch(
+        "src.routers.predict.predict_soh_long", return_value=LONG_FAKE
+    ):
+        grpc_resp = servicer.PredictLong(
+            pb.PredictLongRequest(battery_id="B0005", readings=_long_readings(120)),
+            None,
+        )
+        rest_resp = rest_client.post(
+            "/predict/long", json={"battery_id": "B0005", "readings": payload_rows}
+        )
+    assert rest_resp.status_code == 200
+    rest = rest_resp.json()
+    assert grpc_resp.soh_percent == rest["soh_percent"]
+    assert grpc_resp.seq_len == rest["seq_len"]
+    assert grpc_resp.device == rest["device"]
+    assert grpc_resp.model_version == rest["model_version"]
+
+
+def test_classification_feedback_grpc_rest_parity(servicer, rest_client, tmp_path, monkeypatch):
+    """F4 — hai transport phải ghi cùng một store và trả cùng bộ đếm.
+
+    Nếu lệch, cùng một phản hồi của kỹ thuật viên sẽ đếm khác nhau tuỳ transport đang sống,
+    và số precision/recall dùng để quyết định retrain sẽ sai mà không ai biết.
+    """
+    import src.services.classification_feedback as cf
+
+    monkeypatch.setattr(cf, "FEEDBACK_DIR", str(tmp_path))
+    monkeypatch.setattr(cf, "FEEDBACK_PATH", str(tmp_path / "feedback.jsonl"))
+
+    g = servicer.SubmitClassificationFeedback(
+        pb.ClassificationFeedbackRequest(
+            battery_id="B0005", classification="Failed", verdict="correct"),
+        None,
+    )
+    assert g.success and g.total == 1 and g.correct == 1
+    assert g.has_precision and g.precision == 1.0
+
+    r = rest_client.post("/predict/feedback", json={
+        "battery_id": "B0005", "classification": "Failed", "verdict": "false_positive",
+    })
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 2, "REST phải thấy bản ghi mà gRPC vừa ghi — cùng một store"
+    assert body["precision"] == 0.5
+
+
+def test_classification_feedback_unknown_verdict_invalid_argument(grpc_stub):
+    with pytest.raises(grpc.RpcError) as exc_info:
+        grpc_stub.SubmitClassificationFeedback(
+            pb.ClassificationFeedbackRequest(
+                battery_id="B0005", classification="Failed", verdict="maybe"))
+    assert exc_info.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+
+
+def test_classification_feedback_has_precision_false_when_no_samples(
+    servicer, tmp_path, monkeypatch
+):
+    """has_precision=false phân biệt 'chưa ai chấm' với 'đã chấm và sai hết'.
+
+    proto3 scalar không nullable nên precision=0.0 một mình là mơ hồ — và hai nghĩa đó
+    dẫn tới hai quyết định trái ngược về việc có retrain hay không.
+    """
+    import src.services.classification_feedback as cf
+
+    monkeypatch.setattr(cf, "FEEDBACK_DIR", str(tmp_path))
+    monkeypatch.setattr(cf, "FEEDBACK_PATH", str(tmp_path / "feedback.jsonl"))
+
+    resp = servicer.SubmitClassificationFeedback(
+        pb.ClassificationFeedbackRequest(
+            battery_id="B0005", classification="Failed", verdict="false_negative"),
+        None,
+    )
+    # tp=0, fp=0 ⇒ precision chưa tính được; tp=0, fn=1 ⇒ recall tính được và bằng 0.
+    assert resp.has_precision is False and resp.precision == 0.0
+    assert resp.has_recall is True and resp.recall == 0.0
+
+
+def test_predict_long_rejects_window_size_with_invalid_argument(grpc_stub):
+    with pytest.raises(grpc.RpcError) as exc_info:
+        grpc_stub.PredictLong(
+            pb.PredictLongRequest(
+                battery_id="B0005", readings=_long_readings(WINDOW_SIZE)
+            )
+        )
+    assert exc_info.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    assert "timesteps" in exc_info.value.details()
+
+
+def test_predict_long_range_guard_matches_predict(grpc_stub):
+    """A 12V pack without n_series is rejected on the long path too."""
+    rows = _long_readings(120)
+    rows[0] = pb.Reading(values=[12.0, 1.5, 25.0, 0.0])
+    with pytest.raises(grpc.RpcError) as exc_info:
+        grpc_stub.PredictLong(
+            pb.PredictLongRequest(battery_id="B0005", readings=rows)
+        )
+    assert exc_info.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    assert "n_series" in exc_info.value.details()
+
+
 # ── Predict ────────────────────────────────────────────────────────────
 
 
@@ -290,6 +442,44 @@ def test_predict_invalid_shape_aborts_invalid_argument(grpc_stub):
         grpc_stub.Predict(pb.PredictRequest(battery_id="B0005", readings=short))
     assert exc_info.value.code() == grpc.StatusCode.INVALID_ARGUMENT
     assert "timesteps" in exc_info.value.details()
+
+
+def test_predict_payload_artifact_mismatch_aborts_invalid_argument(grpc_stub):
+    """Payload không khớp bộ artifact ⇒ INVALID_ARGUMENT, KHÔNG phải INTERNAL.
+
+    Ca thật quan sát được trong production: BE gửi 4 cột cho bộ soc_mode='cycle'.
+    Trả INTERNAL khiến BE tưởng AI chết rồi fallback sang HTTP — nơi cùng payload đó
+    bị từ chối y hệt. Hai round-trip cho cùng một câu trả lời, và log thì đổ lỗi cho
+    hạ tầng thay vì chỉ ra dữ liệu sai.
+    """
+    with patch(
+        "src.grpc_server.run_inference",
+        side_effect=ValueError("LFP artifacts were trained with soc_mode='cycle' ..."),
+    ), pytest.raises(grpc.RpcError) as exc_info:
+        grpc_stub.Predict(pb.PredictRequest(battery_id="B0005", readings=VALID_READINGS))
+    assert exc_info.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    assert "soc_mode" in exc_info.value.details()
+
+
+def test_prescribe_payload_artifact_mismatch_aborts_invalid_argument(grpc_stub):
+    """Prescribe chạy run_inference() làm bước 1 nên phải phân loại lỗi giống Predict."""
+    with patch(
+        "src.grpc_server.run_prescription",
+        side_effect=ValueError("LFP artifacts were trained with soc_mode='cycle' ..."),
+    ), pytest.raises(grpc.RpcError) as exc_info:
+        grpc_stub.Prescribe(
+            pb.PrescribeRequest(battery_id="B0005", readings=VALID_READINGS)
+        )
+    assert exc_info.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+
+
+def test_predict_genuine_server_fault_still_internal(grpc_stub):
+    """Lỗi thật của server vẫn phải là INTERNAL — nếu không BE sẽ ngừng fallback."""
+    with patch(
+        "src.grpc_server.run_inference", side_effect=RuntimeError("torch blew up")
+    ), pytest.raises(grpc.RpcError) as exc_info:
+        grpc_stub.Predict(pb.PredictRequest(battery_id="B0005", readings=VALID_READINGS))
+    assert exc_info.value.code() == grpc.StatusCode.INTERNAL
 
 
 def test_predict_wrong_feature_count_aborts_invalid_argument(grpc_stub):

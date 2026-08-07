@@ -17,12 +17,17 @@ import grpc
 from pydantic import ValidationError
 
 from src.core import model_loader
-from src.core.config import LFP_MODEL_VERSION, MODEL_VERSION
+from src.core.config import LFP_MODEL_VERSION, LONG_MODEL_VERSION, MODEL_VERSION
 from src.grpc_gen import ai_service_pb2, ai_service_pb2_grpc
-from src.schemas.predict import PredictRequest
+from src.schemas.predict import (
+    ClassificationFeedbackRequest,
+    PredictLongRequest,
+    PredictRequest,
+)
 from src.schemas.prescribe import PrescribeRequest, PrescriptionFeedbackRequest
 from src.schemas.verify import VerifyTicketRequest
-from src.services.inference import run_inference
+from src.services.classification_feedback import record_feedback
+from src.services.inference import predict_soh_long, run_inference, soc_mode_for
 from src.services.prescription import run_prescription, submit_prescription_feedback
 from src.services.verify import run_verify
 
@@ -260,6 +265,14 @@ class AiServiceServicer(ai_service_pb2_grpc.AiServiceServicer):
                 capacity_ah=pack.capacity_ah if pack else None,
                 battery_id=parsed.battery_id,
             )
+        except ValueError as exc:
+            # Payload sai hình dạng so với bộ artifact được chọn — điển hình là gửi 4 cột
+            # cho bộ soc_mode="cycle". Đây là lỗi của INPUT, không phải server hỏng.
+            # Trả INTERNAL khiến caller tưởng AI chết rồi fallback sang HTTP, nơi cùng một
+            # payload bị từ chối y hệt: tốn hai round-trip để nhận cùng một câu trả lời.
+            # INVALID_ARGUMENT cho caller dừng ngay và sửa payload.
+            logger.warning("Predict rejected payload: %s", exc)
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
         except Exception as exc:
             logger.exception("Predict failed")
             context.abort(grpc.StatusCode.INTERNAL, f"inference failed: {exc}")
@@ -299,6 +312,12 @@ class AiServiceServicer(ai_service_pb2_grpc.AiServiceServicer):
                 last_maintenance_date=parsed.last_maintenance_date,
                 ticket_history=parsed.ticket_history,
             )
+        except ValueError as exc:
+            # Cùng lý do như Predict: Prescribe chạy run_inference() làm bước 1, nên nó
+            # thừa hưởng y hệt lỗi payload-vs-artifact. Phải phân loại giống nhau, nếu
+            # không cùng một payload sai lại cho hai mã lỗi khác nhau tuỳ RPC.
+            logger.warning("Prescribe rejected payload: %s", exc)
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
         except Exception as exc:
             logger.exception("Prescribe failed")
             context.abort(grpc.StatusCode.INTERNAL, f"prescription failed: {exc}")
@@ -331,6 +350,85 @@ class AiServiceServicer(ai_service_pb2_grpc.AiServiceServicer):
             # any chemistry="LFP" traffic (that request fails if not loaded).
             lfp_loaded=model_loader.lfp_soh_model is not None,
             lfp_model_version=LFP_MODEL_VERSION,
+            # soc_mode belongs to the ARTIFACTS, not the request. Callers that
+            # hardcode it by chemistry break silently the day a set is retrained
+            # with the other definition — a wrong soc_percent is never rejected.
+            soc_mode=soc_mode_for(None),
+            lfp_soc_mode=soc_mode_for("LFP"),
+            # Long model loads LAZILY on first PredictLong, so False here means
+            # "not called yet", NOT "artifact missing".
+            long_loaded=model_loader.long_soh_model is not None,
+            long_model_version=LONG_MODEL_VERSION,
+        )
+
+    def PredictLong(self, request, context):
+        """SOH from a long raw series (31..4096). Mirror of POST /predict/long.
+
+        SOH only — no MC-dropout and no IsolationForest on this path (the forest
+        is fitted on the window=30 feature distribution). Validated through the
+        SAME Pydantic schema as REST so both transports reject identical inputs.
+        """
+        payload = {
+            "battery_id": request.battery_id,
+            "readings": [list(r.values) for r in request.readings],
+        }
+        if request.HasField("pack_config"):
+            payload["pack_config"] = _pack_config_dict(request.pack_config)
+
+        validated = _validate(PredictLongRequest, payload, context)
+        pack = validated.pack_config
+        result = predict_soh_long(
+            validated.readings,
+            n_series=pack.n_series if pack else 1,
+            capacity_ah=pack.capacity_ah if pack else None,
+        )
+        return ai_service_pb2.PredictLongResponse(
+            battery_id=validated.battery_id,
+            soh_percent=result["soh_percent"],
+            seq_len=result["seq_len"],
+            device=result["device"],
+            inference_ms=result["inference_ms"],
+            model_version=result["model_version"],
+        )
+
+    def SubmitClassificationFeedback(self, request, context):
+        """F4 — ghi nhận kỹ thuật viên chấm lại phân loại. Mirror POST /predict/feedback."""
+        validated = _validate(
+            ClassificationFeedbackRequest,
+            {
+                "battery_id": request.battery_id,
+                "classification": request.classification,
+                "verdict": request.verdict,
+                "model_version": request.model_version,
+                "classified_at": request.classified_at,
+                "note": request.note,
+            },
+            context,
+        )
+        try:
+            counts = record_feedback(
+                battery_id=validated.battery_id,
+                classification=validated.classification,
+                verdict=validated.verdict,
+                model_version=validated.model_version,
+                classified_at=validated.classified_at,
+                note=validated.note,
+            )
+        except ValueError as exc:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+
+        return ai_service_pb2.ClassificationFeedbackResponse(
+            success=True,
+            total=counts["total"],
+            correct=counts["correct"],
+            false_positive=counts["false_positive"],
+            false_negative=counts["false_negative"],
+            # has_* phân biệt "chưa ai chấm" với "đã chấm và sai hết" — proto3 scalar
+            # không nullable nên 0.0 một mình là mơ hồ đúng ở chỗ nguy hiểm nhất.
+            precision=counts["precision"] or 0.0,
+            has_precision=counts["precision"] is not None,
+            recall=counts["recall"] or 0.0,
+            has_recall=counts["recall"] is not None,
         )
 
     def VerifyTicket(self, request, context):

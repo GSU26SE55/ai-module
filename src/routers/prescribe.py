@@ -26,6 +26,16 @@ async def prescribe(request: PrescribeRequest) -> dict:
     Returns SOH/risk context, action steps, PPE, retrieved evidence (when enriched),
     and the safety-gate result (human_verification_required forced True for P1).
     """
+    try:
+        return _run(request)
+    except ValueError as exc:
+        # Prescribe chạy run_inference() làm bước 1 nên thừa hưởng y hệt lỗi
+        # payload-vs-artifact của Predict. Phải trả cùng mã (422 ↔ INVALID_ARGUMENT),
+        # nếu không cùng một payload sai lại cho hai kết quả khác nhau tuỳ endpoint.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _run(request: PrescribeRequest) -> dict:
     return run_prescription(
         readings              = request.readings,
         battery_id            = request.battery_id,

@@ -1,4 +1,5 @@
 import math
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -7,16 +8,16 @@ from src.core.config import (
     CURRENT_RANGE,
     FEATURES,
     INPUT_FEATURES,
+    LONG_SEQ_LEN,
+    MAX_WINDOW_SPAN_S,
     NOMINAL_CAPACITY_AH,
     NOMINAL_CAPACITY_AH_BY_CHEMISTRY,
     SOC_RANGE,
     TEMPERATURE_RANGE,
-    MAX_WINDOW_SPAN_S,
     VOLTAGE_CELL_RANGE,
     VOLTAGE_CELL_RANGE_BY_CHEMISTRY,
     WINDOW_SIZE,
 )
-
 
 LEGACY_INPUT_FEATURES = 3
 LEGACY_FEATURES = ["voltage", "current", "temperature"]
@@ -79,6 +80,80 @@ class PackConfig(BaseModel):
         if v is None:
             return v
         return {"lfp": "LFP", "lifepo4": "LFP", "nmc": "NMC"}.get(v.strip().lower(), v)
+
+
+def check_reading_ranges(
+    readings: list[list[float]], pack_config: "PackConfig | None"
+) -> None:
+    """GH-66 value-range guard, shared by every request shape that carries readings.
+
+    Extracted so PredictLongRequest (GH-10, 31..4096 rows) enforces the SAME
+    physical limits as PredictRequest — a second, drifting copy of these bounds
+    is exactly how one transport ends up accepting what the other rejects.
+
+    Voltage is checked PER-CELL, i.e. after dividing by pack_config.n_series
+    (GH-65) — so a 12V pack with n_series=3 passes, while 12V without
+    pack_config is rejected with a hint. GH-67: current is checked on the
+    C-rate equivalent của cell danh định theo chemistry
+    (current × nominal / pack_config.capacity_ah) — a 50 Ah pack discharging
+    10 A (0.2C) passes, while 10 A without capacity_ah is rejected.
+    Ranges: src/core/config.py.
+    `time` has no range (finite-checked by the caller); cycle_count keeps GH-59 clip.
+    """
+    n_series = pack_config.n_series if pack_config else 1
+    capacity_ah = pack_config.capacity_ah if pack_config else None
+    # GH-67: dải per-cell VÀ cell danh định đều theo chemistry khi có khai báo.
+    # - VOLTAGE_CELL_RANGE_BY_CHEMISTRY: dải chung [2.0, 4.5] quá lỏng cho LFP
+    #   (cell LFP tối đa vật lý 3.65 V), xem config.py.
+    # - NOMINAL_CAPACITY_AH_BY_CHEMISTRY: bộ LFP train trên cell Severson 1.1 Ah,
+    #   không phải cell NASA 2.0 Ah. Giá trị ở đây PHẢI khớp
+    #   art.nominal_capacity_ah bên inference.py — lệch nhau thì guard chấp nhận
+    #   thứ mà model không nhận đúng (có test khoá:
+    #   test_schema_and_inference_use_the_same_nominal).
+    _chem = pack_config.chemistry if pack_config else None
+    nominal = NOMINAL_CAPACITY_AH_BY_CHEMISTRY.get(_chem, NOMINAL_CAPACITY_AH)
+    i_scale = nominal / capacity_ah if capacity_ah else 1.0
+    v_lo, v_hi = VOLTAGE_CELL_RANGE_BY_CHEMISTRY.get(_chem, VOLTAGE_CELL_RANGE)
+    i_lo, i_hi = CURRENT_RANGE
+    t_lo, t_hi = TEMPERATURE_RANGE
+    s_lo, s_hi = SOC_RANGE
+    for i, row in enumerate(readings):
+        v_cell = row[0] / n_series
+        if not v_lo <= v_cell <= v_hi:
+            hint = (
+                " — if this is a multi-cell pack (e.g. 12V ~ 3S NMC or "
+                "25.6V ~ 8S LFP), send pack_config.n_series so voltage can "
+                "be normalized per-cell"
+                if n_series == 1
+                else f" (pack voltage {row[0]} / n_series {n_series})"
+            )
+            raise ValueError(
+                f"readings[{i}].voltage: per-cell value {v_cell:.3f} V outside "
+                f"allowed range [{v_lo}, {v_hi}] V{hint}"
+            )
+        i_equiv = row[1] * i_scale
+        if not i_lo <= i_equiv <= i_hi:
+            hint = (
+                " — if this pack's capacity differs from the NASA 2 Ah cell, "
+                "send pack_config.capacity_ah so current can be normalized "
+                "by C-rate"
+                if i_scale == 1.0
+                else f" (current {row[1]} A × {nominal} / capacity_ah {capacity_ah})"
+            )
+            raise ValueError(
+                f"readings[{i}].current: C-rate equivalent value {i_equiv:.3f} A "
+                f"outside allowed range [{i_lo}, {i_hi}] A{hint}"
+            )
+        if not t_lo <= row[2] <= t_hi:
+            raise ValueError(
+                f"readings[{i}].temperature={row[2]} °C outside allowed range "
+                f"[{t_lo}, {t_hi}] °C"
+            )
+        if len(row) >= 6 and not s_lo <= row[5] <= s_hi:
+            raise ValueError(
+                f"readings[{i}].soc_percent={row[5]} outside allowed range "
+                f"[{s_lo}, {s_hi}]"
+            )
 
 
 class PredictRequest(BaseModel):
@@ -155,67 +230,10 @@ class PredictRequest(BaseModel):
         INVALID_ARGUMENT gRPC via the shared schema) instead of letting the scaler
         transform them outside [0,1] and silently predicting garbage SOH.
 
-        Voltage is checked PER-CELL, i.e. after dividing by pack_config.n_series
-        (GH-65) — so a 12V pack with n_series=3 passes, while 12V without
-        pack_config is rejected with a hint. GH-67: current is checked on the
-        C-rate equivalent của cell danh định theo chemistry (current × nominal / capacity_ah) —
-        a 50 Ah pack discharging 10 A (0.2C) passes, while 10 A without
-        capacity_ah is rejected. Ranges: src/core/config.py.
-        `time` has no range (finite-checked above); cycle_count keeps GH-59 clip."""
-        n_series = self.pack_config.n_series if self.pack_config else 1
-        capacity_ah = self.pack_config.capacity_ah if self.pack_config else None
-        _chem_cap = self.pack_config.chemistry if self.pack_config else None
-        # GH-67: cell danh định theo chemistry (NASA 2.0 Ah · LFP/Severson 1.1 Ah)
-        # — phải khớp art.nominal_capacity_ah bên inference, nếu không guard sẽ
-        # từ chối/chấp nhận lệch với thứ model thực sự nhận.
-        nominal = NOMINAL_CAPACITY_AH_BY_CHEMISTRY.get(_chem_cap, NOMINAL_CAPACITY_AH)
-        i_scale = nominal / capacity_ah if capacity_ah else 1.0
-        # GH-67: dải per-cell theo chemistry khi có khai báo — xem
-        # VOLTAGE_CELL_RANGE_BY_CHEMISTRY để biết vì sao dải chung quá lỏng cho LFP.
-        _chem = self.pack_config.chemistry if self.pack_config else None
-        v_lo, v_hi = VOLTAGE_CELL_RANGE_BY_CHEMISTRY.get(_chem, VOLTAGE_CELL_RANGE)
-        i_lo, i_hi = CURRENT_RANGE
-        t_lo, t_hi = TEMPERATURE_RANGE
-        s_lo, s_hi = SOC_RANGE
-        for i, row in enumerate(self.readings):
-            v_cell = row[0] / n_series
-            if not v_lo <= v_cell <= v_hi:
-                hint = (
-                    " — if this is a multi-cell pack (e.g. 12V ~ 3S NMC or "
-                    "25.6V ~ 8S LFP), send pack_config.n_series so voltage can "
-                    "be normalized per-cell"
-                    if n_series == 1
-                    else f" (pack voltage {row[0]} / n_series {n_series})"
-                )
-                raise ValueError(
-                    f"readings[{i}].voltage: per-cell value {v_cell:.3f} V outside "
-                    f"allowed range [{v_lo}, {v_hi}] V{hint}"
-                )
-            i_equiv = row[1] * i_scale
-            if not i_lo <= i_equiv <= i_hi:
-                hint = (
-                    " — if this pack's capacity differs from the NASA 2 Ah cell, "
-                    "send pack_config.capacity_ah so current can be normalized "
-                    "by C-rate"
-                    if i_scale == 1.0
-                    else f" (current {row[1]} A × {nominal} / capacity_ah {capacity_ah})"
-                )
-                raise ValueError(
-                    f"readings[{i}].current: NASA-equivalent value {i_equiv:.3f} A "
-                    f"outside allowed range [{i_lo}, {i_hi}] A{hint}"
-                )
-            if not t_lo <= row[2] <= t_hi:
-                raise ValueError(
-                    f"readings[{i}].temperature={row[2]} °C outside allowed range "
-                    f"[{t_lo}, {t_hi}] °C"
-                )
-            if len(row) >= 6 and not s_lo <= row[5] <= s_hi:
-                raise ValueError(
-                    f"readings[{i}].soc_percent={row[5]} outside allowed range "
-                    f"[{s_lo}, {s_hi}]"
-                )
+        Body lives in module-level check_reading_ranges() so PredictLongRequest
+        enforces the identical bounds — see that function for the full rules."""
+        check_reading_ranges(self.readings, self.pack_config)
         return self
-
 
     @model_validator(mode="after")
     def validate_window_span(self) -> "PredictRequest":
@@ -251,6 +269,104 @@ class PredictRequest(BaseModel):
                 "kèm confidence cao giả tạo."
             )
         return self
+
+
+class PredictLongRequest(BaseModel):
+    """GH-10 — SOH from a long raw series (31..LONG_SEQ_LEN timesteps).
+
+    Deliberately NOT a subclass of PredictRequest: that one pins the length to
+    exactly WINDOW_SIZE, which is baked into the window=30 weights. The long
+    model is a different artifact with a different input contract, so sharing the
+    class would only make one of the two lie about what it accepts.
+
+    Only the 4 base columns are used — the long model derives IC-curve and
+    discharge-progress itself, so cycle_count/soc_percent are ignored if sent
+    (no soc_mode trap on this path).
+    """
+
+    battery_id: str
+    readings: list[list[float]] | list[ReadingObject]
+    pack_config: PackConfig | None = None
+
+    @field_validator("readings")
+    @classmethod
+    def validate_long_readings(
+        cls, v: list[list[float]] | list[ReadingObject]
+    ) -> list[list[float]]:
+        # Lower bound is WINDOW_SIZE+1, not 1: at or below 30 rows the caller
+        # should use Predict, which is the validated path and also returns
+        # anomaly/risk. Silently accepting 5 rows here would hand back a bare SOH
+        # from a model that never saw sequences that short.
+        if not WINDOW_SIZE < len(v) <= LONG_SEQ_LEN:
+            raise ValueError(
+                f"readings must have {WINDOW_SIZE + 1}..{LONG_SEQ_LEN} timesteps for "
+                f"the long path, got {len(v)} — use /predict (exactly {WINDOW_SIZE}) "
+                "for short windows"
+            )
+
+        if v and isinstance(v[0], ReadingObject):
+            v = [[r.voltage, r.current, r.temperature, r.time] for r in v]
+
+        allowed = {LEGACY_INPUT_FEATURES, BASE_INPUT_FEATURES, FULL_INPUT_FEATURES}
+        for i, row in enumerate(v):
+            if len(row) not in allowed:
+                raise ValueError(
+                    f"readings[{i}] must have one of {sorted(allowed)} columns, "
+                    f"got {len(row)}"
+                )
+            for j, value in enumerate(row):
+                if not math.isfinite(value):
+                    raise ValueError(
+                        f"readings[{i}].{FEATURES[j]} is {value} — "
+                        "NaN/Inf is not a valid sensor value"
+                    )
+        return v
+
+    @model_validator(mode="after")
+    def validate_long_ranges(self) -> "PredictLongRequest":
+        check_reading_ranges(self.readings, self.pack_config)
+        return self
+
+
+class PredictLongResponse(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
+    battery_id: str
+    soh_percent: float
+    seq_len: int
+    device: str  # "cpu" / "cuda" — the long model uses GPU when available
+    inference_ms: float
+    model_version: str
+    """LONG_MODEL_VERSION — a DIFFERENT artifact from the window=30 model, so this
+    never equals metadata.model_version of PredictResponse. Do not compare them."""
+
+
+class ClassificationFeedbackRequest(BaseModel):
+    """F4 — kỹ thuật viên chấm lại phân loại mà AI đã đưa ra cho một pin.
+
+    Khớp `StaffFeedbackEnum` phía BE (1 Correct / 2 FalsePositive / 3 FalseNegative);
+    BE map số sang chuỗi trước khi gửi để hợp đồng không phụ thuộc thứ tự enum của một bên.
+    """
+
+    battery_id: str
+    classification: Literal["Normal", "Degrading", "Failed"]
+    """Nhãn AI ĐÃ đưa ra — không phải nhãn đúng. Verdict mới nói AI đúng hay sai."""
+    verdict: Literal["correct", "false_positive", "false_negative"]
+    model_config = ConfigDict(protected_namespaces=())
+    model_version: str = ""
+    classified_at: str = ""  # ISO UTC của lần phân loại; "" nếu caller không có
+    note: str = ""
+
+
+class ClassificationFeedbackResponse(BaseModel):
+    success: bool
+    total: int
+    correct: int
+    false_positive: int
+    false_negative: int
+    precision: float | None = None
+    """None khi chưa có mẫu nào — KHÁC 0.0 (nghĩa là đã chấm và sai hết)."""
+    recall: float | None = None
 
 
 class WarningItem(BaseModel):

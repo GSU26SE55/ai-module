@@ -310,7 +310,7 @@ class HealthRequest(_message.Message):
     def __init__(self) -> None: ...
 
 class HealthResponse(_message.Message):
-    __slots__ = ("status", "model_version", "scaler_loaded", "mamba_loaded", "isolation_forest_loaded", "lfp_loaded", "lfp_model_version")
+    __slots__ = ("status", "model_version", "scaler_loaded", "mamba_loaded", "isolation_forest_loaded", "lfp_loaded", "lfp_model_version", "soc_mode", "lfp_soc_mode", "long_loaded", "long_model_version")
     STATUS_FIELD_NUMBER: _ClassVar[int]
     MODEL_VERSION_FIELD_NUMBER: _ClassVar[int]
     SCALER_LOADED_FIELD_NUMBER: _ClassVar[int]
@@ -318,6 +318,10 @@ class HealthResponse(_message.Message):
     ISOLATION_FOREST_LOADED_FIELD_NUMBER: _ClassVar[int]
     LFP_LOADED_FIELD_NUMBER: _ClassVar[int]
     LFP_MODEL_VERSION_FIELD_NUMBER: _ClassVar[int]
+    SOC_MODE_FIELD_NUMBER: _ClassVar[int]
+    LFP_SOC_MODE_FIELD_NUMBER: _ClassVar[int]
+    LONG_LOADED_FIELD_NUMBER: _ClassVar[int]
+    LONG_MODEL_VERSION_FIELD_NUMBER: _ClassVar[int]
     status: str
     model_version: str
     scaler_loaded: bool
@@ -325,7 +329,11 @@ class HealthResponse(_message.Message):
     isolation_forest_loaded: bool
     lfp_loaded: bool
     lfp_model_version: str
-    def __init__(self, status: _Optional[str] = ..., model_version: _Optional[str] = ..., scaler_loaded: _Optional[bool] = ..., mamba_loaded: _Optional[bool] = ..., isolation_forest_loaded: _Optional[bool] = ..., lfp_loaded: _Optional[bool] = ..., lfp_model_version: _Optional[str] = ...) -> None: ...
+    soc_mode: str
+    lfp_soc_mode: str
+    long_loaded: bool
+    long_model_version: str
+    def __init__(self, status: _Optional[str] = ..., model_version: _Optional[str] = ..., scaler_loaded: _Optional[bool] = ..., mamba_loaded: _Optional[bool] = ..., isolation_forest_loaded: _Optional[bool] = ..., lfp_loaded: _Optional[bool] = ..., lfp_model_version: _Optional[str] = ..., soc_mode: _Optional[str] = ..., lfp_soc_mode: _Optional[str] = ..., long_loaded: _Optional[bool] = ..., long_model_version: _Optional[str] = ...) -> None: ...
 
 class TicketSensorSnapshot(_message.Message):
     __slots__ = ("soh_percent", "voltage", "current", "temperature", "soc_percent", "has_active_alert")
@@ -404,3 +412,67 @@ class SubmitFeedbackResponse(_message.Message):
     SUCCESS_FIELD_NUMBER: _ClassVar[int]
     success: bool
     def __init__(self, success: _Optional[bool] = ...) -> None: ...
+
+class PredictLongRequest(_message.Message):
+    __slots__ = ("battery_id", "readings", "pack_config")
+    BATTERY_ID_FIELD_NUMBER: _ClassVar[int]
+    READINGS_FIELD_NUMBER: _ClassVar[int]
+    PACK_CONFIG_FIELD_NUMBER: _ClassVar[int]
+    battery_id: str
+    readings: _containers.RepeatedCompositeFieldContainer[Reading]
+    pack_config: PackConfig
+    def __init__(self, battery_id: _Optional[str] = ..., readings: _Optional[_Iterable[_Union[Reading, _Mapping]]] = ..., pack_config: _Optional[_Union[PackConfig, _Mapping]] = ...) -> None: ...
+
+class PredictLongResponse(_message.Message):
+    __slots__ = ("battery_id", "soh_percent", "seq_len", "device", "inference_ms", "model_version")
+    BATTERY_ID_FIELD_NUMBER: _ClassVar[int]
+    SOH_PERCENT_FIELD_NUMBER: _ClassVar[int]
+    SEQ_LEN_FIELD_NUMBER: _ClassVar[int]
+    DEVICE_FIELD_NUMBER: _ClassVar[int]
+    INFERENCE_MS_FIELD_NUMBER: _ClassVar[int]
+    MODEL_VERSION_FIELD_NUMBER: _ClassVar[int]
+    battery_id: str
+    soh_percent: float
+    seq_len: int
+    device: str
+    inference_ms: float
+    model_version: str
+    def __init__(self, battery_id: _Optional[str] = ..., soh_percent: _Optional[float] = ..., seq_len: _Optional[int] = ..., device: _Optional[str] = ..., inference_ms: _Optional[float] = ..., model_version: _Optional[str] = ...) -> None: ...
+
+class ClassificationFeedbackRequest(_message.Message):
+    __slots__ = ("battery_id", "classification", "verdict", "model_version", "classified_at", "note")
+    BATTERY_ID_FIELD_NUMBER: _ClassVar[int]
+    CLASSIFICATION_FIELD_NUMBER: _ClassVar[int]
+    VERDICT_FIELD_NUMBER: _ClassVar[int]
+    MODEL_VERSION_FIELD_NUMBER: _ClassVar[int]
+    CLASSIFIED_AT_FIELD_NUMBER: _ClassVar[int]
+    NOTE_FIELD_NUMBER: _ClassVar[int]
+    battery_id: str
+    classification: str
+    verdict: str
+    model_version: str
+    classified_at: str
+    note: str
+    def __init__(self, battery_id: _Optional[str] = ..., classification: _Optional[str] = ..., verdict: _Optional[str] = ..., model_version: _Optional[str] = ..., classified_at: _Optional[str] = ..., note: _Optional[str] = ...) -> None: ...
+
+class ClassificationFeedbackResponse(_message.Message):
+    __slots__ = ("success", "total", "correct", "false_positive", "false_negative", "precision", "has_precision", "recall", "has_recall")
+    SUCCESS_FIELD_NUMBER: _ClassVar[int]
+    TOTAL_FIELD_NUMBER: _ClassVar[int]
+    CORRECT_FIELD_NUMBER: _ClassVar[int]
+    FALSE_POSITIVE_FIELD_NUMBER: _ClassVar[int]
+    FALSE_NEGATIVE_FIELD_NUMBER: _ClassVar[int]
+    PRECISION_FIELD_NUMBER: _ClassVar[int]
+    HAS_PRECISION_FIELD_NUMBER: _ClassVar[int]
+    RECALL_FIELD_NUMBER: _ClassVar[int]
+    HAS_RECALL_FIELD_NUMBER: _ClassVar[int]
+    success: bool
+    total: int
+    correct: int
+    false_positive: int
+    false_negative: int
+    precision: float
+    has_precision: bool
+    recall: float
+    has_recall: bool
+    def __init__(self, success: _Optional[bool] = ..., total: _Optional[int] = ..., correct: _Optional[int] = ..., false_positive: _Optional[int] = ..., false_negative: _Optional[int] = ..., precision: _Optional[float] = ..., has_precision: _Optional[bool] = ..., recall: _Optional[float] = ..., has_recall: _Optional[bool] = ...) -> None: ...

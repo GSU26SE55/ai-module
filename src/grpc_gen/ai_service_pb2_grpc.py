@@ -64,6 +64,16 @@ class AiServiceStub:
                 request_serializer=ai__service__pb2.SubmitFeedbackRequest.SerializeToString,
                 response_deserializer=ai__service__pb2.SubmitFeedbackResponse.FromString,
                 _registered_method=True)
+        self.PredictLong = channel.unary_unary(
+                '/aimodule.v1.AiService/PredictLong',
+                request_serializer=ai__service__pb2.PredictLongRequest.SerializeToString,
+                response_deserializer=ai__service__pb2.PredictLongResponse.FromString,
+                _registered_method=True)
+        self.SubmitClassificationFeedback = channel.unary_unary(
+                '/aimodule.v1.AiService/SubmitClassificationFeedback',
+                request_serializer=ai__service__pb2.ClassificationFeedbackRequest.SerializeToString,
+                response_deserializer=ai__service__pb2.ClassificationFeedbackResponse.FromString,
+                _registered_method=True)
 
 
 class AiServiceServicer:
@@ -111,6 +121,22 @@ class AiServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def PredictLong(self, request, context):
+        """Mirror of POST /predict/long — SOH từ chuỗi dài (L ≤ 4096 timestep) bằng model
+        long-sequence (attention pooling). KHÁC Predict: 1 forward pass, KHÔNG MC-dropout,
+        KHÔNG anomaly (IsolationForest chỉ train trên phân bố feature của window=30).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SubmitClassificationFeedback(self, request, context):
+        """Mirror of POST /predict/feedback — kỹ thuật viên chấm lại phân loại AI đã đưa ra.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_AiServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -143,6 +169,16 @@ def add_AiServiceServicer_to_server(servicer, server):
                     servicer.SubmitFeedback,
                     request_deserializer=ai__service__pb2.SubmitFeedbackRequest.FromString,
                     response_serializer=ai__service__pb2.SubmitFeedbackResponse.SerializeToString,
+            ),
+            'PredictLong': grpc.unary_unary_rpc_method_handler(
+                    servicer.PredictLong,
+                    request_deserializer=ai__service__pb2.PredictLongRequest.FromString,
+                    response_serializer=ai__service__pb2.PredictLongResponse.SerializeToString,
+            ),
+            'SubmitClassificationFeedback': grpc.unary_unary_rpc_method_handler(
+                    servicer.SubmitClassificationFeedback,
+                    request_deserializer=ai__service__pb2.ClassificationFeedbackRequest.FromString,
+                    response_serializer=ai__service__pb2.ClassificationFeedbackResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -307,6 +343,60 @@ class AiService:
             '/aimodule.v1.AiService/SubmitFeedback',
             ai__service__pb2.SubmitFeedbackRequest.SerializeToString,
             ai__service__pb2.SubmitFeedbackResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PredictLong(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/aimodule.v1.AiService/PredictLong',
+            ai__service__pb2.PredictLongRequest.SerializeToString,
+            ai__service__pb2.PredictLongResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SubmitClassificationFeedback(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/aimodule.v1.AiService/SubmitClassificationFeedback',
+            ai__service__pb2.ClassificationFeedbackRequest.SerializeToString,
+            ai__service__pb2.ClassificationFeedbackResponse.FromString,
             options,
             channel_credentials,
             insecure,
