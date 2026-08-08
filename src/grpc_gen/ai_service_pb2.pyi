@@ -476,3 +476,111 @@ class ClassificationFeedbackResponse(_message.Message):
     recall: float
     has_recall: bool
     def __init__(self, success: _Optional[bool] = ..., total: _Optional[int] = ..., correct: _Optional[int] = ..., false_positive: _Optional[int] = ..., false_negative: _Optional[int] = ..., precision: _Optional[float] = ..., has_precision: _Optional[bool] = ..., recall: _Optional[float] = ..., has_recall: _Optional[bool] = ...) -> None: ...
+
+class StaffCandidate(_message.Message):
+    __slots__ = ("staff_id", "full_name", "skill_tier", "skill_codes", "active_tickets", "max_concurrent")
+    STAFF_ID_FIELD_NUMBER: _ClassVar[int]
+    FULL_NAME_FIELD_NUMBER: _ClassVar[int]
+    SKILL_TIER_FIELD_NUMBER: _ClassVar[int]
+    SKILL_CODES_FIELD_NUMBER: _ClassVar[int]
+    ACTIVE_TICKETS_FIELD_NUMBER: _ClassVar[int]
+    MAX_CONCURRENT_FIELD_NUMBER: _ClassVar[int]
+    staff_id: str
+    full_name: str
+    skill_tier: int
+    skill_codes: _containers.RepeatedScalarFieldContainer[str]
+    active_tickets: int
+    max_concurrent: int
+    def __init__(self, staff_id: _Optional[str] = ..., full_name: _Optional[str] = ..., skill_tier: _Optional[int] = ..., skill_codes: _Optional[_Iterable[str]] = ..., active_tickets: _Optional[int] = ..., max_concurrent: _Optional[int] = ...) -> None: ...
+
+class SuggestStaffRequest(_message.Message):
+    __slots__ = ("category", "priority", "description", "candidates", "top_n")
+    CATEGORY_FIELD_NUMBER: _ClassVar[int]
+    PRIORITY_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    CANDIDATES_FIELD_NUMBER: _ClassVar[int]
+    TOP_N_FIELD_NUMBER: _ClassVar[int]
+    category: int
+    priority: int
+    description: str
+    candidates: _containers.RepeatedCompositeFieldContainer[StaffCandidate]
+    top_n: int
+    def __init__(self, category: _Optional[int] = ..., priority: _Optional[int] = ..., description: _Optional[str] = ..., candidates: _Optional[_Iterable[_Union[StaffCandidate, _Mapping]]] = ..., top_n: _Optional[int] = ...) -> None: ...
+
+class StaffSuggestion(_message.Message):
+    __slots__ = ("staff_id", "full_name", "score", "reason", "tier_ok")
+    STAFF_ID_FIELD_NUMBER: _ClassVar[int]
+    FULL_NAME_FIELD_NUMBER: _ClassVar[int]
+    SCORE_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    TIER_OK_FIELD_NUMBER: _ClassVar[int]
+    staff_id: str
+    full_name: str
+    score: float
+    reason: str
+    tier_ok: bool
+    def __init__(self, staff_id: _Optional[str] = ..., full_name: _Optional[str] = ..., score: _Optional[float] = ..., reason: _Optional[str] = ..., tier_ok: _Optional[bool] = ...) -> None: ...
+
+class SuggestStaffResponse(_message.Message):
+    __slots__ = ("suggestions", "note")
+    SUGGESTIONS_FIELD_NUMBER: _ClassVar[int]
+    NOTE_FIELD_NUMBER: _ClassVar[int]
+    suggestions: _containers.RepeatedCompositeFieldContainer[StaffSuggestion]
+    note: str
+    def __init__(self, suggestions: _Optional[_Iterable[_Union[StaffSuggestion, _Mapping]]] = ..., note: _Optional[str] = ...) -> None: ...
+
+class KbCandidate(_message.Message):
+    __slots__ = ("kb_id", "code", "title", "tags", "category", "helpful_count")
+    KB_ID_FIELD_NUMBER: _ClassVar[int]
+    CODE_FIELD_NUMBER: _ClassVar[int]
+    TITLE_FIELD_NUMBER: _ClassVar[int]
+    TAGS_FIELD_NUMBER: _ClassVar[int]
+    CATEGORY_FIELD_NUMBER: _ClassVar[int]
+    HELPFUL_COUNT_FIELD_NUMBER: _ClassVar[int]
+    kb_id: str
+    code: str
+    title: str
+    tags: _containers.RepeatedScalarFieldContainer[str]
+    category: int
+    helpful_count: int
+    def __init__(self, kb_id: _Optional[str] = ..., code: _Optional[str] = ..., title: _Optional[str] = ..., tags: _Optional[_Iterable[str]] = ..., category: _Optional[int] = ..., helpful_count: _Optional[int] = ...) -> None: ...
+
+class SuggestKbRequest(_message.Message):
+    __slots__ = ("category", "description", "candidates", "top_n", "ai_action_steps", "ai_sop_references", "ai_kb_doc_refs")
+    CATEGORY_FIELD_NUMBER: _ClassVar[int]
+    DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
+    CANDIDATES_FIELD_NUMBER: _ClassVar[int]
+    TOP_N_FIELD_NUMBER: _ClassVar[int]
+    AI_ACTION_STEPS_FIELD_NUMBER: _ClassVar[int]
+    AI_SOP_REFERENCES_FIELD_NUMBER: _ClassVar[int]
+    AI_KB_DOC_REFS_FIELD_NUMBER: _ClassVar[int]
+    category: int
+    description: str
+    candidates: _containers.RepeatedCompositeFieldContainer[KbCandidate]
+    top_n: int
+    ai_action_steps: _containers.RepeatedScalarFieldContainer[str]
+    ai_sop_references: _containers.RepeatedScalarFieldContainer[str]
+    ai_kb_doc_refs: _containers.RepeatedScalarFieldContainer[str]
+    def __init__(self, category: _Optional[int] = ..., description: _Optional[str] = ..., candidates: _Optional[_Iterable[_Union[KbCandidate, _Mapping]]] = ..., top_n: _Optional[int] = ..., ai_action_steps: _Optional[_Iterable[str]] = ..., ai_sop_references: _Optional[_Iterable[str]] = ..., ai_kb_doc_refs: _Optional[_Iterable[str]] = ...) -> None: ...
+
+class KbSuggestion(_message.Message):
+    __slots__ = ("kb_id", "code", "title", "score", "reason")
+    KB_ID_FIELD_NUMBER: _ClassVar[int]
+    CODE_FIELD_NUMBER: _ClassVar[int]
+    TITLE_FIELD_NUMBER: _ClassVar[int]
+    SCORE_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    kb_id: str
+    code: str
+    title: str
+    score: float
+    reason: str
+    def __init__(self, kb_id: _Optional[str] = ..., code: _Optional[str] = ..., title: _Optional[str] = ..., score: _Optional[float] = ..., reason: _Optional[str] = ...) -> None: ...
+
+class SuggestKbResponse(_message.Message):
+    __slots__ = ("suggestions", "note")
+    SUGGESTIONS_FIELD_NUMBER: _ClassVar[int]
+    NOTE_FIELD_NUMBER: _ClassVar[int]
+    suggestions: _containers.RepeatedCompositeFieldContainer[KbSuggestion]
+    note: str
+    def __init__(self, suggestions: _Optional[_Iterable[_Union[KbSuggestion, _Mapping]]] = ..., note: _Optional[str] = ...) -> None: ...

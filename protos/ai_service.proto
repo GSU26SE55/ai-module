@@ -35,6 +35,12 @@ service AiService {
   // Mirror of POST /predict/feedback — kỹ thuật viên chấm lại phân loại AI đã đưa ra.
   rpc SubmitClassificationFeedback(ClassificationFeedbackRequest)
       returns (ClassificationFeedbackResponse);
+  // Mirror of POST /suggest/staff — xếp hạng nhân viên phù hợp xử lý ticket.
+  // Human-in-the-loop: AI chỉ gợi ý + nêu lý do, Manager quyết định giao cho ai.
+  rpc SuggestStaff(SuggestStaffRequest) returns (SuggestStaffResponse);
+  // Mirror of POST /suggest/kb — xếp hạng bài viết KB để tham khảo khi sửa chữa.
+  // Human-in-the-loop: kỹ thuật viên bấm áp dụng thì BE mới tạo TicketKbReference.
+  rpc SuggestKb(SuggestKbRequest) returns (SuggestKbResponse);
 }
 
 // ── Predict ────────────────────────────────────────────────────────────
@@ -452,4 +458,84 @@ message ClassificationFeedbackResponse {
   bool has_precision = 7;
   double recall = 8;
   bool has_recall = 9;
+}
+
+// ── SuggestStaff / SuggestKb ───────────────────────────────────────────
+// Gợi ý nhân viên xử lý + tài liệu KB tham khảo cho 1 ticket.
+//
+// ai-module KHÔNG đọc được DB của TicketService, nên BE truy vấn ứng viên rồi
+// GỬI KÈM trong request — cùng cách VerifyTicketRequest.candidates đang làm.
+// Không có RPC nào ở đây đọc dữ liệu ngoài request.
+//
+// Chấm điểm là DETERMINISTIC (luật), không gọi LLM: kết quả ổn định giữa các lần
+// gọi và mỗi gợi ý kèm `reason` giải thích được — thứ Manager sẽ hỏi đầu tiên.
+
+message StaffCandidate {
+  string staff_id = 1;
+  string full_name = 2;
+  int32 skill_tier = 3;                // StaffSkillTierEnum: 1/2/3
+  repeated string skill_codes = 4;     // chuỗi TỰ DO, so khớp sau khi lowercase+trim
+  int32 active_tickets = 5;            // BE đếm sẵn (ĐÃ loại PreviousPrimaryHandler)
+  int32 max_concurrent = 6;            // 0 = không giới hạn
+}
+
+message SuggestStaffRequest {
+  int32 category = 1;                  // TicketCategoryEnum
+  int32 priority = 2;                  // TicketPriorityEnum; 0 = ticket chưa gán priority
+  string description = 3;              // Title + Description ticket
+  repeated StaffCandidate candidates = 4;
+  int32 top_n = 5;                     // 0 → mặc định 5, tối đa 10
+}
+
+message StaffSuggestion {
+  string staff_id = 1;
+  string full_name = 2;
+  double score = 3;                    // [0..1]
+  string reason = 4;                   // tiếng Việt, cho Manager đọc
+  bool tier_ok = 5;
+}
+
+message SuggestStaffResponse {
+  repeated StaffSuggestion suggestions = 1;
+  // Lý do danh sách rỗng/yếu — để UI nói được "vì sao không có ai" thay vì bảng trắng.
+  string note = 2;
+}
+
+message KbCandidate {
+  string kb_id = 1;
+  string code = 2;
+  string title = 3;
+  repeated string tags = 4;
+  int32 category = 5;                  // TicketCategoryEnum
+  int32 helpful_count = 6;
+}
+
+message SuggestKbRequest {
+  int32 category = 1;
+  string description = 2;              // Title + Description ticket
+  repeated KbCandidate candidates = 3;
+  int32 top_n = 4;
+
+  // Dữ liệu AI đã sinh cho CHÍNH ticket này (bảng ticket_ai_suggestions của BE).
+  // Rỗng với ticket do Customer tạo — khi đó chỉ dựa vào `description`.
+  repeated string ai_action_steps = 5;
+  // Tín hiệu MẠNH NHẤT: tài liệu AI thực sự truy hồi qua RAG lúc kê đơn.
+  // ⚠️ ai_kb_doc_refs là ĐƯỜNG DẪN FILE trong knowledge base của ai-module
+  // (vd "maintenance/bms_warning_codes.md"), KHÔNG phải KnowledgeBaseArticle.Code —
+  // hai kho tài liệu tách rời, chỉ so khớp mềm theo token được.
+  repeated string ai_sop_references = 6;
+  repeated string ai_kb_doc_refs = 7;
+}
+
+message KbSuggestion {
+  string kb_id = 1;
+  string code = 2;
+  string title = 3;
+  double score = 4;
+  string reason = 5;
+}
+
+message SuggestKbResponse {
+  repeated KbSuggestion suggestions = 1;
+  string note = 2;
 }

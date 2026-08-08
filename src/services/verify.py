@@ -8,13 +8,13 @@ Human-in-the-loop: kết quả chỉ là gợi ý cho Manager, không tự chặ
 """
 
 import re
-import unicodedata
 
 from src.schemas.verify import (
     TicketSensorSnapshot,
     VerifyTicketRequest,
     VerifyTicketResponse,
 )
+from src.services.text_utils import jaccard, norm, strip_accents, tokens
 
 # Ngưỡng verdict: score < ngưỡng → "suspicious".
 LEGITIMATE_THRESHOLD = 0.5
@@ -32,27 +32,12 @@ _ANOMALY_KEYWORDS = {
 }
 
 
-def _strip_accents(s: str) -> str:
-    return "".join(
-        c for c in unicodedata.normalize("NFD", s) if unicodedata.category(c) != "Mn"
-    )
-
-
-def _norm(s: str) -> str:
-    """Chuẩn hóa: lowercase + bỏ dấu + gọn khoảng trắng."""
-    return re.sub(r"\s+", " ", _strip_accents(s.lower())).strip()
-
-
-def _tokens(s: str) -> set[str]:
-    return {t for t in re.split(r"[^a-z0-9]+", _norm(s)) if len(t) >= 2}
-
-
-def _jaccard(a: set[str], b: set[str]) -> float:
-    if not a or not b:
-        return 0.0
-    inter = len(a & b)
-    union = len(a | b)
-    return inter / union if union else 0.0
+# Chuyển sang src/services/text_utils.py để luồng gợi ý (staff/KB) dùng chung cùng một
+# cách chuẩn hoá. Giữ alias để phần còn lại của file không đổi.
+_strip_accents = strip_accents
+_norm = norm
+_tokens = tokens
+_jaccard = jaccard
 
 
 def _sensor_supports_anomaly(snap: TicketSensorSnapshot) -> tuple[bool, str]:

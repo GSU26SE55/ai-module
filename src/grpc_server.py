@@ -25,10 +25,13 @@ from src.schemas.predict import (
     PredictRequest,
 )
 from src.schemas.prescribe import PrescribeRequest, PrescriptionFeedbackRequest
+from src.schemas.suggest import SuggestKbRequest, SuggestStaffRequest
 from src.schemas.verify import VerifyTicketRequest
 from src.services.classification_feedback import record_feedback
 from src.services.inference import predict_soh_long, run_inference, soc_mode_for
 from src.services.prescription import run_prescription, submit_prescription_feedback
+from src.services.suggest_kb import run_suggest_kb
+from src.services.suggest_staff import run_suggest_staff
 from src.services.verify import run_verify
 
 logger = logging.getLogger(__name__)
@@ -493,6 +496,84 @@ class AiServiceServicer(ai_service_pb2_grpc.AiServiceServicer):
             # REST trả 404 ở đúng nhánh này — giữ parity bằng NOT_FOUND.
             context.abort(grpc.StatusCode.NOT_FOUND, "prescription_id not found")
         return ai_service_pb2.SubmitFeedbackResponse(success=True)
+
+    def SuggestStaff(self, request, context):
+        """Xếp hạng nhân viên phù hợp xử lý ticket. Mirror POST /suggest/staff."""
+        req = _validate(
+            SuggestStaffRequest,
+            {
+                "category": request.category,
+                "priority": request.priority,
+                "description": request.description,
+                "top_n": request.top_n,
+                "candidates": [
+                    {
+                        "staff_id": c.staff_id,
+                        "full_name": c.full_name,
+                        "skill_tier": c.skill_tier,
+                        "skill_codes": list(c.skill_codes),
+                        "active_tickets": c.active_tickets,
+                        "max_concurrent": c.max_concurrent,
+                    }
+                    for c in request.candidates
+                ],
+            },
+            context,
+        )
+        result = run_suggest_staff(req)
+        return ai_service_pb2.SuggestStaffResponse(
+            suggestions=[
+                ai_service_pb2.StaffSuggestion(
+                    staff_id=s.staff_id,
+                    full_name=s.full_name,
+                    score=s.score,
+                    reason=s.reason,
+                    tier_ok=s.tier_ok,
+                )
+                for s in result.suggestions
+            ],
+            note=result.note,
+        )
+
+    def SuggestKb(self, request, context):
+        """Xếp hạng bài viết KB để tham khảo khi sửa chữa. Mirror POST /suggest/kb."""
+        req = _validate(
+            SuggestKbRequest,
+            {
+                "category": request.category,
+                "description": request.description,
+                "top_n": request.top_n,
+                "ai_action_steps": list(request.ai_action_steps),
+                "ai_sop_references": list(request.ai_sop_references),
+                "ai_kb_doc_refs": list(request.ai_kb_doc_refs),
+                "candidates": [
+                    {
+                        "kb_id": c.kb_id,
+                        "code": c.code,
+                        "title": c.title,
+                        "tags": list(c.tags),
+                        "category": c.category,
+                        "helpful_count": c.helpful_count,
+                    }
+                    for c in request.candidates
+                ],
+            },
+            context,
+        )
+        result = run_suggest_kb(req)
+        return ai_service_pb2.SuggestKbResponse(
+            suggestions=[
+                ai_service_pb2.KbSuggestion(
+                    kb_id=s.kb_id,
+                    code=s.code,
+                    title=s.title,
+                    score=s.score,
+                    reason=s.reason,
+                )
+                for s in result.suggestions
+            ],
+            note=result.note,
+        )
 
 
 def _validate(schema_cls, payload: dict, context):

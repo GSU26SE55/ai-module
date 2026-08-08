@@ -51,6 +51,8 @@ def test_service_defines_expected_methods():
         "SubmitFeedback",
         "PredictLong",
         "SubmitClassificationFeedback",
+        "SuggestStaff",
+        "SuggestKb",
     }
 
     stream = methods["PredictStream"]
@@ -63,6 +65,8 @@ def test_service_defines_expected_methods():
         "SubmitFeedback",
         "PredictLong",
         "SubmitClassificationFeedback",
+        "SuggestStaff",
+        "SuggestKb",
     ):
         assert not methods[name].client_streaming
         assert not methods[name].server_streaming
