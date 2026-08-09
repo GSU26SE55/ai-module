@@ -180,6 +180,8 @@ service AiService {
   rpc PredictLong(PredictLongRequest) returns (PredictLongResponse);
   rpc SubmitClassificationFeedback(ClassificationFeedbackRequest)
       returns (ClassificationFeedbackResponse);
+  rpc SuggestStaff(SuggestStaffRequest) returns (SuggestStaffResponse);
+  rpc SuggestKb(SuggestKbRequest) returns (SuggestKbResponse);
 }
 ```
 
@@ -193,8 +195,13 @@ service AiService {
 | `SubmitFeedback` | KTV phản hồi về một prescription (`accepted`/`edited`/`rejected`) |
 | `PredictLong` | SOH từ chuỗi **31–4096** timestep — phân tích lịch sử, vẽ chart. Trả **chỉ SOH**, không confidence/anomaly/risk |
 | `SubmitClassificationFeedback` | Staff chấm nhãn anomaly của AI đúng/sai → AI đo được precision/recall |
+| `SuggestStaff` | Xếp hạng nhân viên phù hợp xử lý 1 ticket (kỹ năng + tier + tải hiện tại) |
+| `SuggestKb` | Xếp hạng bài viết Knowledge Base liên quan tới ticket |
 
-Cả 8 RPC chạy trong **cùng process** với REST (`src/grpc_server.py`, `python -m src.grpc_server`,
+> `SuggestStaff` / `SuggestKb` **deterministic, không dùng LLM** — chấm điểm bằng luật, mỗi gợi ý
+> kèm `reason` giải thích vì sao. Human-in-the-loop: AI chỉ xếp hạng, Manager/KTV quyết định.
+
+Cả 10 RPC chạy trong **cùng process** với REST (`src/grpc_server.py`, `python -m src.grpc_server`,
 `GRPC_PORT` env, default 50051) — **cùng pipeline** `run_inference()` / `run_prescription()`,
 insecure channel (không TLS/auth — chỉ dùng nội bộ docker network, KHÔNG expose port 50051 ra
 ngoài).
@@ -422,6 +429,47 @@ is_borderline:       false   // true khi stage_confidence < 0.7 — không stage
 
 BE nên hiển thị cảnh báo "kết quả chưa chắc chắn" khi `is_borderline=true`, thay vì chỉ tin
 `health_stage` như một nhãn chắc chắn.
+
+#### Cách đọc `soh_confidence` — và vì sao KHÔNG được retry
+
+```python
+soh_confidence = exp(-soh_std / 5.0)      # dải (0, 1], KHÔNG phải xác suất
+```
+
+`soh_std` là độ lệch chuẩn của 10 lần chạy MC Dropout, đơn vị **điểm SOH**. Chỉ có nghĩa khi đổi
+ngược về sai số:
+
+| `soh_confidence` | `soh_std` | Khoảng 95% | Đề xuất xử lý |
+|---|---|---|---|
+| ≥ 0.80 | ≤ 1.1 đ | ±2.2 đ | Hiển thị số cụ thể |
+| 0.50 – 0.80 | 1.1–3.5 đ | ±2 đến ±7 đ | Hiển thị kèm dải, đừng nói số lẻ |
+| < 0.50 | > 3.5 đ | > ±7 đ | **Không đưa số cho khách**, chỉ nói nhãn/xu hướng |
+
+Ví dụ: `SOH 100%, soh_confidence 0.43` phải đọc là *"SOH nằm đâu đó trong 92–100%"*, **không phải**
+"100% và tôi chắc 43%".
+
+**AI không có ngưỡng nào trên `soh_confidence`** — grep toàn `src/` không có dòng nào so sánh. Ngưỡng
+duy nhất trong code là `BORDERLINE_CONFIDENCE = 0.7`, áp lên **`stage_confidence`** (nhãn có ổn định
+không), khác hẳn. BE muốn dùng thì phải tự đặt ngưỡng.
+
+**KHÔNG có retry, và retry cũng vô ích.** Đã đo — gọi lại đúng cùng một window 6 lần:
+
+```
+lần 1: conf=0.320   lần 3: conf=0.294   lần 5: conf=0.405
+lần 2: conf=0.443   lần 4: conf=0.338   lần 6: conf=0.276
+```
+
+Chỉ lắc quanh cùng một mức. `soh_std` không phải nhiễu đo — nó là **độ bất định thật của model
+trước input đó**; chạy lại chỉ cho một ước lượng khác của cùng con số ấy.
+
+> ⚠️ **Confidence cao KHÔNG có nghĩa input hợp lệ.** Cửa sổ hỏng vì vắt qua khoảng trống 76 phút
+> lại cho confidence **cao nhất cả file (0.799)**. Lọc input sai là việc của guard §7.3/§7.4,
+> đừng trông vào confidence.
+
+> `anomaly_confidence` là thang **khác hẳn** — `|decision_function|` của IsolationForest, chưa hiệu
+> chỉnh thành xác suất. Đo trên 3000 cửa sổ **dữ liệu train** (bình thường theo định nghĩa): trung vị
+> 0.216, **cao nhất 0.227**, không cửa sổ nào vượt 0.5. Nên `anomaly_confidence = 0.05` là bình
+> thường, **không** phải "5% tin cậy".
 
 ### 8.2. `AnomalyInfo` — 2 tầng phân loại độc lập
 

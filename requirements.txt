@@ -31,3 +31,9 @@ google-genai==2.10.0
 grpcio==1.81.1
 grpcio-tools==1.81.1
 protobuf==6.33.6
+
+# Nạp .env lúc khởi động (GH-env) — KHÔNG phải ML framework, không vi phạm rule
+# "chỉ PyTorch + scikit-learn". Trước đây gói này chỉ có mặt GIÁN TIẾP qua
+# uvicorn[standard]; container không chắc có, mà thiếu nó thì key LLM không bao giờ
+# được nạp và enrich=true âm thầm rơi về rule-based. Ghim tường minh.
+python-dotenv==1.2.2
