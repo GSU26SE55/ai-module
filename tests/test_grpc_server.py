@@ -1336,3 +1336,148 @@ class TestSubmitFeedback:
                 )
             )
         assert exc.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+
+
+# ── SuggestStaff / SuggestKb ───────────────────────────────────────────
+# Chấm điểm là deterministic (không LLM, không model) nên parity so sánh được
+# TRỰC TIẾP, không cần patch gì — khác các RPC dùng MC Dropout.
+
+
+class TestSuggestStaff:
+    STAFF = [
+        pb.StaffCandidate(
+            staff_id="s-charger", full_name="Nguyễn Văn A", skill_tier=2,
+            skill_codes=["charging", "battery"], active_tickets=2, max_concurrent=8,
+        ),
+        pb.StaffCandidate(
+            staff_id="s-general", full_name="Trần Thị B", skill_tier=1,
+            skill_codes=["general"], active_tickets=0, max_concurrent=10,
+        ),
+    ]
+    STAFF_JSON = [
+        {
+            "staff_id": "s-charger", "full_name": "Nguyễn Văn A", "skill_tier": 2,
+            "skill_codes": ["charging", "battery"], "active_tickets": 2, "max_concurrent": 8,
+        },
+        {
+            "staff_id": "s-general", "full_name": "Trần Thị B", "skill_tier": 1,
+            "skill_codes": ["general"], "active_tickets": 0, "max_concurrent": 10,
+        },
+    ]
+
+    def test_ranks_skill_match_first(self, servicer):
+        resp = servicer.SuggestStaff(
+            pb.SuggestStaffRequest(
+                category=1, priority=2, description="Pin không sạc được",
+                candidates=self.STAFF,
+            ),
+            None,
+        )
+        assert resp.suggestions[0].staff_id == "s-charger"
+        assert resp.suggestions[0].reason
+
+    def test_rest_grpc_parity(self, servicer, rest_client):
+        """BE fallback gRPC→HTTP: hai transport lệch nhau là bug khó truy nhất."""
+        grpc_resp = servicer.SuggestStaff(
+            pb.SuggestStaffRequest(
+                category=1, priority=2, description="Pin không sạc được",
+                candidates=self.STAFF, top_n=2,
+            ),
+            None,
+        )
+        rest_resp = rest_client.post(
+            "/suggest/staff",
+            json={
+                "category": 1, "priority": 2, "description": "Pin không sạc được",
+                "candidates": self.STAFF_JSON, "top_n": 2,
+            },
+        )
+        assert rest_resp.status_code == 200
+        rest = rest_resp.json()
+        assert len(grpc_resp.suggestions) == len(rest["suggestions"])
+        for g, r in zip(grpc_resp.suggestions, rest["suggestions"]):
+            assert g.staff_id == r["staff_id"]
+            assert g.score == pytest.approx(r["score"])
+            assert g.reason == r["reason"]
+        assert grpc_resp.note == rest["note"]
+
+    def test_underqualified_filtered_with_note(self, servicer):
+        """P1 cần Tier 3 — không ai đủ thì phải nói rõ lý do, không trả bảng trắng."""
+        resp = servicer.SuggestStaff(
+            pb.SuggestStaffRequest(category=2, priority=1, candidates=self.STAFF), None
+        )
+        assert list(resp.suggestions) == []
+        assert resp.note
+
+
+class TestSuggestKb:
+    KB = [
+        pb.KbCandidate(
+            kb_id="kb-1", code="KB-2026-0001", title="Xử lý pin quá nhiệt",
+            tags=["nhiet"], category=2, helpful_count=12,
+        ),
+        pb.KbCandidate(
+            kb_id="kb-2", code="KB-2026-0002", title="Lịch vệ sinh tấm pin",
+            tags=["ve sinh"], category=4, helpful_count=3,
+        ),
+    ]
+    KB_JSON = [
+        {
+            "kb_id": "kb-1", "code": "KB-2026-0001", "title": "Xử lý pin quá nhiệt",
+            "tags": ["nhiet"], "category": 2, "helpful_count": 12,
+        },
+        {
+            "kb_id": "kb-2", "code": "KB-2026-0002", "title": "Lịch vệ sinh tấm pin",
+            "tags": ["ve sinh"], "category": 4, "helpful_count": 3,
+        },
+    ]
+
+    def test_ranks_relevant_first(self, servicer):
+        resp = servicer.SuggestKb(
+            pb.SuggestKbRequest(
+                category=2, description="Pin quá nhiệt vượt ngưỡng", candidates=self.KB
+            ),
+            None,
+        )
+        assert resp.suggestions[0].kb_id == "kb-1"
+
+    def test_ai_referenced_doc_wins(self, servicer):
+        """Tài liệu AI đã truy hồi qua RAG phải thắng cả bài trùng category."""
+        resp = servicer.SuggestKb(
+            pb.SuggestKbRequest(
+                category=4, description="pin suy giảm",
+                ai_kb_doc_refs=["safety/anomaly_thermal.md"],
+                candidates=[
+                    pb.KbCandidate(kb_id="cat", title="Tài liệu khác", category=4),
+                    pb.KbCandidate(kb_id="ai", title="Anomaly thermal", category=2),
+                ],
+            ),
+            None,
+        )
+        assert resp.suggestions[0].kb_id == "ai"
+
+    def test_rest_grpc_parity(self, servicer, rest_client):
+        grpc_resp = servicer.SuggestKb(
+            pb.SuggestKbRequest(
+                category=2, description="Pin quá nhiệt vượt ngưỡng",
+                candidates=self.KB, top_n=2,
+                ai_sop_references=["SOP-THERMAL-01"],
+            ),
+            None,
+        )
+        rest_resp = rest_client.post(
+            "/suggest/kb",
+            json={
+                "category": 2, "description": "Pin quá nhiệt vượt ngưỡng",
+                "candidates": self.KB_JSON, "top_n": 2,
+                "ai_sop_references": ["SOP-THERMAL-01"],
+            },
+        )
+        assert rest_resp.status_code == 200
+        rest = rest_resp.json()
+        assert len(grpc_resp.suggestions) == len(rest["suggestions"])
+        for g, r in zip(grpc_resp.suggestions, rest["suggestions"]):
+            assert g.kb_id == r["kb_id"]
+            assert g.score == pytest.approx(r["score"])
+            assert g.reason == r["reason"]
+        assert grpc_resp.note == rest["note"]
