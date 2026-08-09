@@ -14,6 +14,7 @@ import os
 from concurrent import futures
 
 import grpc
+from dotenv import load_dotenv
 from pydantic import ValidationError
 
 from src.core import model_loader
@@ -601,6 +602,10 @@ def create_server(port: int, max_workers: int = MAX_WORKERS) -> grpc.Server:
 
 def serve() -> None:
     logging.basicConfig(level=logging.INFO)
+    # Đường gRPC chạy bằng `python -m src.grpc_server` — KHÔNG qua uvicorn nên không
+    # có cờ `--env-file`. Phải tự nạp ở đây, nếu không sửa mỗi main.py thì REST có key
+    # còn gRPC (đường BE dùng thật) vẫn không. override=False: env thật thắng .env.
+    load_dotenv(override=False)
     port = int(os.getenv("GRPC_PORT", DEFAULT_PORT))
     model_loader.load_models()  # once at startup, like the FastAPI lifespan
     server = create_server(port)
