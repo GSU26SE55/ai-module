@@ -183,6 +183,12 @@ def _balance_band_weights(
     × SOH percent. Weights are computed so their mean is exactly 1.0 (same loss
     scale as unweighted MSE), then clipped at max_weight so a near-empty bin
     cannot dominate a batch.
+
+    n_temp_bins must be >= the number of distinct chamber temperatures in train,
+    or two of them share a bin and the rarer one stops being up-weighted at all.
+    3 was right for NASA (4/24/44 °C). The LFP v2.1 merge has FOUR (15/25/30/35),
+    and Severson's 4C discharge self-heating pushes its windows up toward the SNL
+    35 °C group, so pass 6 there — see --balance-temp-bins.
     """
     temp_mean = X[:, :, BASE_FEATURES.index("temperature")].mean(dim=1)
     temp_bin = torch.clamp((temp_mean * n_temp_bins).long(), 0, n_temp_bins - 1)
@@ -229,6 +235,7 @@ def train(
     epochs: int,
     log_dir: str,
     balance_bands: bool = False,
+    balance_temp_bins: int = 3,
     jitter: float = 0.0,
     swa: bool = False,
     swa_start_frac: float = 0.75,
@@ -276,10 +283,11 @@ def train(
     # GH-88: per-sample weights — ones when disabled so the single loss path
     # below is numerically identical to plain MSELoss.
     if balance_bands:
-        w_train = _balance_band_weights(X_train, y_train)
+        w_train = _balance_band_weights(X_train, y_train, n_temp_bins=balance_temp_bins)
         logger.info(
             f"Balance-band weights ON (GH-88): min={w_train.min():.3f} "
-            f"max={w_train.max():.3f} mean={w_train.mean():.3f}"
+            f"max={w_train.max():.3f} mean={w_train.mean():.3f} "
+            f"temp_bins={balance_temp_bins}"
         )
     else:
         w_train = torch.ones(len(X_train))
@@ -1578,6 +1586,16 @@ def main() -> None:
         "are not drowned out by the dense 24C mid-SOH mass",
     )
     parser.add_argument(
+        "--balance-temp-bins",
+        type=int,
+        default=3,
+        help="Number of temperature bins used by --balance-bands (default 3, sized "
+        "for NASA's 3 chamber setpoints). Must be >= the number of distinct train "
+        "temperatures or two of them share a bin and the rarer one is never "
+        "up-weighted. Pass 6 for the LFP v2.1 merge (15/25/30/35 °C + Severson "
+        "self-heating).",
+    )
+    parser.add_argument(
         "--warmup-stages",
         type=_parse_warmup_stages,
         default=None,
@@ -1654,6 +1672,7 @@ def main() -> None:
             args.epochs,
             args.log_dir,
             balance_bands=args.balance_bands,
+            balance_temp_bins=args.balance_temp_bins,
             jitter=args.jitter,
             swa=args.swa,
             swa_start_frac=args.swa_start_frac,
