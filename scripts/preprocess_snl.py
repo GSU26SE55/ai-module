@@ -297,16 +297,6 @@ def load_snl_dir(
     return cells
 
 
-def _temperature_summary(cells: dict) -> dict:
-    """Mean measured temperature per cell — used to report cluster coverage."""
-    t_i = BASE_FEATURES.index("temperature")
-    out = {}
-    for cid, c in cells.items():
-        sample = np.concatenate([arr[:, t_i] for arr, _, _ in c["cycles"][::50]])
-        out[cid] = float(np.nanmean(sample))
-    return out
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--snl-dir", required=True, help="Dir of SNL .pkl files, or SNL.zip")
@@ -326,6 +316,15 @@ def main() -> None:
                         help="Unit of the SEVERSON time column (SNL is always seconds)")
     parser.add_argument("--soh-clip", type=float, default=SOH_CLIP_DEFAULT)
     parser.add_argument(
+        "--artifact-version", default=LFP_MODEL_VERSION,
+        help="Version stamped into scaler_lfp.pkl, feature_scaler_lfp.pkl and the .pt "
+             f"files (default {LFP_MODEL_VERSION} from config). train.py's "
+             "--feature-scaler-version MUST be given the same string or load_split() "
+             "rejects the tensors. This is a CLI arg and not just the config constant "
+             "because LFP_MODEL_VERSION cannot be bumped to 2.1-lfp until the 2.1 "
+             "weights exist — bumping it earlier breaks loading the live 2.0 artifacts.",
+    )
+    parser.add_argument(
         "--cycle-count-norm", type=float, default=None,
         help="Divisor for cycle_count_norm. Default = LFP_CYCLE_COUNT_NORM from config "
              f"({CYCLE_COUNT_NORM:g}), which was sized for Severson's ~2300-cycle cells. "
@@ -336,6 +335,16 @@ def main() -> None:
              "the new weights go live, or inference will disagree with training.",
     )
     parser.add_argument("--soc-mode", choices=["cycle", "window"], default="cycle")
+    parser.add_argument(
+        "--cluster-min-share", type=float, default=0.002,
+        help="Minimum share of train windows a 5 °C bin must hold to count as a "
+             "temperature cluster (default 0.002 = 0.2%%). Calibrated on the real "
+             "merged set (427k windows, 2026-08-11): the 15 °C bin holds 0.36%% and is "
+             "a whole dedicated cell over 65 cycles spanning SOH 93.9->84.7 — real "
+             "coverage. The 45 °C bin holds 0.03%% and is only scattered self-heating "
+             "peaks from Severson's 4C discharge — not coverage. 0.2%% separates the "
+             "two; 1%% would wrongly throw away the only 15 °C cell we have.",
+    )
     parser.add_argument("--val-ids", default=None, help="Comma-separated cell ids (overrides defaults)")
     parser.add_argument("--test-ids", default=None, help="Comma-separated cell ids (overrides defaults)")
     parser.add_argument("--severson-val-frac", type=float, default=0.04,
@@ -406,15 +415,6 @@ def main() -> None:
     print(f"\n[TIMING] parse: {t_parse - t_start:.1f}s")
     print(f"Cells: {len(snl_ids)} SNL + {len(severson_ids)} Severson = {len(all_cells)}")
 
-    # --- temperature coverage: the entire reason this retrain exists ----------
-    temps = _temperature_summary({k: all_cells[k] for k in snl_ids})
-    clusters = sorted({round(v / 5.0) * 5.0 for v in temps.values()})
-    if severson_ids:
-        clusters = sorted(set(clusters) | {30.0})
-    print(f"\nCum nhiet do do duoc: {clusters}")
-    print("  -> dat LFP_TEMPERATURE_TRAIN_CLUSTERS trong src/core/config.py bang dung bo nay,")
-    print("     neu khong co OOD se van bao sai (xem GH-67).")
-
     # --- split ----------------------------------------------------------------
     if args.val_ids or args.test_ids:
         val_ids = [c for c in (args.val_ids.split(",") if args.val_ids else []) if c]
@@ -450,16 +450,39 @@ def main() -> None:
     print(f"  val : {val_ids}")
     print(f"  test: {test_ids}")
 
-    # Guard the failure this whole retrain is meant to prevent: a temperature that
-    # exists in the data but never reaches the training set teaches the model
-    # nothing, while the config would still claim the cluster is covered.
-    train_temps = sorted({round(temps[c] / 5.0) * 5.0 for c in train_snl})
-    for c in clusters:
-        if c == 30.0 and severson_ids:
-            continue
-        if c not in train_temps:
-            print(f"  [!] Cum {c}°C KHONG co trong train -> dung khai no trong "
-                  f"LFP_TEMPERATURE_TRAIN_CLUSTERS")
+    # --- temperature clusters: the entire reason this retrain exists -----------
+    # Measured on the TRAIN split only, and from the actual sensor values rather
+    # than the chamber setpoint in the cell id. That distinction matters: Severson
+    # discharges at 4C and the cell self-heats well past its 30 °C chamber, so the
+    # "30 °C dataset" really contributes windows up to ~45 °C. Declaring clusters
+    # from setpoints would understate what the model has actually seen, and keep
+    # flagging real readings as out-of-distribution.
+    #
+    # A 5 °C bin is kept only if it holds >= --cluster-min-share of the sampled
+    # values; a handful of stray windows is not training coverage.
+    t_i = BASE_FEATURES.index("temperature")
+    sample = np.concatenate(
+        [arr[:, t_i] for cid in train_ids for arr, _, _ in all_cells[cid]["cycles"][::20]]
+    )
+    sample = sample[np.isfinite(sample)]
+    binned = np.round(sample / 5.0) * 5.0
+    vals, counts = np.unique(binned, return_counts=True)
+    share = counts / counts.sum()
+    clusters = [float(v) for v, s in zip(vals, share) if s >= args.cluster_min_share]
+
+    print("\nPhan bo nhiet do TRONG TRAIN (do tu cam bien, khong phai setpoint):")
+    for v, c, s in zip(vals, counts, share):
+        mark = "  <- cluster" if s >= args.cluster_min_share else ""
+        print(f"  {v:5.0f}°C  {c:>9,}  {s * 100:5.2f}%{mark}")
+    print(f"\nLFP_TEMPERATURE_TRAIN_CLUSTERS = {tuple(clusters)}")
+    gaps = [
+        g for g in np.arange(min(clusters) - 5, max(clusters) + 10, 5)
+        if min(abs(g - c) for c in clusters) > 5.0
+    ]
+    covered = (min(clusters) - 5.0, max(clusters) + 5.0)
+    print(f"  -> het co OOD gia trong khoang {covered[0]:.0f}-{covered[1]:.0f}°C"
+          + (f"; VAN HO tai {gaps}" if gaps else ""))
+    print("  -> chep dung tuple tren vao src/core/config.py CUNG COMMIT voi weight moi.")
 
     # --- scalers (fit on train only) ------------------------------------------
     print("\nFitting MinMaxScaler on train cells...")
@@ -480,7 +503,7 @@ def main() -> None:
     joblib.dump(
         {
             "scaler": scaler,
-            "version": LFP_MODEL_VERSION,
+            "version": args.artifact_version,
             "trained_on": train_ids,
             "features": BASE_FEATURES,
             "chemistry": "LFP",
@@ -521,7 +544,7 @@ def main() -> None:
     joblib.dump(
         {
             "scaler": feat_scaler,
-            "version": LFP_MODEL_VERSION,
+            "version": args.artifact_version,
             "n_features": X_feat_train.shape[1],
             "var_floor": FEATURE_VAR_FLOOR,
             "n_degenerate": n_degenerate,
@@ -549,7 +572,7 @@ def main() -> None:
                 "X": torch.tensor(X, dtype=torch.float32),
                 "X_feat": torch.tensor(X_feat, dtype=torch.float32),
                 "y": torch.tensor(y, dtype=torch.float32),
-                "feature_scaler_version": LFP_MODEL_VERSION,
+                "feature_scaler_version": args.artifact_version,
             },
             path,
         )
