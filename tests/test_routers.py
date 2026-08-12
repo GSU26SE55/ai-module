@@ -37,7 +37,19 @@ def make_dummy_loader():
 @pytest.fixture()
 def client():
     scaler, feat_scaler, model, iso = make_dummy_loader()
-    with patch("src.core.model_loader.load_models"):
+    from src.core import model_loader
+
+    with (
+        patch("src.core.model_loader.load_models"),
+        patch.object(model_loader, "scaler", scaler),
+        patch.object(model_loader, "feature_scaler", feat_scaler),
+        patch.object(model_loader, "soh_model", model),
+        patch.object(model_loader, "iso_model", iso),
+        patch.object(model_loader, "lfp_scaler", scaler),
+        patch.object(model_loader, "lfp_feature_scaler", feat_scaler),
+        patch.object(model_loader, "lfp_soh_model", model),
+        patch.object(model_loader, "lfp_iso_model", iso),
+    ):
         from main import app
 
         with patch("src.services.inference.model_loader") as mock_loader:
@@ -50,12 +62,28 @@ def client():
 
 
 class TestHealthRouter:
+    def test_live(self, client):
+        assert client.get("/live").json() == {"status": "live"}
+
+    def test_ready(self, client):
+        resp = client.get("/ready")
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "ready"
+
     def test_health_returns_ok(self, client):
         resp = client.get("/health")
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "ok"
         assert "model_version" in data
+
+    def test_ready_returns_503_when_required_model_is_missing(self, client):
+        from src.core import model_loader
+
+        with patch.object(model_loader, "soh_model", None):
+            resp = client.get("/ready")
+        assert resp.status_code == 503
+        assert resp.json()["status"] == "not_ready"
 
     def test_health_model_loaded_flags(self, client):
         resp = client.get("/health")

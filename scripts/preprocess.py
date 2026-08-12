@@ -35,11 +35,11 @@ from sklearn.preprocessing import MinMaxScaler, StandardScaler
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.core.config import (
+    BASE_FEATURES,
     CYCLE_COUNT_NORM,
     FEATURE_SCALER_PATH,
     FEATURE_SCALER_VERSION,
     FEATURE_SCALER_VERSION_LONG,
-    BASE_FEATURES,
     LONG_FEATURE_SCALER_PATH,
     LONG_INPUT_FEATURES,
     LONG_SCALER_PATH,
@@ -381,7 +381,7 @@ def main() -> None:
         test_cycles, scaler, feat_scaler, long_seq=long_seq, soc_mode=args.soc_mode
     )
 
-    print(f"\nSplit summary:")
+    print("\nSplit summary:")
     print(
         f"  Train: {len(X_train_raw):>5} windows from {len(train_cycles)} cycles  ({len(TRAIN_IDS)} batteries)"
     )

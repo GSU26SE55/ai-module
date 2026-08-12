@@ -4,6 +4,7 @@ Request/response schemas for POST /prescribe endpoint.
 from typing import Literal
 
 from pydantic import BaseModel
+
 from src.schemas.predict import AnomalyInfo, PredictionInfo, PredictRequest, RiskInfo
 
 

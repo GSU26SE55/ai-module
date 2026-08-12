@@ -52,7 +52,6 @@ from src.core.config import (
     MAMBA_PATH,
     MODEL_VERSION,
     RUL_FEAT_DIM,
-    RUL_LOOKBACK,
     RUL_MAMBA_PATH,
     RUL_MODEL_VERSION,
     RUL_SCALE,

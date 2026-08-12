@@ -19,7 +19,6 @@ import os
 import sys
 
 import matplotlib.pyplot as plt
-import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from scripts.preprocess import load_cycles  # noqa: E402

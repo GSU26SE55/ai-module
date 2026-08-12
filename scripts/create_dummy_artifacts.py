@@ -18,10 +18,10 @@ from sklearn.preprocessing import MinMaxScaler, StandardScaler
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.core.config import (
+    BASE_FEATURES,
     FEATURE_SCALER_PATH,
     FEATURE_SCALER_VERSION,
     FEATURES,
-    BASE_FEATURES,
     INPUT_FEATURES,
     ISO_FOREST_PATH,
     MAMBA_PATH,

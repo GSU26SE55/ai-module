@@ -6,7 +6,6 @@ import torch
 from scripts.preprocess_rul import find_eol, make_rul_windows
 from src.models.rul_predictor import RULPredictor
 
-
 # --- find_eol -------------------------------------------------------------
 
 def test_find_eol_first_crossing():

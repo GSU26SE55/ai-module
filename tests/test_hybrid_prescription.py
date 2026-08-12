@@ -8,11 +8,11 @@ Matches the current API:
 import os
 from unittest import mock
 
-from src.services.prescription.rule_prescription import build_rule_prescription
-from src.services.prescription.llm import chain
 from src.services.prescription import observability, orchestrator
-from src.services.prescription.orchestrator import _enrich, _dedup
 from src.services.prescription.history_store import PrescriptionHistoryStore
+from src.services.prescription.llm import chain
+from src.services.prescription.orchestrator import _dedup, _enrich
+from src.services.prescription.rule_prescription import build_rule_prescription
 
 
 class TestRulePrescription:

@@ -26,6 +26,7 @@ from src.core.config import (
     SPECTRAL_FEAT_DIM,
     WINDOW_SIZE,
 )
+from src.core.runtime import env_bool
 from src.models.soh_predictor import MambaSOHPredictor
 
 logger = logging.getLogger(__name__)
@@ -154,7 +155,10 @@ def load_models() -> None:
     soh_model = MambaSOHPredictor(input_features=input_features, feat_dim=feat_dim, d_model=d_model, d_state=d_state)
     soh_model.load_state_dict(checkpoint["model_state_dict"])
     soh_model.eval()
-    if torch.cuda.is_available():
+    compile_enabled = env_bool("AI_TORCH_COMPILE", default=True)
+    if not compile_enabled:
+        pass
+    elif torch.cuda.is_available():
         try:
             # Fuses chunked scan + FiLM into single CUDA kernel — eliminates CPU-GPU ping-pong.
             # CUDA-only: compilation is lazy (first real forward pass), so a CPU attempt would
@@ -216,6 +220,8 @@ def _compile_for_inference(model: MambaSOHPredictor, input_features: int, feat_d
     `self.training` — compiling eval only would defer the train graph to the first
     real MC-Dropout call.
     """
+    if not env_bool("AI_TORCH_COMPILE", default=True):
+        return model
     try:
         if torch.cuda.is_available():
             return torch.compile(model, mode="reduce-overhead")
@@ -350,7 +356,7 @@ def load_long_model(device: str | None = None) -> MambaSOHPredictor:
         state_dict = {k.removeprefix("_orig_mod."): v for k, v in state_dict.items()}
     model.load_state_dict(state_dict)
     model.eval()
-    if torch.cuda.is_available():
+    if env_bool("AI_TORCH_COMPILE", default=True) and torch.cuda.is_available():
         try:
             # Fuses the 16-chunk scan loop into a single CUDA kernel: eliminates
             # 16 CPU→GPU roundtrips per forward pass when L=4096. CUDA-only — same

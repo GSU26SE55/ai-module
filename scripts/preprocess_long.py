@@ -51,8 +51,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from scripts.preprocess import TEST_IDS, TRAIN_IDS, VAL_IDS, load_cycles  # noqa: E402
 from src.core.config import (  # noqa: E402
-    FEATURE_SCALER_VERSION_LONG,
     BASE_FEATURES,
+    FEATURE_SCALER_VERSION_LONG,
     LONG_FEATURE_SCALER_PATH,
     LONG_INPUT_FEATURES,
     LONG_SCALER_PATH,

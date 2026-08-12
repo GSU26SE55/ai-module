@@ -19,12 +19,11 @@ import sys
 
 import matplotlib.pyplot as plt
 import numpy as np
-from matplotlib.colors import LinearSegmentedColormap, Normalize
 from matplotlib.cm import ScalarMappable
+from matplotlib.colors import LinearSegmentedColormap, Normalize
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from scripts.preprocess import load_cycles  # noqa: E402
-from src.features.extractor import compute_ic_curve_and_discharge_progress  # noqa: E402
 
 DATA_DIR = "data/raw/nasa/cleaned_dataset"
 OUT_DIR = "logs/nckh/figures"

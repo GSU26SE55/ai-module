@@ -39,6 +39,11 @@ models/checkpoints*/
 # /prescribe calls + technician feedback, NOT a reproducible artifact like
 # models/embeddings/ (static KB, committed).
 models/prescription_history/
+models/classification_feedback/
+
+# Local production/deploy outputs
+deploy.env
+sbom*.json
 
 # Virtual environments
 .venv/

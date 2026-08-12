@@ -5,13 +5,17 @@ Chung minh Mamba xu ly duoc 1000+ token trong SLA 100ms.
 Usage:
     python scripts/benchmark_tokens.py
 """
-import sys, os
+import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import time
+
 import torch
+
+from src.core.config import D_MODEL, D_STATE, INPUT_FEATURES, SPECTRAL_FEAT_DIM
 from src.models.soh_predictor import MambaSOHPredictor
-from src.core.config import INPUT_FEATURES, SPECTRAL_FEAT_DIM, D_MODEL, D_STATE
 
 model = MambaSOHPredictor(
     input_features=INPUT_FEATURES,

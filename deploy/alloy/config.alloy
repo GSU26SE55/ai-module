@@ -1,0 +1,36 @@
+discovery.docker "local" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "solar_ai" {
+  targets = discovery.docker.local.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/solar-ai-.*"
+    action        = "keep"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    target_label  = "container"
+    regex         = "/(.*)"
+  }
+}
+
+loki.source.docker "solar_ai" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.solar_ai.output
+  forward_to = [loki.write.backend.receiver]
+}
+
+loki.write "backend" {
+  endpoint {
+    url = sys.env("LOKI_PUSH_URL")
+  }
+
+  external_labels = {
+    service = "ai-module",
+    host    = "ai-vps",
+  }
+}

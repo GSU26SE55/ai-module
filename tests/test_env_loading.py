@@ -12,16 +12,18 @@ trong `test_grpc_server.py` khi chạy full suite (chúng xanh khi chạy riêng
 Kiểm bằng đọc source + subprocess riêng để không rò trạng thái sang test khác.
 """
 
+import os
 import pathlib
 import subprocess
 import sys
 
 MAIN = pathlib.Path("main.py").read_text(encoding="utf-8")
 GRPC = pathlib.Path("src/grpc_server.py").read_text(encoding="utf-8")
+RUNTIME = pathlib.Path("src/core/runtime.py").read_text(encoding="utf-8")
 
 
 def test_rest_entrypoint_loads_dotenv():
-    assert "load_dotenv(" in MAIN
+    assert "load_environment()" in MAIN
 
 
 def test_grpc_entrypoint_loads_dotenv():
@@ -29,16 +31,15 @@ def test_grpc_entrypoint_loads_dotenv():
     cờ `--env-file`. Sửa mỗi main.py thì REST có key còn gRPC — đường BE dùng
     thật — vẫn không."""
     i = GRPC.index("def serve()")
-    assert "load_dotenv(" in GRPC[i : i + 800]
+    assert "load_environment()" in GRPC[i : i + 800]
 
 
 def test_both_entrypoints_do_not_override_real_env():
     """override=False là CỐ Ý: biến môi trường thật (docker `env_file`, secrets của
     orchestrator) phải thắng file .env nằm trên đĩa. Đảo lại thì deploy production
     có thể bị .env lập trình viên bỏ quên trong image ghi đè."""
-    for src in (MAIN, GRPC):
-        i = src.index("load_dotenv(")
-        assert "override=False" in src[i : i + 40]
+    i = RUNTIME.index("load_dotenv(")
+    assert "override=False" in RUNTIME[i : i + 100]
 
 
 def test_dotenv_is_pinned_not_a_transitive_dependency():
@@ -48,7 +49,7 @@ def test_dotenv_is_pinned_not_a_transitive_dependency():
     assert "python-dotenv==" in req
 
 
-def test_importing_main_actually_populates_os_environ():
+def test_importing_main_actually_populates_os_environ(tmp_path):
     """Kiểm CHỨC NĂNG chứ không chỉ text — chạy trong subprocess riêng để key thật
     không rò sang các test khác."""
     code = (
@@ -58,13 +59,22 @@ def test_importing_main_actually_populates_os_environ():
         "after = os.getenv('DEEPSEEK_API_KEY') is not None;"
         "print(f'{before}|{after}')"
     )
-    out = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, timeout=180
-    ).stdout.strip().splitlines()[-1]
+    env_file = tmp_path / "ai.env"
+    env_file.write_text("DEEPSEEK_API_KEY=test-only-value\n", encoding="utf-8")
+    child_env = dict(os.environ)
+    child_env.pop("DEEPSEEK_API_KEY", None)
+    child_env["AI_ENV_FILE"] = str(env_file)
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=180,
+        env=child_env,
+    )
+    assert result.returncode == 0, result.stderr
+    lines = result.stdout.strip().splitlines()
+    assert lines, result.stderr
+    out = lines[-1]
     before, after = out.split("|")
-    if not pathlib.Path(".env").exists():
-        import pytest
-
-        pytest.skip("máy này không có .env")
     assert before == "False", "biến đã có sẵn — phép đo không nói lên điều gì"
     assert after == "True", "import main không nạp được .env"

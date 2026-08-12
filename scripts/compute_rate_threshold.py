@@ -20,7 +20,12 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from scripts.eval_anomaly import RATE_PERCENTILE, collect_split, local_fade_rate, smooth_soh  # noqa: E402
+from scripts.eval_anomaly import (  # noqa: E402
+    RATE_PERCENTILE,
+    collect_split,
+    local_fade_rate,
+    smooth_soh,
+)
 from scripts.preprocess import TRAIN_IDS  # noqa: E402
 
 SEED = 42

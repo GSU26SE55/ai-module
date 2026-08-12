@@ -20,7 +20,7 @@ from src.schemas.suggest import (
     SuggestKbRequest,
     SuggestKbResponse,
 )
-from src.services.text_utils import jaccard, norm, norm_code, tokens
+from src.services.text_utils import jaccard, norm_code, tokens
 
 # Trọng số (thang 100 + bonus, chia 100 khi trả về).
 _W_CATEGORY = 40
