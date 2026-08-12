@@ -148,6 +148,20 @@ TIME_UNIT_SECONDS = {"minutes": 60.0, "seconds": 1.0}
 # PHYSICAL_RANGES["time"] bound of 200,000 s only ever caught sentinel garbage.
 MAX_DISCHARGE_SECONDS = 7200.0  # 2 h — 8x the nominal 4C discharge, generous
 
+# Five batch-2 entries are not new cells: they are b1c0-b1c4 from batch 1 whose
+# testing continued into the batch-2 file under new keys. Their cycle numbering
+# RESTARTS AT 1 while the cell has already accumulated 208-1060 cycles and faded
+# accordingly, so cycle_count and the SOH label contradict each other — the model
+# is told "50 cycles old, already at 88%".
+#
+# Not a hypothesis: scripts/eval_soh_by_temp.py on the v2.1 train split ranked
+# them 1st, 2nd, 3rd, 4th and 6th worst of 146 cells (MAE 4.1-9.4% against a
+# ~1.2% median). Dropping is the conservative fix — it costs ~3% of the windows
+# and needs no offset constants. Merging them back onto b1c0-b1c4 with the right
+# cycle offsets would keep the data, but a wrong offset silently corrupts the
+# whole aging axis, so that is a separate, verified change.
+SEVERSON_CONTINUATION_CELLS = frozenset({"b2c7", "b2c8", "b2c9", "b2c15", "b2c16"})
+
 # StandardScaler divides by sqrt(var), so a feature whose training variance is
 # pure floating-point rounding noise gets that noise amplified to unit variance.
 # Measured on the run-3 feature_scaler_lfp.pkl: 7 of the 57 features sat at
@@ -280,6 +294,7 @@ def load_batch_file(
     n_no_discharge = [0]
     n_soh_clipped = [0]
     n_too_long = [0]
+    n_continuation = [0]
     durations: list[float] = []
     with h5py.File(mat_path, "r") as f:
         if "batch" not in f:
@@ -293,6 +308,9 @@ def load_batch_file(
 
         for i in range(num_cells):
             key = f"{batch_label}c{i}"
+            if key in SEVERSON_CONTINUATION_CELLS:
+                n_continuation[0] += 1
+                continue
             try:
                 cycle_life = float(f[batch["cycle_life"][i, 0]][()][0, 0])
                 policy = _h5_str(f[batch["policy_readable"][i, 0]])
@@ -358,6 +376,15 @@ def load_batch_file(
             except Exception as exc:
                 print(f"  [{key}] skipped entirely (cell-level error: {exc})")
                 continue
+
+    if n_continuation[0]:
+        dropped = sorted(
+            k for k in SEVERSON_CONTINUATION_CELLS if k.startswith(batch_label + "c")
+        )
+        print(
+            f"  {batch_label}: {n_continuation[0]} cell bo qua (tiep noi cua batch 1, "
+            f"cycle_count dem lai tu 1 nen mau thuan voi nhan SOH): {dropped}"
+        )
 
     if n_nonphysical[0]:
         # Watch this number: a handful of dropouts is the expected case. If it is

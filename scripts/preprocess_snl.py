@@ -301,6 +301,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--snl-dir", required=True, help="Dir of SNL .pkl files, or SNL.zip")
     parser.add_argument("--severson-dir", default=None, help="Dir with Severson *batch*.mat (optional but recommended)")
+    parser.add_argument(
+        "--reuse-scaler", action="store_true",
+        help="Load the committed scaler_lfp.pkl/feature_scaler_lfp.pkl instead of fitting "
+             "new ones, and do NOT overwrite them. Use this to SCORE an existing checkpoint "
+             "on a subset of cells (e.g. SNL only, without the 8 GB Severson dataset): "
+             "refitting on a subset changes the input scale the model was trained on, so "
+             "the resulting error would measure that mismatch instead of the model.",
+    )
     parser.add_argument("--output-dir", default="data/processed_lfp")
     parser.add_argument("--cycle-stride", type=int, default=3,
                         help="Stride for SEVERSON cycles (v2.0 used 3)")
@@ -482,46 +490,85 @@ def main() -> None:
     covered = (min(clusters) - 5.0, max(clusters) + 5.0)
     print(f"  -> het co OOD gia trong khoang {covered[0]:.0f}-{covered[1]:.0f}°C"
           + (f"; VAN HO tai {gaps}" if gaps else ""))
-    print("  -> chep dung tuple tren vao src/core/config.py CUNG COMMIT voi weight moi.")
+    if args.reuse_scaler:
+        print("  -> [reuse-scaler] Day chi la thong tin: KHONG sua config theo cum nay. "
+              "Tap cell o day la tap con, cum that nam trong scaler_lfp.pkl da commit.")
+    else:
+        print("  -> chep dung tuple tren vao src/core/config.py CUNG COMMIT voi weight moi.")
 
-    # --- scalers (fit on train only) ------------------------------------------
-    print("\nFitting MinMaxScaler on train cells...")
-    train_raw = np.concatenate(
-        [arr for cid in train_ids for arr, _, _ in all_cells[cid]["cycles"]], axis=0
-    )
-    scaler = MinMaxScaler()
-    scaler.fit(train_raw)
-    for idx, name in enumerate(BASE_FEATURES):
-        print(f"  {name:<12}: [{scaler.data_min_[idx]:9.3f}, {scaler.data_max_[idx]:9.3f}]")
+    # --- scalers (fit on train only, or reuse the committed pair) -------------
+    if args.reuse_scaler:
+        # Scoring mode: the model on disk was trained against THIS scale. Fitting a
+        # new scaler on a subset of cells would silently shift every input channel.
+        for path, label in [(LFP_SCALER_PATH, "scaler_lfp.pkl"),
+                            (LFP_FEATURE_SCALER_PATH, "feature_scaler_lfp.pkl")]:
+            if not os.path.exists(path):
+                raise FileNotFoundError(
+                    f"--reuse-scaler needs {label} at '{path}', but it is not there. "
+                    f"Commit the artifact set first, or drop --reuse-scaler to fit fresh."
+                )
+        art = joblib.load(LFP_SCALER_PATH)
+        if art["version"] != args.artifact_version:
+            raise ValueError(
+                f"--reuse-scaler: {LFP_SCALER_PATH} is version {art['version']} but "
+                f"--artifact-version says {args.artifact_version}. Scoring data against "
+                f"a scaler from a different artifact set is exactly the mistake this "
+                f"flag exists to prevent."
+            )
+        scaler = art["scaler"]
+        saved_ccn = art.get("cycle_count_norm")
+        if saved_ccn is not None and float(saved_ccn) != float(ccn):
+            raise ValueError(
+                f"--reuse-scaler: artifact was built with cycle_count_norm="
+                f"{saved_ccn:g} but this run uses {ccn:g}. Pass "
+                f"--cycle-count-norm {saved_ccn:g} so the cycle channel matches."
+            )
+        print(f"\n[reuse-scaler] Dung lai {LFP_SCALER_PATH} (v{art['version']}, "
+              f"fit tren {len(art.get('trained_on', []))} cell) — KHONG fit lai, KHONG ghi de.")
+        for idx, name in enumerate(BASE_FEATURES):
+            print(f"  {name:<12}: [{scaler.data_min_[idx]:9.3f}, {scaler.data_max_[idx]:9.3f}]")
+    else:
+        print("\nFitting MinMaxScaler on train cells...")
+        train_raw = np.concatenate(
+            [arr for cid in train_ids for arr, _, _ in all_cells[cid]["cycles"]], axis=0
+        )
+        scaler = MinMaxScaler()
+        scaler.fit(train_raw)
+        for idx, name in enumerate(BASE_FEATURES):
+            print(f"  {name:<12}: [{scaler.data_min_[idx]:9.3f}, {scaler.data_max_[idx]:9.3f}]")
+
     t_max = float(scaler.data_max_[BASE_FEATURES.index("time")])
     print(f"\n  [i] time max = {t_max:.0f}s. Rang buoc cho BE: 30 x dt <= {t_max:.0f} "
           f"=> chu ky lay mau <= {t_max / WINDOW_SIZE:.0f}s.")
     if t_max > MAX_DISCHARGE_SECONDS:
         print(f"  [!] time max vuot {MAX_DISCHARGE_SECONDS:.0f}s — mot outlier con lot luoi.")
 
-    os.makedirs(os.path.dirname(LFP_SCALER_PATH), exist_ok=True)
-    joblib.dump(
-        {
-            "scaler": scaler,
-            "version": args.artifact_version,
-            "trained_on": train_ids,
-            "features": BASE_FEATURES,
-            "chemistry": "LFP",
-            "nominal_capacity_ah": LFP_NOMINAL_CAPACITY_AH,
-            "cycle_stride": args.cycle_stride,
-            "snl_cycle_stride": args.snl_cycle_stride,
-            "max_dt_seconds": args.max_dt_seconds,
-            "cycle_count_norm": ccn,
-            "phase": args.phase,
-            "time_unit_in": "seconds(SNL)+" + args.time_unit + "(severson)",
-            "soh_clip": args.soh_clip,
-            "soc_mode": args.soc_mode,
-            "sources": {"snl": len(snl_ids), "severson": len(severson_ids)},
-            "temperature_clusters": clusters,
-        },
-        LFP_SCALER_PATH,
-    )
-    print(f"Saved scaler -> {LFP_SCALER_PATH}")
+    if args.reuse_scaler:
+        print("[reuse-scaler] Bo qua ghi scaler_lfp.pkl — artifact production giu nguyen.")
+    else:
+        os.makedirs(os.path.dirname(LFP_SCALER_PATH), exist_ok=True)
+        joblib.dump(
+            {
+                "scaler": scaler,
+                "version": args.artifact_version,
+                "trained_on": train_ids,
+                "features": BASE_FEATURES,
+                "chemistry": "LFP",
+                "nominal_capacity_ah": LFP_NOMINAL_CAPACITY_AH,
+                "cycle_stride": args.cycle_stride,
+                "snl_cycle_stride": args.snl_cycle_stride,
+                "max_dt_seconds": args.max_dt_seconds,
+                "cycle_count_norm": ccn,
+                "phase": args.phase,
+                "time_unit_in": "seconds(SNL)+" + args.time_unit + "(severson)",
+                "soh_clip": args.soh_clip,
+                "soc_mode": args.soc_mode,
+                "sources": {"snl": len(snl_ids), "severson": len(severson_ids)},
+                "temperature_clusters": clusters,
+            },
+            LFP_SCALER_PATH,
+        )
+        print(f"Saved scaler -> {LFP_SCALER_PATH}")
 
     print("\nExtracting windows + spectral features (train)...")
     X_train, X_feat_train_raw, y_train, meta_train = cycles_to_windows(
@@ -531,27 +578,39 @@ def main() -> None:
     if len(X_train) == 0:
         raise ValueError("0 train windows — check --phase / --cycle-stride")
 
-    feat_scaler = StandardScaler()
-    feat_scaler.fit(X_feat_train_raw)
-    degenerate = feat_scaler.var_ < FEATURE_VAR_FLOOR
-    n_degenerate = int(degenerate.sum())
-    if n_degenerate:
-        print(f"  {n_degenerate}/{len(degenerate)} feature suy bien (var < {FEATURE_VAR_FLOOR:g}) "
-              f"-> ep scale_=1.0")
-        feat_scaler.scale_[degenerate] = 1.0
-    X_feat_train = feat_scaler.transform(X_feat_train_raw).astype(np.float32)
+    if args.reuse_scaler:
+        feat_art = joblib.load(LFP_FEATURE_SCALER_PATH)
+        if feat_art["version"] != args.artifact_version:
+            raise ValueError(
+                f"--reuse-scaler: {LFP_FEATURE_SCALER_PATH} is version "
+                f"{feat_art['version']}, expected {args.artifact_version}"
+            )
+        feat_scaler = feat_art["scaler"]
+        X_feat_train = feat_scaler.transform(X_feat_train_raw).astype(np.float32)
+        print(f"[reuse-scaler] Dung lai {LFP_FEATURE_SCALER_PATH} "
+              f"(v{feat_art['version']}, {feat_art.get('n_features')} feature) — KHONG ghi de.")
+    else:
+        feat_scaler = StandardScaler()
+        feat_scaler.fit(X_feat_train_raw)
+        degenerate = feat_scaler.var_ < FEATURE_VAR_FLOOR
+        n_degenerate = int(degenerate.sum())
+        if n_degenerate:
+            print(f"  {n_degenerate}/{len(degenerate)} feature suy bien (var < {FEATURE_VAR_FLOOR:g}) "
+                  f"-> ep scale_=1.0")
+            feat_scaler.scale_[degenerate] = 1.0
+        X_feat_train = feat_scaler.transform(X_feat_train_raw).astype(np.float32)
 
-    joblib.dump(
-        {
-            "scaler": feat_scaler,
-            "version": args.artifact_version,
-            "n_features": X_feat_train.shape[1],
-            "var_floor": FEATURE_VAR_FLOOR,
-            "n_degenerate": n_degenerate,
-        },
-        LFP_FEATURE_SCALER_PATH,
-    )
-    print(f"Saved feature_scaler -> {LFP_FEATURE_SCALER_PATH}")
+        joblib.dump(
+            {
+                "scaler": feat_scaler,
+                "version": args.artifact_version,
+                "n_features": X_feat_train.shape[1],
+                "var_floor": FEATURE_VAR_FLOOR,
+                "n_degenerate": n_degenerate,
+            },
+            LFP_FEATURE_SCALER_PATH,
+        )
+        print(f"Saved feature_scaler -> {LFP_FEATURE_SCALER_PATH}")
 
     X_val, X_feat_val, y_val, meta_val = cycles_to_windows(
         val_ids, all_cells, scaler, feat_scaler, soc_mode=args.soc_mode, return_meta=True
