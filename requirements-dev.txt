@@ -7,3 +7,4 @@ ruff==0.16.1
 pip-tools==7.5.2
 grpcio-tools==1.81.1
 matplotlib==3.9.4  # NCKH paper figures (GH-70 Figure F6, F4/F5) — không dùng trong src/
+h5py==3.11.0  # Severson/SNL MATLAB v7.3 preprocessing + its test fixtures
