@@ -168,12 +168,7 @@ class TestInferencePipeline:
         result = run_inference(make_dummy_readings())
         prediction = result["prediction"]
         probs = prediction["stage_probabilities"]
-        assert set(probs) == {
-            "End Of Life",
-            "Maintenance Required",
-            "Degrading",
-            "Healthy",
-        }
+        assert set(probs) == {"End Of Life", "Healthy"}
         assert abs(sum(probs.values()) - 1.0) < 1e-6
         assert probs[prediction["health_stage"]] == max(probs.values())
         assert prediction["stage_confidence"] == probs[prediction["health_stage"]]
@@ -817,9 +812,10 @@ class TestChemistryArtifactSelection:
             assert lfp.soh_model is lm and lfp.scaler is lsc
             assert lfp.iso_model is liso and lfp.feature_scaler is lfs
             assert lfp.artifact_set == "LFP"
-            # The divisor MUST travel with the weights: Severson cells run to ~2300
-            # cycles, NASA to ~197. Mixing them silently shifts an input channel.
-            assert lfp.cycle_count_norm == LFP_CYCLE_COUNT_NORM == 2300.0
+            # The divisor MUST travel with the weights: LFP cells (Severson + SNL)
+            # run to ~4600 cycles, NASA to ~197. Mixing them silently shifts an
+            # input channel. Value = `cycle_count_norm` in scaler_lfp.pkl.
+            assert lfp.cycle_count_norm == LFP_CYCLE_COUNT_NORM == 4600.0
 
             for chem in (None, "NMC", "unknown"):
                 nasa = _resolve_artifacts(chem)
@@ -884,8 +880,8 @@ class TestSocModeGuard:
 
         return inference._Artifacts(
             scaler=None, feature_scaler=None, soh_model=_M(), iso_model=None,
-            cycle_count_norm=2300.0, artifact_set="LFP",
-            model_version="2.0-lfp", soc_mode=soc_mode,
+            cycle_count_norm=4600.0, artifact_set="LFP",
+            model_version="2.1-lfp", soc_mode=soc_mode,
         )
 
     def _payload(self, n_cols):

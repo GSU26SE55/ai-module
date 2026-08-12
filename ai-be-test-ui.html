@@ -401,7 +401,7 @@ async function run1(skipId){
   verdict('v1', miss.length
     ? `✗ Thiếu ${miss.length}/12 trường: <code>${miss.join(', ')}</code> — bridge lại đang vứt dữ liệu AI.`
     : `✔ Đủ <b>12/12</b> trường. Model chấm pin này: <b>${it.modelVersion}</b>`+
-      (it.modelVersion==='2.0-lfp'
+      (it.modelVersion==='2.1-lfp'
         ? ' — đúng bộ LFP cho pin LiFePO4.'
         : ' — nếu đây là pin LiFePO4 mà thấy <b>1.6</b> thì đang bị chấm bằng weight sai (lệch ~60 điểm SOH, không báo lỗi).'),
     miss.length?'v-err':'v-ok');

@@ -292,7 +292,7 @@ class TestClassifyHealthStageProbabilistic:
         assert result["stage_confidence"] < 0.7
         probs = result["stage_probabilities"]
         assert probs["End Of Life"] == 0.5
-        assert probs["Maintenance Required"] == 0.5
+        assert probs["Healthy"] == 0.5
 
     def test_tie_breaks_toward_more_severe_stage(self):
         # 50/50 split → safety-first: report the more severe stage
@@ -302,10 +302,10 @@ class TestClassifyHealthStageProbabilistic:
 
     def test_majority_wins_over_mean(self):
         # Mean is 79.96 (< 80 → point-estimate would say End Of Life), but
-        # 6/10 samples are above the threshold → distribution says Maintenance
+        # 7/10 samples are above the threshold → distribution says Healthy
         samples = [70.0, 79.0, 79.6, 80.2, 80.4, 80.6, 80.8, 81.0, 83.0, 85.0]
         result = classify_health_stage_probabilistic(samples)
-        assert result["health_stage"] == "Maintenance Required"
+        assert result["health_stage"] == "Healthy"
         assert result["stage_probabilities"]["End Of Life"] == 0.3
 
     def test_probabilities_sum_to_one(self):
@@ -327,9 +327,14 @@ class TestClassifyHealthStageProbabilistic:
 
 class TestRiskProfile:
     def test_health_stage_from_soh(self):
+        # Two stages split at the 80% EOL threshold — anything above it still
+        # has its rated life left and is Healthy, including the old
+        # "Degrading" (85-90%) and "Maintenance Required" (80-85%) bands.
         assert classify_health_stage(95.0) == "Healthy"
-        assert classify_health_stage(87.0) == "Degrading"
-        assert classify_health_stage(82.0) == "Maintenance Required"
+        assert classify_health_stage(87.0) == "Healthy"
+        assert classify_health_stage(82.0) == "Healthy"
+        assert classify_health_stage(80.0) == "Healthy"
+        assert classify_health_stage(79.9) == "End Of Life"
         assert classify_health_stage(79.0) == "End Of Life"
 
     def test_anomaly_status_from_score(self):
@@ -400,8 +405,12 @@ class TestGetRecommendedAction:
     def test_degrading_high_soh(self):
         assert get_recommended_action("Degrading", 88.0) == "SCHEDULE_MAINTENANCE"
 
-    def test_degrading_low_soh(self):
-        assert get_recommended_action("Degrading", 84.9) == "SCHEDULE_REPLACEMENT"
+    def test_degrading_low_soh_stops_at_inspection(self):
+        # Above the 80% EOL threshold the pack is Healthy, so even the bottom
+        # of the old "Maintenance Required" band only warrants an inspection —
+        # SCHEDULE_REPLACEMENT is no longer produced anywhere.
+        assert get_recommended_action("Degrading", 84.9) == "SCHEDULE_MAINTENANCE"
+        assert get_recommended_action("Degrading", 80.1) == "SCHEDULE_MAINTENANCE"
 
     def test_failed(self):
         assert get_recommended_action("Failed", 75.0) == "REPLACE_IMMEDIATELY"
@@ -414,13 +423,19 @@ class TestGenerateWarnings:
     def test_no_warnings_healthy(self):
         assert generate_warnings(self._raw(), soh=95.0, classification="Normal") == []
 
-    def test_soh_low_warning(self):
-        codes = [w["code"] for w in generate_warnings(self._raw(), soh=87.0, classification="Degrading")]
-        assert "SOH_LOW" in codes
-
-    def test_soh_critical_warning(self):
-        codes = [w["code"] for w in generate_warnings(self._raw(), soh=83.0, classification="Degrading")]
-        assert "SOH_CRITICAL" in codes
+    def test_no_soh_warning_above_eol(self):
+        # A pack above the 80% EOL threshold is Healthy: no SOH warning is
+        # raised, so has_warning stays False and no maintenance ticket is
+        # forced. SOH_LOW (<90%) and SOH_CRITICAL (<85%) used to fire here and
+        # opened a P3 ticket for a perfectly serviceable mid-life pack.
+        for soh in (87.0, 83.0, 80.0):
+            codes = [
+                w["code"]
+                for w in generate_warnings(self._raw(), soh=soh, classification="Degrading")
+            ]
+            assert "SOH_LOW" not in codes, soh
+            assert "SOH_CRITICAL" not in codes, soh
+            assert "BATTERY_EOL" not in codes, soh
 
     def test_battery_eol_warning(self):
         codes = [w["code"] for w in generate_warnings(self._raw(), soh=75.0, classification="Failed")]
@@ -558,12 +573,12 @@ class TestTemperatureDomainClusters:
         assert temperature_domain_distance(temps, LFP_TEMPERATURE_TRAIN_CLUSTERS) == 0.0
 
     def test_lfp_35c_closer_than_nasa_clusters(self):
-        """35 °C: LFP lệch 5 °C, còn cụm NASA lệch 9 °C (24 → 35)."""
+        """35 °C: v2.1-lfp có hẳn cell SNL ở 35 °C ⇒ lệch 0; cụm NASA lệch 9 °C."""
         from src.core.config import LFP_TEMPERATURE_TRAIN_CLUSTERS
         from src.models.anomaly_detector import temperature_domain_distance
 
         temps = np.full(30, 35.0)
-        assert temperature_domain_distance(temps, LFP_TEMPERATURE_TRAIN_CLUSTERS) == 5.0
+        assert temperature_domain_distance(temps, LFP_TEMPERATURE_TRAIN_CLUSTERS) == 0.0
         assert temperature_domain_distance(temps) == 9.0
 
     def test_default_stays_nasa_clusters(self):
@@ -579,8 +594,8 @@ class TestTemperatureDomainClusters:
         from src.models.anomaly_detector import temperature_domain_distance
 
         temps = np.full(30, 30.0)
-        temps[7] = 55.0
-        assert temperature_domain_distance(temps, LFP_TEMPERATURE_TRAIN_CLUSTERS) == 25.0
+        temps[7] = 55.0  # cụm gần nhất là 40 °C ⇒ lệch 15
+        assert temperature_domain_distance(temps, LFP_TEMPERATURE_TRAIN_CLUSTERS) == 15.0
 
     def test_warning_path_is_chemistry_aware_too(self):
         """GH-67: có HAI đường sinh cờ OOD nhiệt độ — risk profile và warning
@@ -602,16 +617,19 @@ class TestTemperatureDomainClusters:
         assert nasa and "4/24/44" in nasa[0]["message"]
 
     def test_lfp_warning_message_names_the_lfp_cluster(self):
-        """Khi LFP thật sự ngoài miền, thông điệp phải in cụm 30 °C — in nhầm
-        cụm NASA làm người đọc log kết luận sai nguyên nhân."""
+        """Khi LFP thật sự ngoài miền, thông điệp phải in cụm của bộ LFP — in
+        nhầm cụm NASA làm người đọc log kết luận sai nguyên nhân.
+
+        50 °C mới là ngoài miền với v2.1-lfp: cụm cao nhất là 40 °C nên 45 °C chỉ
+        cách 5.0, vừa đúng ngưỡng và KHÔNG cảnh báo nữa (v2.0 chỉ có cụm 30 °C)."""
         from src.models.anomaly_detector import generate_warnings
 
         raw = np.column_stack([
-            np.full(30, 3.3), np.zeros(30), np.full(30, 45.0)
+            np.full(30, 3.3), np.zeros(30), np.full(30, 50.0)
         ]).astype(np.float32)
         w = [x for x in generate_warnings(raw, 95.0, "Normal", chemistry="LFP")
              if x["code"] == "TEMP_OOD"]
-        assert w and "(30°C)" in w[0]["message"]
+        assert w and "(15/25/30/35/40°C)" in w[0]["message"]
 
 
 class TestDegradationRateByChemistry:
@@ -696,3 +714,56 @@ class TestInsufficientDischargeFlag:
 
         assert self._flag(generate_warnings(self._raw(np.full(30, 2.4)), 100.0,
                                             "Normal", chemistry="LFP")) is not None
+
+
+class TestTemperatureProfileByChemistry:
+    """GH-67 — ngưỡng nhiệt độ theo chemistry.
+
+    Trước đây dùng chung 35/45 cho MỌI loại pin, trong khi SOP của chính dự án
+    (knowledge/safety/anomaly_thermal.md) ghi cell LFP chịu tới 60 °C, NMC 55 °C.
+    Pin LFP 8S thật đặt ngoài trời đo được max 34.5 °C — cách ngưỡng cũ đúng
+    0.5 °C, tức mỗi trưa nắng là sinh ticket giả.
+    """
+
+    def _warn(self, temp, chemistry):
+        from src.models.anomaly_detector import generate_warnings
+
+        raw = np.column_stack([
+            np.full(30, 3.3), np.zeros(30), np.full(30, temp)
+        ]).astype(np.float32)
+        return {
+            w["code"] for w in generate_warnings(raw, 95.0, "Normal", chemistry=chemistry)
+        }
+
+    def test_lfp_quiet_in_the_outdoor_range(self):
+        """29–44 °C là dải vận hành ngoài trời bình thường của pin mặt trời."""
+        for temp in (34.5, 38.0, 42.0, 44.0):
+            assert "TEMP_ELEVATED" not in self._warn(temp, "LFP")
+            assert "TEMP_CRITICAL" not in self._warn(temp, "LFP")
+
+    def test_lfp_still_warns_above_its_own_limit(self):
+        """Nới ngưỡng KHÔNG được biến thành tắt cảnh báo."""
+        assert "TEMP_ELEVATED" in self._warn(46.0, "LFP")
+        assert "TEMP_CRITICAL" in self._warn(56.0, "LFP")
+
+    def test_lfp_critical_stays_below_thermal_runaway(self):
+        """55 < 60 — phải còn đệm trước ngưỡng thoát nhiệt trong anomaly_thermal.md.
+        Lấy thẳng 60 làm ngưỡng cảnh báo là cảnh báo lúc đã cháy."""
+        from src.models.anomaly_detector import CHEMISTRY_TEMP_PROFILES
+
+        _, crit = CHEMISTRY_TEMP_PROFILES["LFP"]
+        assert crit < 60.0
+
+    def test_default_path_unchanged(self):
+        """NMC KHÔNG phải loại pin thứ hai — nó là đường mặc định khi request không
+        khai chemistry, và BE hiện chưa gửi pack_config (issue #1005). Đổi nó là
+        đổi hành vi của mọi request đang chạy."""
+        from src.models.anomaly_detector import (
+            CHEMISTRY_TEMP_PROFILES,
+            TEMP_CRITICAL,
+            TEMP_WARNING,
+        )
+
+        assert CHEMISTRY_TEMP_PROFILES["NMC"] == (TEMP_WARNING, TEMP_CRITICAL)
+        assert "TEMP_ELEVATED" in self._warn(36.0, None)
+        assert "TEMP_CRITICAL" in self._warn(46.0, None)

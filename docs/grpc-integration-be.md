@@ -94,6 +94,61 @@ await foreach (var response in call.ResponseStream.ReadAllAsync())
 | 6 | **In-order, backpressure sẵn** | Responses đúng thứ tự requests; HTTP/2 flow control tự điều tiết — BE không cần rate-limit thủ công ở mức thấp. |
 | 8 | **`VerifyTicket` — xem §7** | RPC thứ 5 (GH-693). Rule-based, deterministic, không gọi mạng. AI chỉ gắn nhãn, KHÔNG tự chặn ticket. |
 | 7 | **Prescribe `enrich=false` mặc định** | Rule-based, hot-path (<100ms SLA). `enrich=true` chạy RAG+LLM (chậm, có thể vài giây) — chỉ dùng ngoài P1 hot-path. |
+| 9 | **Cột `time` phải rebase — xem §4.1** | ⚠️ **Gửi timestamp tuyệt đối làm SOH sai nặng và KHÔNG có lỗi nào báo.** BE phải trừ mốc thời gian dòng đầu window. |
+
+### 4.1. ⚠️ Cột `time` — BẮT BUỘC rebase về 0 mỗi window
+
+`time` (cột thứ 4 của mỗi reading) **không phải Unix timestamp, không phải đồng hồ tăng liên tục**.
+Nó là input feature của model, biểu diễn *vị trí trong chu kỳ xả*, và được train với giá trị
+đã rebase về 0 (`scripts/preprocess_lfp.py` — `seg[:, time] -= seg[0, time]`).
+
+**BE phải trừ mốc thời gian của dòng đầu tiên trong window trước khi gọi AI:**
+
+```csharp
+var window = readings.OrderBy(r => r.Timestamp).TakeLast(30).ToList();
+var t0 = window[0].Timestamp;
+
+foreach (var r in window)
+{
+    var reading = new Reading();
+    reading.Values.AddRange(new[] {
+        r.Voltage,
+        r.Current,
+        r.Temperature,
+        (r.Timestamp - t0).TotalSeconds,   // ← 0, 30, 60, … KHÔNG phải timestamp thật
+        r.CycleCount,
+        r.SocPercent,
+    });
+    request.Readings.Add(reading);
+}
+```
+
+**Vì sao bắt buộc.** Timestamp lớn nằm ngoài phân phối train nên model ngoại suy và trả SOH
+vô nghĩa. Không có validator nào chặn — request vẫn `OK`, chỉ có con số là sai. Đo trên
+đường xả LFP solar 6 giờ mô phỏng (2026-08-10):
+
+| Cách gửi `time` | Biên độ SOH đọc ra | `health_stage` |
+|---|---|---|
+| Timestamp tăng liên tục | 73.4 – 98.7% (dao động 25.3 điểm) | lật `Healthy` ↔ `End Of Life` |
+| **Rebase về 0 mỗi window** | **98.6 – 100.0% (dao động 1.4 điểm)** | **`Healthy` ổn định** |
+
+Cắm IoT thật mà không rebase: sau vài giờ chạy, pin còn mới vẫn bị báo `End Of Life` →
+`REPLACE_IMMEDIATELY` → ticket P1 giả.
+
+**Ràng buộc chu kỳ lấy mẫu.** Scaler LFP fit `time` trên `[0, 1453.9]` giây. Window có 30 dòng
+nên `30 × khoảng_lấy_mẫu ≤ 1454` ⇒ **chu kỳ lấy mẫu của IoT phải ≤ ~48 giây**. Lấy mẫu 1
+phút/lần đã đẩy `time` ra ngoài vùng train.
+
+> **Rebase KHÔNG làm mất khả năng phát hiện pin chai** — kiểm chứng với plateau điện áp tụt dần:
+> SOH đọc ra 100 → 99.2 → 96.9 → 92.1 → 84.8%.
+>
+> **Giới hạn đã biết:** pin có SOH sát ngưỡng 80% vẫn có thể lật nhãn `Healthy` ↔ `End Of Life`
+> tuỳ thời điểm lấy mẫu trong chu kỳ xả (biên độ 4–8 điểm đo trên NASA thật). Rebase `time`
+> không xử lý được việc này — BE nên yêu cầu N lần đọc liên tiếp cùng kết luận (hysteresis)
+> trước khi đổi trạng thái ticket, thay vì tin một lần đọc đơn lẻ.
+>
+> **Mức độ đã kiểm chứng:** kết luận dựa trên dữ liệu tổng hợp + khoảng train của scaler; repo
+> chưa có dữ liệu LFP thật để đối chiếu ground-truth.
 
 ## 5. Chạy local để test
 

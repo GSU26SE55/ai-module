@@ -14,6 +14,13 @@ data/processed_long/
 *.mat
 *.pt
 
+# Demo IoT scenarios — CSV sinh lại được, KHÔNG commit (13 file x 1200 dòng ~ 640 KB
+# và sẽ đổi mỗi lần artifact model đổi). Sinh lại bằng:
+#     python -X utf8 scripts/gen_iot_scenarios.py
+# manifest.json CÓ commit — nó là kỳ vọng đã kiểm chứng (1171 điểm cắt/kịch bản)
+# mà BE đọc để viết test tích hợp, và là mốc so sánh khi model lên version mới.
+demo/iot_simulator/*.csv
+
 # Node — KHÔNG commit (AI module là Python thuần; tránh lặp lại sự cố node_modules)
 node_modules/
 package.json

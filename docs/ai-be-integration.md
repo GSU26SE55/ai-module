@@ -17,9 +17,37 @@ TicketService consumer → gRPC Prescribe(battery_id, readings, pack_config?, en
         │
         ▼
 PrescribeResponse.risk.action_code
-   "MONITOR"                                                    → bỏ qua, KHÔNG tạo ticket
-   "SCHEDULE_MAINTENANCE"/"SCHEDULE_REPLACEMENT"/"REPLACE_IMMEDIATELY" → tạo ticket, map các field bên dưới
+   "MONITOR"                                          → bỏ qua, KHÔNG tạo ticket
+   "SCHEDULE_MAINTENANCE"/"REPLACE_IMMEDIATELY"      → tạo ticket, map các field bên dưới
 ```
+
+> ⚠️ **BREAKING — ngưỡng health_stage đổi (2026-08-09).** Trước đây có 4 stage
+> (90/85/80). Nay chỉ còn **2**, chia tại đúng ngưỡng EOL 80%:
+>
+> | SOH | `health_stage` | `action_code` từ SOH | Priority |
+> |---|---|---|---|
+> | ≥ 80% | `Healthy` | `MONITOR` | `None` |
+> | < 80% | `End Of Life` | `REPLACE_IMMEDIATELY` | `P1` |
+>
+> Ảnh hưởng phía BE — cần chỉnh:
+> 1. **`SCHEDULE_REPLACEMENT` không bao giờ được gửi nữa.** Nó chỉ sinh ra từ
+>    stage `Maintenance Required` (SOH 80-85%), stage này đã bị bỏ. Enum BE giữ
+>    được, nhưng nhánh xử lý sẽ không bao giờ chạy.
+> 2. **`Maintenance Required` và `Degrading` biến mất khỏi `health_stage`.**
+>    Code BE so sánh chuỗi với 2 giá trị này sẽ luôn false.
+> 3. **`stage_probabilities` từ 4 key xuống 2 key** (`Healthy`, `End Of Life`).
+>    Ai iterate/hiển thị map này phải chịu được số key thay đổi.
+> 4. **`SOH_LOW` và `SOH_CRITICAL` không còn xuất hiện trong `evidence.warnings`.**
+>    Pin 80-90% giờ không sinh cảnh báo SOH nào ⇒ **không tự tạo ticket nữa**.
+> 5. **`P2` giờ chỉ đến từ `anomaly_status = "Anomaly"`**, không còn từ SOH band.
+>
+> **Lý do:** pin trên 80% SOH vẫn còn nguyên tuổi thọ danh định (80% chính là
+> mốc EOL toàn ngành). Các tầng phụ phía trên gắn nhãn "Degrading" cho một quả
+> pin giữa đời và mở ticket bảo trì P3 cho nó — over-alerting.
+>
+> **Thay thế cho lead time đặt hàng:** dùng số, không dùng ticket —
+> `prediction.cycles_to_maintenance` (số chu kỳ còn lại tới 85%, mốc nhìn trước
+> để lên kế hoạch) và `prediction.rul_cycles_estimate` (tới EOL 80%).
 
 > ⚠️ **KHÔNG** dùng `anomaly.anomaly_status` làm điều kiện tạo ticket. `anomaly_status` (Normal/Warning/Anomaly) chỉ đo IsolationForest có thấy **hình dạng sóng cảm biến** bất thường không — độc lập với mức độ nghiêm trọng SOH (`health_stage`). Một pin xuống cấp đều đặn tới End-Of-Life vẫn có thể cho `anomaly_status = "Normal"` (sensor pattern hoàn toàn "mượt") trong khi `risk.action_code = "REPLACE_IMMEDIATELY"` — verify thật bằng dữ liệu held-out B0048 (SOH 57.9%): `anomaly_status="Normal"`, `action_code="REPLACE_IMMEDIATELY"`, `priority="P1"`. Gate đúng theo `risk.action_code` (hoặc tương đương `risk.priority != "None"`), KHÔNG theo `anomaly_status`.
 
@@ -34,7 +62,7 @@ PrescribeResponse.risk.action_code
 
 | `PrescribeResponse` field | Ý nghĩa | Dùng để |
 |---|---|---|
-| `risk.action_code` | `MONITOR`/`SCHEDULE_MAINTENANCE`/`SCHEDULE_REPLACEMENT`/`REPLACE_IMMEDIATELY` | **Quyết định có tạo ticket hay không** — `MONITOR` → không tạo, còn lại → tạo. Loại hành động đề xuất |
+| `risk.action_code` | `MONITOR`/`SCHEDULE_MAINTENANCE`/`REPLACE_IMMEDIATELY` (`SCHEDULE_REPLACEMENT` đã retired, không gửi nữa) | **Quyết định có tạo ticket hay không** — `MONITOR` → không tạo, còn lại → tạo. Loại hành động đề xuất |
 | `risk.priority` | `"P1"`/`"P2"`/`"P3"`/`"None"` | **Tín hiệu urgency gợi ý** — xem mục 4, KHÔNG gán thẳng làm Priority ticket |
 | `risk.risk_level` | `"Critical"`/`"High"`/`"Medium"`/`"Low"` | Hiển thị mức độ nghiêm trọng trên ticket |
 | `anomaly.anomaly_status` | `"Normal"` / `"Warning"` / `"Anomaly"` | **KHÔNG dùng để quyết định tạo ticket** (chỉ đo bất thường sensor pattern qua IsolationForest, độc lập với SOH severity — xem cảnh báo ở mục 1). Chỉ tham khảo/hiển thị thêm |

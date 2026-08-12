@@ -13,7 +13,7 @@ Hệ thống agent hỗ trợ dự án Capstone **Solar Lithium-ion Battery Main
 **Hệ thống gồm 3 phần:**
 - Mobile App (React Native/Expo) — giám sát pin real-time, Customer dùng
 - Web App (ReactJS) — quản lý Admin/Manager/Staff + SLA ticket theo ITIL
-- AI Module (FastAPI + PyTorch) — phân loại trạng thái pin, dự đoán SOH bằng LSTM/CNN-LSTM
+- AI Module (FastAPI + PyTorch) — phân loại trạng thái pin, dự đoán SOH bằng **Mamba (SSM)** + Isolation Forest
 
 > Core business flow (4 role · 6 phase · ticket state machine · SLA): [docs/core-business-flow.md](docs/core-business-flow.md)
 > Chi tiết đầy đủ xem tại: [memory.md](memory.md)

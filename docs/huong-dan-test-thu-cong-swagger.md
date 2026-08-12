@@ -41,6 +41,12 @@
 
 Đây là lỗi nặng nhất đã sửa trong đợt này. **Dán đúng payload dưới đây 3 lần**, mỗi lần đổi `pack_config`.
 
+> 🚨 **Payload dưới đây hiện KHÔNG chạy được nữa — kiểm chứng lại 2026-08-11.** Cả 3 lần đều trả
+> **422**: *"window trải 2060s (34 phút), vượt trần 1500s (25 phút)"*. Guard giới hạn độ trải của
+> window được thêm **sau** khi bài hướng dẫn này được viết, nên các con số kỳ vọng bên dưới
+> (38.25% / 98.29%) **không tái lập được** — không liên quan đến việc đổi model v2.0-lfp → v2.1-lfp.
+> Cần sinh lại bộ readings có 30 mẫu nằm gọn trong 25 phút rồi đo lại toàn bộ mục này.
+
 Vào **http://localhost:4015/docs** → `POST /predict/` → Try it out.
 
 ### Lần 1 — KHÔNG có `pack_config`
@@ -66,13 +72,13 @@ Vẫn payload trên, thêm:
 "pack_config": { "n_series": 4, "chemistry": "LFP", "capacity_ah": 100 }
 ```
 
-→ **200** · `soh_percent ≈ 98.29` · `health_stage: "Healthy"` · `model_version: "2.0-lfp"`
+→ **200** · `soh_percent ≈ 98.29` · `health_stage: "Healthy"` · `model_version: "2.1-lfp"`
 
 | | Lần 2 (thiếu chemistry) | Lần 3 (đúng) |
 |---|---|---|
 | SOH | **38.25%** | **98.29%** |
 | Kết luận | End Of Life | Healthy |
-| Model | 1.6 (NASA) | 2.0-lfp |
+| Model | 1.6 (NASA) | 2.1-lfp |
 
 **Lệch 60 điểm SOH. Một bên bảo pin sắp chết, bên kia bảo pin khoẻ — và KHÔNG có lỗi nào báo ra.**
 Đó là lý do `chemistry` là trường bắt buộc trên thực tế dù schema cho phép bỏ trống.
@@ -183,7 +189,7 @@ pageNumber = 1 · pageSize = 5
 Kiểm đủ 12 field: `healthStage` `stageConfidence` `isBorderline` `sohStd` `rulCyclesEstimate`
 `aiPriority` `riskLevel` `actionCode` `sohTrend` `degradationRatePerCycle` `cyclesToMaintenance` `isTemperatureOod`
 
-Pin này là LiFePO4 nên `modelVersion` phải là **`2.0-lfp`**.
+Pin này là LiFePO4 nên `modelVersion` phải là **`2.1-lfp`**.
 
 ---
 
@@ -354,7 +360,7 @@ WHERE origin=1 AND ai_verify_status IN (1,4) AND status NOT IN (10,11,12) AND NO
 ## 9. Ba câu SQL kiểm nhanh sau khi test
 
 ```bash
-# (a) Đúng model cho đúng chemistry — PHẢI thấy CẢ 1.6 LẪN 2.0-lfp
+# (a) Đúng model cho đúng chemistry — PHẢI thấy CẢ 1.6 LẪN 2.1-lfp
 docker exec solar-postgres psql -U postgres -d battery_db -c \
  "SELECT model_version, count(*) FROM soh_predictions WHERE health_stage IS NOT NULL GROUP BY model_version;"
 

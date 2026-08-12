@@ -13,7 +13,7 @@ common combinations.
 | Hazard | Warning tier | Critical tier |
 |---|---|---|
 | **Electrical** (voltage/current) | Insulated gloves (≥500V rating), safety glasses (ANSI Z87.1) | + Arc-flash rated clothing, steel-toed footwear, complete LOTO before contact |
-| **Thermal** (temperature) | Insulated gloves, safety glasses, infrared thermometer for standoff checks | + Full evacuation (no PPE substitutes for evacuation at thermal-runaway precursor stage — see `thermal_runaway_response.md`) |
+| **Thermal** (temperature) | Insulated gloves, safety glasses *(+ infrared thermometer — a required **tool** for standoff checks, not protective equipment)* | + Full evacuation (no PPE substitutes for evacuation at thermal-runaway precursor stage — see `thermal_runaway_response.md`) |
 | **Environmental** (humidity/smoke/water) | Safety glasses, gloves for corrosion-affected terminal handling | + Respiratory protection if smoke present, do not approach until fire-service clearance for a confirmed incident |
 | **Physical/mechanical** (any REPLACE_IMMEDIATELY handling) | Insulated gloves, safety glasses, steel-toed footwear | Same — physical battery removal is always at minimum the warning-tier PPE set regardless of the triggering hazard |
 
@@ -22,6 +22,10 @@ Any procedure involving physical contact with the battery requires at
 minimum: **insulated gloves (≥500V rating) + safety glasses (ANSI Z87.1)** —
 this is the `_BASE_PPE` constant. `MONITOR` actions involve no physical
 contact and require no PPE.
+
+Battery terminals are live even after LOTO (`electrical_safety_sop.md`), so
+the base set is not waived by "the system is isolated" — isolation removes the
+load path, not the source.
 
 ## Escalation Rule
 Any critical-severity electrical warning (`VOLTAGE_CRITICAL`,

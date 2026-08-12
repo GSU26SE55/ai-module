@@ -103,12 +103,15 @@ Mỗi field làm một việc **khác nhau**, không thay thế nhau được:
 Cùng một payload pack LFP 8S, chỉ khác `chemistry`:
 
 ```
-khong co chemistry   -> model 1.6      SOH = 87.72%   Degrading
-chemistry = "LFP"    -> model 2.0-lfp  SOH = 100.00%  Healthy
+khong co chemistry   -> model 1.6      SOH = 34.94%  Failed
+chemistry = "LFP"    -> model 2.1-lfp  SOH = 93.65%  Normal
 ```
 
-Lệch **12 điểm SOH** và khác hẳn kết luận. Gửi thiếu `chemistry` không báo lỗi — nó chỉ **âm thầm
-trả kết quả của model sai**. Đây là lỗi tốn kém nhất có thể mắc khi tích hợp.
+(đo lại 2026-08-11 trên bộ v2.1-lfp; payload: pack 8S 30Ah xả 0.5C ở 30 °C, `cycle_count=900`)
+
+Lệch **gần 59 điểm SOH** và khác hẳn kết luận — một quả pin bình thường bị báo `Failed`. Gửi thiếu
+`chemistry` không báo lỗi — nó chỉ **âm thầm trả kết quả của model sai**. Đây là lỗi tốn kém nhất
+có thể mắc khi tích hợp.
 
 > LFP xả quanh 3.0–3.3 V/cell, sạc đầy 3.65 V/cell. NMC xả quanh 3.2–4.15 V, sạc đầy 4.2 V.
 > Dùng nhầm profile thì ngưỡng cảnh báo lệch cả hai đầu.
@@ -221,7 +224,7 @@ ra ngoài**.
 ```csharp
 var h = await client.HealthAsync(new HealthRequest());
 // status="ok"  model_version="1.6"        <- bo NASA/NMC
-// lfp_loaded=true  lfp_model_version="2.0-lfp"   <- bo LFP
+// lfp_loaded=true  lfp_model_version="2.1-lfp"   <- bo LFP
 ```
 
 **Nếu `lfp_loaded = false` mà bạn định gửi `chemistry="LFP"` → mọi request sẽ lỗi.** Bộ LFP là
@@ -267,8 +270,9 @@ call vừa rồi dùng bộ NASA hay LFP. Chỉ `Predict` mới có `metadata.mo
 Nếu cần audit, tạm thời đối chiếu bằng `Health` (`lfp_loaded`) + chính `pack_config` mình gửi.
 
 **e) `cycle_count` lớn trên đường NASA sẽ bị kẹp.** Bộ NASA chuẩn hoá theo mốc 200 chu kỳ, bộ LFP
-theo 2300. Gửi `cycle_count=900` mà không có `chemistry="LFP"` sẽ thấy log cảnh báo và giá trị bị
-kẹp về 1.0 — thêm một lý do nữa để luôn gửi `chemistry`.
+theo **4600** (v2.1-lfp; bộ v2.0-lfp cũ là 2300). Gửi `cycle_count=900` mà không có
+`chemistry="LFP"` sẽ thấy log cảnh báo và giá trị bị kẹp về 1.0 — thêm một lý do nữa để luôn gửi
+`chemistry`.
 
 **f) Gọi lại y hệt trong thời gian ngắn sẽ trả cache.** Response có `cached=true`. Khoá cache gồm
 cả `pack_config`, nên đổi `chemistry`/`n_series`/`capacity_ah` là chạy tính lại, không dùng lại
@@ -374,10 +378,17 @@ NASA 18650 NMC 2 Ah, loại chết sau ~150 chu kỳ. Đo trên pin LFP 8S/30Ah 
 Cả hai con số cũ đều nói về một quả pin **mới tinh** (`cycle_count = 0`, SOH 100%).
 BE mà dùng `cycles_to_maintenance` để lên lịch bảo trì thì gọi thợ sớm **~17 lần**.
 
-0.0087 suy từ bộ Severson mà model LFP được train: EOL 80% ở ~2300 chu kỳ
+0.0087 suy từ bộ Severson mà model LFP v2.0 được train: EOL 80% ở ~2300 chu kỳ
 ⇒ `20 điểm SOH / 2300`. Chỉ áp dụng khi gửi `chemistry = "LFP"`; không khai
 chemistry thì vẫn là 0.15 (đường NASA, không đổi).
 
+> ⚠️ **Chưa cập nhật cho v2.1-lfp.** Bộ v2.1 train thêm cell SNL chạy dài hơn nên
+> `LFP_CYCLE_COUNT_NORM` đã lên 4600, nhưng `DEGRADATION_RATE_BY_CHEMISTRY["LFP"]`
+> vẫn giữ 0.0087 — đổi nó là đổi giả định tuổi thọ pin, cần quyết định riêng chứ
+> không sync máy móc theo hằng số chuẩn hoá. Nghĩa là `rul_cycles_estimate` hiện
+> vẫn tính theo cycle life ~2300. Coi đây là **cận dưới thận trọng**, đừng dùng làm
+> cam kết bảo hành.
+>
 > ⚠️ Nếu sau này có datasheet cycle life của chính pack đang dùng, con số đó sát
 > hơn Severson (cell 1.1 Ah bị ép sạc nhanh trong lab). Sửa
 > `DEGRADATION_RATE_BY_CHEMISTRY["LFP"] = 20 / cycle_life` bên repo ai-module.
