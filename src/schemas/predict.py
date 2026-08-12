@@ -258,6 +258,24 @@ class PredictRequest(BaseModel):
                     f"{times[i-1]} — cột time phải không giảm; sắp xếp lại theo "
                     "thứ tự thời gian trước khi gửi"
                 )
+        # Cột `time` là vị trí TRONG cửa sổ, phải rebase về 0 ở dòng đầu (quy ước
+        # trong docs/grpc-integration-be.md §4.1; training data rebase y hệt —
+        # scripts/preprocess_lfp.py `seg[:, time] -= seg[0, time]`).
+        #
+        # Guard span ở dưới KHÔNG bắt được lỗi này: BE gửi timestamp tuyệt đối với
+        # nhịp lấy mẫu bình thường vẫn cho span nhỏ và lọt qua. Đo được: giữ nguyên
+        # mọi kênh khác, chỉ dời mốc time 0s → 900s làm SOH tụt 97.85% → 60.21% và
+        # lật nhãn sang End Of Life. Không có lỗi nào báo, nên một pin còn mới bị
+        # mở ticket P1 mà không ai truy ra nguyên nhân.
+        if times[0] > MAX_WINDOW_SPAN_S:
+            raise ValueError(
+                f"readings[0].time={times[0]:.0f}s — cột time phải rebase về 0 ở "
+                "dòng ĐẦU của mỗi window (0, dt, 2·dt, …), không phải timestamp "
+                "tuyệt đối. Trừ đi mốc thời gian của dòng đầu trước khi gửi: "
+                "`time[i] -= time[0]`. Gửi timestamp tuyệt đối vẫn chạy nhưng cho "
+                "SOH sai lệch lớn (đo được: mốc 900s làm SOH 97.9% → 60.2% và lật "
+                "nhãn sang End Of Life trên pin còn khoẻ)."
+            )
         span = times[-1] - times[0]
         if span > MAX_WINDOW_SPAN_S:
             raise ValueError(

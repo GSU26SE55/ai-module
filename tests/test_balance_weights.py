@@ -1,5 +1,6 @@
 """GH-88 — unit tests for _balance_band_weights (inverse temp x SOH-band frequency)."""
 
+import pytest
 import torch
 
 from src.core.config import BASE_FEATURES, INPUT_FEATURES, WINDOW_SIZE
@@ -56,3 +57,61 @@ def test_weights_positive_and_finite():
     w = _balance_band_weights(x, y)
     assert torch.isfinite(w).all()
     assert (w > 0).all()
+
+
+# --------------------------------------------------------------------------
+# LFP v2.1: four chamber temperatures instead of NASA's three
+# --------------------------------------------------------------------------
+# The merged Severson+SNL train set has clusters at 15/25/30/35 °C (plus
+# Severson self-heating up to ~40 °C), and the MinMaxScaler fits temperature
+# over roughly [0, 44.6] °C. n_temp_bins is applied to the SCALED channel, so
+# the bin width in °C is range/n. With the default 3 bins that is ~14.9 °C —
+# wider than the 5 °C spacing between clusters — so 30 °C (140 Severson cells)
+# and 35 °C (6 SNL cells) land in ONE bin and the rare group is never
+# up-weighted, which is the entire purpose of passing --balance-bands here.
+
+_T_RANGE_C = 44.56  # measured scaler range on the real merged set (2026-08-11)
+
+
+def _scaled(celsius: float) -> float:
+    return celsius / _T_RANGE_C
+
+
+def _temp_bin(celsius: float, n_bins: int) -> int:
+    return min(int(_scaled(celsius) * n_bins), n_bins - 1)
+
+
+def test_default_three_bins_merge_the_30C_and_35C_clusters():
+    assert _temp_bin(30.0, 3) == _temp_bin(35.0, 3)
+
+
+def test_twelve_bins_separate_every_real_cluster():
+    clusters = [15.0, 25.0, 30.0, 35.0, 40.0]
+    bins = [_temp_bin(c, 12) for c in clusters]
+    assert len(set(bins)) == len(clusters), f"clusters collided: {list(zip(clusters, bins))}"
+
+
+def test_rare_warm_cluster_is_upweighted_only_with_enough_bins():
+    """End-to-end on the weights, not just the bin arithmetic.
+
+    Dense 30 °C mass vs a rare 35 °C group at the same SOH. With 3 bins they
+    share a bin and get identical weights; with 12 bins the rare one is lifted.
+    """
+    dense, rare = 200, 10
+    x = _make_x([_scaled(30.0)] * dense + [_scaled(35.0)] * rare)
+    y = torch.full((dense + rare,), 88.0)
+
+    w3 = _balance_band_weights(x, y, n_temp_bins=3)
+    assert w3[-1].item() == pytest.approx(w3[0].item()), "3 bins must NOT separate them"
+
+    w12 = _balance_band_weights(x, y, n_temp_bins=12)
+    assert w12[-1] > w12[0] * 5, "12 bins must lift the rare 35 °C group"
+
+
+def test_more_bins_still_respect_the_weight_cap():
+    """Finer bins mean sparser bins; the cap is what stops one cell dominating."""
+    x = _make_x([_scaled(30.0)] * 500 + [_scaled(15.0)])
+    y = torch.cat([torch.full((500,), 88.0), torch.full((1,), 88.0)])
+    w = _balance_band_weights(x, y, n_temp_bins=12, max_weight=5.0)
+    assert w.max().item() == 5.0
+    assert torch.isfinite(w).all()

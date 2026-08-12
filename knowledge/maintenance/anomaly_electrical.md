@@ -4,17 +4,31 @@ Covers 6 of the 15 AnomalyType categories (BE `AnomalyTypeEnum`) that stem
 from voltage/current abnormalities. Grounded in the citation table already
 established in `.claude/docs/ai-research-references.md` Phụ lục B2 §1.
 
+> **Producer.** Only *Overvoltage*, *Undervoltage* and *RapidDischarge* map to
+> codes the AI module emits (`generate_warnings()`). *AbnormalCharging*,
+> *HighInternalResistance* and *CellImbalance* need per-cell voltages, a DCIR
+> measurement or a charge-profile history — none of which is in the
+> voltage/current/temperature window — so they are raised BE-side or found
+> during physical inspection. A prescription may cite them as guidance; it
+> cannot detect them.
+
 ## Overvoltage
-- **Threshold:** cell voltage max 4.2V (NMC/LCO chemistry), 3.65V (LFP).
+- **Threshold:** per cell — elevated above 4.15V (NMC/LCO) / 3.65V (LFP);
+  critical above 4.2V (NMC/LCO) / 3.8V (LFP). Full table:
+  `bms_warning_codes.md`.
 - **Symptoms:** BMS `OVERVOLTAGE`/`OVERVOLTAGE_CRITICAL` warning, charger
   continues past cutoff.
 - **Causes:** charger setpoint misconfiguration, faulty voltage sensing, BMS
   cutoff relay failure.
-- **Response:** stop charging immediately if critical (>4.2V NMC / >3.65V LFP);
-  check charger settings if only elevated; log event for BMS calibration review.
+- **Response:** stop charging immediately if critical (>4.2V NMC / >3.8V LFP);
+  check charger settings if only elevated (>4.15V NMC / >3.65V LFP, i.e. above
+  the normal charge cutoff); log event for BMS calibration review.
 
 ## Undervoltage
-- **Threshold:** cell voltage min 2.5V (NMC), 2.0V (LFP).
+- **Threshold:** per cell — critical below 3.0V (NMC) / **2.5V (LFP)**;
+  approaching cutoff below 3.2V (NMC) / 2.8V (LFP). The 2.0V figure sometimes
+  seen for LFP is the OOD input guard `VOLTAGE_CELL_RANGE`, not a safety
+  limit — do not use it as an undervoltage threshold.
 - **Symptoms:** BMS `VOLTAGE_LOW`/`VOLTAGE_CRITICAL` warning, capacity drop
   under load.
 - **Causes:** deep discharge beyond cutoff, parasitic load left connected,
@@ -24,7 +38,11 @@ established in `.claude/docs/ai-research-references.md` Phụ lục B2 §1.
   drains if only approaching cutoff.
 
 ## RapidDischarge
-- **Threshold:** discharge current > 1C (chemistry/pack-rated C-rate).
+- **Threshold:** discharge current > 1C of the **pack's rated capacity**
+  (30 Ah production pack → 30 A warning, 45 A critical). See the defect note in
+  `bms_warning_codes.md` — the current build still compares against a hardcoded
+  2 A/3 A from the NASA cell, so `OVERCURRENT*` codes on a pack-scale battery
+  must be checked against the reported amps before being acted on.
 - **Symptoms:** BMS `OVERCURRENT`/`OVERCURRENT_CRITICAL` warning, elevated
   terminal temperature during discharge.
 - **Causes:** load short-circuit, undersized cabling causing current spike

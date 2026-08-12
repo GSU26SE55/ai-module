@@ -3,69 +3,69 @@
   "files": {
     "maintenance/action_code_sop.md": {
       "chunks": 6,
-      "ingested_at": "2026-08-06T03:45:46.607066+00:00",
-      "sha256": "2c7211aeeb6245039bc213539a33adbe4c5dfb8cd2186e41054b104c7960e807"
+      "ingested_at": "2026-08-10T23:57:57.489206+00:00",
+      "sha256": "7279dd7f6c08211e108668810dd992f18105795dc9df658fcaa591177022304c"
     },
     "maintenance/anomaly_connectivity.md": {
       "chunks": 3,
-      "ingested_at": "2026-08-06T03:45:46.607066+00:00",
+      "ingested_at": "2026-08-10T23:57:57.489206+00:00",
       "sha256": "08c6ea88aac2ce305d8ee7c69c24289c64a75c1a3cf469dab560247f082f6909"
     },
     "maintenance/anomaly_electrical.md": {
       "chunks": 7,
-      "ingested_at": "2026-08-06T03:45:46.607066+00:00",
-      "sha256": "06e092036904909fe36204232375cb4326ff8ae3926b3149677600347983cdfb"
+      "ingested_at": "2026-08-10T23:57:57.489206+00:00",
+      "sha256": "cfc6f9a87f1183f24de5e02508fe8feda16d5f301368983380fb6cc7e1fbc370"
     },
     "maintenance/anomaly_soc_soh.md": {
       "chunks": 3,
-      "ingested_at": "2026-08-06T03:45:46.607066+00:00",
-      "sha256": "c8db1025940c773186a17dcb2961618f1200f680a55b3ece056f67ec06d0e4c0"
+      "ingested_at": "2026-08-10T23:57:57.489206+00:00",
+      "sha256": "853b628b22e2061657c082c0c5170edd99c83f457335484cd243b9eb2f134e91"
     },
     "maintenance/battery_12v_lifepo4.md": {
       "chunks": 4,
-      "ingested_at": "2026-08-06T03:45:46.607066+00:00",
-      "sha256": "5af2469fde7040e125eb71a7e630d36541411126cbdde057cbc9ec2e9e5a29e2"
+      "ingested_at": "2026-08-10T23:57:57.489206+00:00",
+      "sha256": "11ea13ac4b9d56af48bbb3fa39598014dc0abb4bba28d44a07c4930bd2626630"
     },
     "maintenance/battery_maintenance_sop.md": {
       "chunks": 6,
-      "ingested_at": "2026-08-06T03:45:46.607066+00:00",
-      "sha256": "9c1cb27286614fb73e52c285ada182d9ddbc1f57618d56270f480e62d480f912"
+      "ingested_at": "2026-08-10T23:57:57.489206+00:00",
+      "sha256": "b443b21a9bd02b6d8b153294c0543dc63695d8163003ea275a94ac1b2201a717"
     },
     "maintenance/bms_warning_codes.md": {
-      "chunks": 6,
-      "ingested_at": "2026-08-06T03:45:46.607066+00:00",
-      "sha256": "41730be64c098537783878d19e839721cc94dd132a1acc14a9401aae675fb591"
+      "chunks": 7,
+      "ingested_at": "2026-08-10T23:57:57.489206+00:00",
+      "sha256": "665b8be21ae19dadc16e73a227fbe03b8f72d1d73d088916cd386e7347dac112"
     },
     "maintenance/solar_operations.md": {
       "chunks": 4,
-      "ingested_at": "2026-08-06T03:45:46.607066+00:00",
+      "ingested_at": "2026-08-10T23:57:57.489206+00:00",
       "sha256": "a0f2c73e51845f9d4e2e78975a8568809cc2c42a177f6e3bfca5722611a97dc4"
     },
     "safety/anomaly_environmental.md": {
       "chunks": 4,
-      "ingested_at": "2026-08-06T03:45:48.877160+00:00",
-      "sha256": "b5d45796b810d0d0a6e6f31c07fca33a1b0ec267f1b0a8d45b0aba8bc4f033b4"
+      "ingested_at": "2026-08-10T23:57:58.941128+00:00",
+      "sha256": "bd19a06194b1937839e6f4c80fa8d3883339e75da27fcdc21173bb676f78279e"
     },
     "safety/anomaly_thermal.md": {
-      "chunks": 3,
-      "ingested_at": "2026-08-06T03:45:48.877160+00:00",
-      "sha256": "bf738a7d08307a9e5aa6c6631dbd6bb0feee5c81c88698b4c5b6c2b0759eb1ab"
+      "chunks": 10,
+      "ingested_at": "2026-08-10T23:57:58.941128+00:00",
+      "sha256": "6d5ee93c543be47d06191c35cbd09b3f37be25b49892353a84e6d1593ac50509"
     },
     "safety/electrical_safety_sop.md": {
       "chunks": 7,
-      "ingested_at": "2026-08-06T03:45:48.877160+00:00",
-      "sha256": "213035c65fd7b5a6954918b8601900b78059a7a5f6fbc9499fca6b3021ea1180"
+      "ingested_at": "2026-08-10T23:57:58.941128+00:00",
+      "sha256": "d1988f648b652b5ca01174882298de76991ba400e890d71814360188edb5c5ec"
     },
     "safety/ppe_matrix.md": {
       "chunks": 4,
-      "ingested_at": "2026-08-06T03:45:48.877160+00:00",
-      "sha256": "d86a8c188323bc1b5284257d9723b8390780aa934e95e85380f634499b07b59a"
+      "ingested_at": "2026-08-10T23:57:58.941128+00:00",
+      "sha256": "a7a5e7008fdda80a224aa24463f259e31fa64b8ced88d01071e501b81b874f80"
     },
     "safety/thermal_runaway_response.md": {
       "chunks": 7,
-      "ingested_at": "2026-08-06T03:45:48.877160+00:00",
-      "sha256": "ee5306b2d48ce9a31aef0a37da17403b8c8f91ea64e5bb8e87cc669b039bf143"
+      "ingested_at": "2026-08-10T23:57:58.941128+00:00",
+      "sha256": "ec5e38ae32b34cbdf33540593c4d692d8935bba025f416a7d5b481ed457ef3ba"
     }
   },
-  "generated_at": "2026-08-06T03:45:46.605335+00:00"
+  "generated_at": "2026-08-10T23:57:57.489206+00:00"
 }

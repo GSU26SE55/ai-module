@@ -524,8 +524,8 @@ def main() -> None:
     print(f"Saved scaler -> {LFP_SCALER_PATH}")
 
     print("\nExtracting windows + spectral features (train)...")
-    X_train, X_feat_train_raw, y_train = cycles_to_windows(
-        train_ids, all_cells, scaler, soc_mode=args.soc_mode
+    X_train, X_feat_train_raw, y_train, meta_train = cycles_to_windows(
+        train_ids, all_cells, scaler, soc_mode=args.soc_mode, return_meta=True
     )
     print(f"  Train: {len(X_train)} windows")
     if len(X_train) == 0:
@@ -553,18 +553,22 @@ def main() -> None:
     )
     print(f"Saved feature_scaler -> {LFP_FEATURE_SCALER_PATH}")
 
-    X_val, X_feat_val, y_val = cycles_to_windows(val_ids, all_cells, scaler, feat_scaler, soc_mode=args.soc_mode)
-    X_test, X_feat_test, y_test = cycles_to_windows(test_ids, all_cells, scaler, feat_scaler, soc_mode=args.soc_mode)
+    X_val, X_feat_val, y_val, meta_val = cycles_to_windows(
+        val_ids, all_cells, scaler, feat_scaler, soc_mode=args.soc_mode, return_meta=True
+    )
+    X_test, X_feat_test, y_test, meta_test = cycles_to_windows(
+        test_ids, all_cells, scaler, feat_scaler, soc_mode=args.soc_mode, return_meta=True
+    )
 
     for name, X, y in [("train", X_train, y_train), ("val", X_val, y_val), ("test", X_test, y_test)]:
         if len(X) == 0:
             raise ValueError(f"{name} split produced 0 windows — split is unusable")
         print(f"  {name:<5}: {len(X):>7} windows | SOH {y.min():5.1f} - {y.max():5.1f}%")
 
-    for name, X, X_feat, y in [
-        ("train", X_train, X_feat_train, y_train),
-        ("val", X_val, X_feat_val, y_val),
-        ("test", X_test, X_feat_test, y_test),
+    for name, X, X_feat, y, meta in [
+        ("train", X_train, X_feat_train, y_train, meta_train),
+        ("val", X_val, X_feat_val, y_val, meta_val),
+        ("test", X_test, X_feat_test, y_test, meta_test),
     ]:
         path = os.path.join(args.output_dir, f"{name}.pt")
         torch.save(
@@ -573,6 +577,14 @@ def main() -> None:
                 "X_feat": torch.tensor(X_feat, dtype=torch.float32),
                 "y": torch.tensor(y, dtype=torch.float32),
                 "feature_scaler_version": args.artifact_version,
+                # Provenance per window — lets scripts/eval_soh_by_temp.py cut the
+                # error by temperature and by cell. train.py's load_split() reads
+                # only X/X_feat/y and ignores these, so old and new files stay
+                # interchangeable for training.
+                "cell_idx": torch.tensor(meta["cell_idx"], dtype=torch.int32),
+                "cell_ids": meta["cell_ids"],
+                "temp_mean_c": torch.tensor(meta["temp_mean_c"], dtype=torch.float32),
+                "cycle_idx": torch.tensor(meta["cycle_idx"], dtype=torch.int32),
             },
             path,
         )

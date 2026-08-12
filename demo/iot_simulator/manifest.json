@@ -1,0 +1,1282 @@
+{
+  "format": {
+    "columns": [
+      "voltage",
+      "current",
+      "temperature",
+      "time",
+      "cycle_count",
+      "soc_percent"
+    ],
+    "pack_config": {
+      "n_series": 8,
+      "chemistry": "LFP",
+      "capacity_ah": 30.0
+    },
+    "sample_dt_seconds": 10.0,
+    "window_size": 30,
+    "note": "Voltage/current la muc PACK (8S/24V/30Ah) — AI module tu chia per-cell server-side theo pack_config. Moi file la 1 stream LIEN TUC 1200 dong (khong phai 1 window 30 dong don le) — BE/simulator co the cat window 30-dong o BAT KY vi tri nao trong 1 file va van ra dung ket qua da kiem chung (xem consistent_across_offsets). KHONG duoc noi 2 file khac nhau lam 1 stream lien tuc cho cung 1 battery_id — window bac qua ranh gioi 2 file la du lieu vo nghia. Cot `time` trong file la thoi gian TUYET DOI trong stream; BE PHAI rebase ve 0 o dong dau MOI window truoc khi goi API (dt=10s => window dai 300s, nam trong dai scaler)."
+  },
+  "scenarios": {
+    "1_healthy_normal": {
+      "file": "1_healthy_normal.csv",
+      "description": "Pin khoe, xa solar binh thuong trong cum nhiet train. Truong hop nen.",
+      "stream_len": 1200,
+      "offsets_tested": 1171,
+      "offset_stride": 1,
+      "consistent_across_offsets": true,
+      "usable_as_fixed_expectation": true,
+      "expected": {
+        "health_stage": [
+          "Healthy"
+        ],
+        "anomaly_status": [
+          "Normal"
+        ],
+        "action_code": [
+          "MONITOR"
+        ],
+        "priority": [
+          "None"
+        ],
+        "soh_percent_range": [
+          98.92,
+          100.0
+        ],
+        "soh_spread_points": 1.08
+      },
+      "label_distribution": {
+        "Healthy | MONITOR | None": {
+          "n_offsets": 1171,
+          "soh_min": 98.92,
+          "soh_max": 100.0,
+          "share": 1.0
+        }
+      },
+      "label_transitions": []
+    },
+    "2_healthy_temp_ood_warning": {
+      "file": "2_healthy_temp_ood_warning.csv",
+      "description": "Pin khoe nhung 38C nam ngoai cum nhiet train -> canh bao TEMP_OOD.",
+      "stream_len": 1200,
+      "offsets_tested": 1171,
+      "offset_stride": 1,
+      "consistent_across_offsets": true,
+      "usable_as_fixed_expectation": true,
+      "expected": {
+        "health_stage": [
+          "Healthy"
+        ],
+        "anomaly_status": [
+          "Normal"
+        ],
+        "action_code": [
+          "SCHEDULE_MAINTENANCE"
+        ],
+        "priority": [
+          "P3"
+        ],
+        "soh_percent_range": [
+          100.0,
+          100.0
+        ],
+        "soh_spread_points": 0.0
+      },
+      "label_distribution": {
+        "Healthy | SCHEDULE_MAINTENANCE | P3": {
+          "n_offsets": 1171,
+          "soh_min": 100.0,
+          "soh_max": 100.0,
+          "share": 1.0
+        }
+      },
+      "label_transitions": []
+    },
+    "3_sensor_glitch_anomaly": {
+      "file": "3_sensor_glitch_anomaly.csv",
+      "description": "Pin khoe nhung cam bien/dau noi loi -> IsolationForest bat hinh dang bat thuong.",
+      "stream_len": 1200,
+      "offsets_tested": 1171,
+      "offset_stride": 1,
+      "consistent_across_offsets": true,
+      "usable_as_fixed_expectation": true,
+      "expected": {
+        "health_stage": [
+          "Healthy"
+        ],
+        "anomaly_status": [
+          "Warning"
+        ],
+        "action_code": [
+          "SCHEDULE_MAINTENANCE"
+        ],
+        "priority": [
+          "P3"
+        ],
+        "soh_percent_range": [
+          89.58,
+          100.0
+        ],
+        "soh_spread_points": 10.42
+      },
+      "label_distribution": {
+        "Healthy | SCHEDULE_MAINTENANCE | P3": {
+          "n_offsets": 1171,
+          "soh_min": 89.58,
+          "soh_max": 100.0,
+          "share": 1.0
+        }
+      },
+      "label_transitions": []
+    },
+    "4_end_of_life": {
+      "file": "4_end_of_life.csv",
+      "description": "SOH ro rang duoi 80% (khong sat nguong) -> on dinh qua moi diem cat window.",
+      "stream_len": 1200,
+      "offsets_tested": 1171,
+      "offset_stride": 1,
+      "consistent_across_offsets": false,
+      "usable_as_fixed_expectation": false,
+      "expected": {
+        "health_stage": [
+          "End Of Life",
+          "Healthy"
+        ],
+        "anomaly_status": [
+          "Normal"
+        ],
+        "action_code": [
+          "MONITOR",
+          "REPLACE_IMMEDIATELY",
+          "SCHEDULE_MAINTENANCE"
+        ],
+        "priority": [
+          "None",
+          "P1"
+        ],
+        "soh_percent_range": [
+          75.71,
+          100.0
+        ],
+        "soh_spread_points": 24.29
+      },
+      "label_distribution": {
+        "Healthy | MONITOR | None": {
+          "n_offsets": 1042,
+          "soh_min": 80.25,
+          "soh_max": 100.0,
+          "share": 0.8898
+        },
+        "End Of Life | REPLACE_IMMEDIATELY | P1": {
+          "n_offsets": 128,
+          "soh_min": 75.71,
+          "soh_max": 81.86,
+          "share": 0.1093
+        },
+        "Healthy | SCHEDULE_MAINTENANCE | P1": {
+          "n_offsets": 1,
+          "soh_min": 79.62,
+          "soh_max": 79.62,
+          "share": 0.0009
+        }
+      },
+      "label_transitions": [
+        {
+          "at_offset": 25,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P1",
+          "soh_before": 75.99,
+          "soh_after": 79.62
+        },
+        {
+          "at_offset": 26,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P1",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 79.62,
+          "soh_after": 77.3
+        },
+        {
+          "at_offset": 62,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | MONITOR | None",
+          "soh_before": 78.93,
+          "soh_after": 80.25
+        },
+        {
+          "at_offset": 63,
+          "from": "Healthy | MONITOR | None",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 80.25,
+          "soh_after": 76.87
+        },
+        {
+          "at_offset": 67,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | MONITOR | None",
+          "soh_before": 77.11,
+          "soh_after": 80.66
+        },
+        {
+          "at_offset": 68,
+          "from": "Healthy | MONITOR | None",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 80.66,
+          "soh_after": 79.09
+        },
+        {
+          "at_offset": 80,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | MONITOR | None",
+          "soh_before": 80.17,
+          "soh_after": 81.21
+        },
+        {
+          "at_offset": 81,
+          "from": "Healthy | MONITOR | None",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 81.21,
+          "soh_after": 77.75
+        },
+        {
+          "at_offset": 83,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | MONITOR | None",
+          "soh_before": 80.48,
+          "soh_after": 80.78
+        },
+        {
+          "at_offset": 84,
+          "from": "Healthy | MONITOR | None",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 80.78,
+          "soh_after": 78.66
+        },
+        {
+          "at_offset": 99,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | MONITOR | None",
+          "soh_before": 78.56,
+          "soh_after": 81.89
+        },
+        {
+          "at_offset": 100,
+          "from": "Healthy | MONITOR | None",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 81.89,
+          "soh_after": 80.21
+        },
+        {
+          "at_offset": 104,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | MONITOR | None",
+          "soh_before": 80.46,
+          "soh_after": 82.73
+        },
+        {
+          "at_offset": 106,
+          "from": "Healthy | MONITOR | None",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 81.49,
+          "soh_after": 80.66
+        },
+        {
+          "at_offset": 112,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | MONITOR | None",
+          "soh_before": 80.87,
+          "soh_after": 81.47
+        },
+        {
+          "at_offset": 113,
+          "from": "Healthy | MONITOR | None",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 81.47,
+          "soh_after": 80.79
+        },
+        {
+          "at_offset": 116,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | MONITOR | None",
+          "soh_before": 80.09,
+          "soh_after": 81.3
+        },
+        {
+          "at_offset": 117,
+          "from": "Healthy | MONITOR | None",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 81.3,
+          "soh_after": 80.38
+        },
+        {
+          "at_offset": 121,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | MONITOR | None",
+          "soh_before": 79.92,
+          "soh_after": 82.57
+        },
+        {
+          "at_offset": 122,
+          "from": "Healthy | MONITOR | None",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 82.57,
+          "soh_after": 80.61
+        },
+        {
+          "at_offset": 123,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | MONITOR | None",
+          "soh_before": 80.61,
+          "soh_after": 83.13
+        },
+        {
+          "at_offset": 124,
+          "from": "Healthy | MONITOR | None",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 83.13,
+          "soh_after": 81.14
+        },
+        {
+          "at_offset": 139,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | MONITOR | None",
+          "soh_before": 80.27,
+          "soh_after": 82.1
+        },
+        {
+          "at_offset": 141,
+          "from": "Healthy | MONITOR | None",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 81.88,
+          "soh_after": 80.1
+        },
+        {
+          "at_offset": 142,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | MONITOR | None",
+          "soh_before": 80.1,
+          "soh_after": 81.59
+        }
+      ]
+    },
+    "5_healthy_temp_critical": {
+      "file": "5_healthy_temp_critical.csv",
+      "description": "Qua nhiet 57C tren pin con khoe — critical DUY NHAT con kha thi qua API.",
+      "stream_len": 1200,
+      "offsets_tested": 1171,
+      "offset_stride": 1,
+      "consistent_across_offsets": true,
+      "usable_as_fixed_expectation": true,
+      "expected": {
+        "health_stage": [
+          "Healthy"
+        ],
+        "anomaly_status": [
+          "Normal"
+        ],
+        "action_code": [
+          "SCHEDULE_MAINTENANCE"
+        ],
+        "priority": [
+          "P1"
+        ],
+        "soh_percent_range": [
+          96.91,
+          100.0
+        ],
+        "soh_spread_points": 3.09
+      },
+      "label_distribution": {
+        "Healthy | SCHEDULE_MAINTENANCE | P1": {
+          "n_offsets": 1171,
+          "soh_min": 96.91,
+          "soh_max": 100.0,
+          "share": 1.0
+        }
+      },
+      "label_transitions": []
+    },
+    "6_healthy_cold_morning": {
+      "file": "6_healthy_cold_morning.csv",
+      "description": "Pin KHOE, sang som 12C, tai nhe. Moc do truc tiep cua bug nhiet do lanh.",
+      "stream_len": 1200,
+      "offsets_tested": 1171,
+      "offset_stride": 1,
+      "consistent_across_offsets": false,
+      "usable_as_fixed_expectation": false,
+      "expected": {
+        "health_stage": [
+          "End Of Life",
+          "Healthy"
+        ],
+        "anomaly_status": [
+          "Normal"
+        ],
+        "action_code": [
+          "REPLACE_IMMEDIATELY",
+          "SCHEDULE_MAINTENANCE"
+        ],
+        "priority": [
+          "P1",
+          "P3"
+        ],
+        "soh_percent_range": [
+          83.07,
+          100.0
+        ],
+        "soh_spread_points": 16.93
+      },
+      "label_distribution": {
+        "Healthy | SCHEDULE_MAINTENANCE | P3": {
+          "n_offsets": 1168,
+          "soh_min": 83.07,
+          "soh_max": 100.0,
+          "share": 0.9974
+        },
+        "End Of Life | REPLACE_IMMEDIATELY | P1": {
+          "n_offsets": 3,
+          "soh_min": 83.47,
+          "soh_max": 86.93,
+          "share": 0.0026
+        }
+      },
+      "label_transitions": [
+        {
+          "at_offset": 348,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 97.36,
+          "soh_after": 83.47
+        },
+        {
+          "at_offset": 349,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "soh_before": 83.47,
+          "soh_after": 95.87
+        },
+        {
+          "at_offset": 731,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 85.27,
+          "soh_after": 86.93
+        },
+        {
+          "at_offset": 732,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "soh_before": 86.93,
+          "soh_after": 93.11
+        },
+        {
+          "at_offset": 767,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 89.76,
+          "soh_after": 84.39
+        },
+        {
+          "at_offset": 768,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "soh_before": 84.39,
+          "soh_after": 92.59
+        }
+      ]
+    },
+    "7_borderline_eol": {
+      "file": "7_borderline_eol.csv",
+      "description": "SOH sat nguong 80% — kich ban de lo hien tuong lat nhan theo diem cat.",
+      "stream_len": 1200,
+      "offsets_tested": 1171,
+      "offset_stride": 1,
+      "consistent_across_offsets": true,
+      "usable_as_fixed_expectation": true,
+      "expected": {
+        "health_stage": [
+          "Healthy"
+        ],
+        "anomaly_status": [
+          "Normal"
+        ],
+        "action_code": [
+          "MONITOR"
+        ],
+        "priority": [
+          "None"
+        ],
+        "soh_percent_range": [
+          88.35,
+          100.0
+        ],
+        "soh_spread_points": 11.65
+      },
+      "label_distribution": {
+        "Healthy | MONITOR | None": {
+          "n_offsets": 1171,
+          "soh_min": 88.35,
+          "soh_max": 100.0,
+          "share": 1.0
+        }
+      },
+      "label_transitions": []
+    },
+    "8_solar_day_ramp": {
+      "file": "8_solar_day_ramp.csv",
+      "description": "Nua ngay ngoai troi: nhiet 22->44->22C, tai bien thien theo may. Mot stream duy nhat di xuyen ca trong lan ngoai cum nhiet train.",
+      "stream_len": 1200,
+      "offsets_tested": 1171,
+      "offset_stride": 1,
+      "consistent_across_offsets": false,
+      "usable_as_fixed_expectation": false,
+      "expected": {
+        "health_stage": [
+          "Healthy"
+        ],
+        "anomaly_status": [
+          "Normal",
+          "Warning"
+        ],
+        "action_code": [
+          "MONITOR",
+          "SCHEDULE_MAINTENANCE"
+        ],
+        "priority": [
+          "None",
+          "P3"
+        ],
+        "soh_percent_range": [
+          90.93,
+          100.0
+        ],
+        "soh_spread_points": 9.07
+      },
+      "label_distribution": {
+        "Healthy | SCHEDULE_MAINTENANCE | P3": {
+          "n_offsets": 851,
+          "soh_min": 90.93,
+          "soh_max": 100.0,
+          "share": 0.7267
+        },
+        "Healthy | MONITOR | None": {
+          "n_offsets": 320,
+          "soh_min": 93.97,
+          "soh_max": 100.0,
+          "share": 0.2733
+        }
+      },
+      "label_transitions": [
+        {
+          "at_offset": 53,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "to": "Healthy | MONITOR | None",
+          "soh_before": 100.0,
+          "soh_after": 100.0
+        },
+        {
+          "at_offset": 213,
+          "from": "Healthy | MONITOR | None",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "soh_before": 100.0,
+          "soh_after": 100.0
+        },
+        {
+          "at_offset": 958,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "to": "Healthy | MONITOR | None",
+          "soh_before": 100.0,
+          "soh_after": 100.0
+        },
+        {
+          "at_offset": 1118,
+          "from": "Healthy | MONITOR | None",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "soh_before": 100.0,
+          "soh_after": 99.05
+        }
+      ]
+    },
+    "9_deep_discharge_knee": {
+      "file": "9_deep_discharge_knee.csv",
+      "description": "Xa sau qua diem gay 20% SOC — dien ap sup nhanh, kiem tra canh bao ap thap.",
+      "stream_len": 1200,
+      "offsets_tested": 1171,
+      "offset_stride": 1,
+      "consistent_across_offsets": false,
+      "usable_as_fixed_expectation": false,
+      "expected": {
+        "health_stage": [
+          "Healthy"
+        ],
+        "anomaly_status": [
+          "Normal"
+        ],
+        "action_code": [
+          "MONITOR",
+          "SCHEDULE_MAINTENANCE"
+        ],
+        "priority": [
+          "None",
+          "P1",
+          "P3"
+        ],
+        "soh_percent_range": [
+          97.59,
+          100.0
+        ],
+        "soh_spread_points": 2.41
+      },
+      "label_distribution": {
+        "Healthy | MONITOR | None": {
+          "n_offsets": 854,
+          "soh_min": 97.59,
+          "soh_max": 100.0,
+          "share": 0.7293
+        },
+        "Healthy | SCHEDULE_MAINTENANCE | P3": {
+          "n_offsets": 288,
+          "soh_min": 100.0,
+          "soh_max": 100.0,
+          "share": 0.2459
+        },
+        "Healthy | SCHEDULE_MAINTENANCE | P1": {
+          "n_offsets": 29,
+          "soh_min": 100.0,
+          "soh_max": 100.0,
+          "share": 0.0248
+        }
+      },
+      "label_transitions": [
+        {
+          "at_offset": 854,
+          "from": "Healthy | MONITOR | None",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "soh_before": 100.0,
+          "soh_after": 100.0
+        },
+        {
+          "at_offset": 1142,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P1",
+          "soh_before": 100.0,
+          "soh_after": 100.0
+        }
+      ]
+    },
+    "10_pulsed_high_load": {
+      "file": "10_pulsed_high_load.csv",
+      "description": "Tai nen -5 A + xung -100 A (bom/inverter khoi dong), co sut ap I*R. Kiem tra tran dong theo chemistry (LFP 30 Ah -> 136 A).",
+      "stream_len": 1200,
+      "offsets_tested": 1171,
+      "offset_stride": 1,
+      "consistent_across_offsets": false,
+      "usable_as_fixed_expectation": false,
+      "expected": {
+        "health_stage": [
+          "End Of Life",
+          "Healthy"
+        ],
+        "anomaly_status": [
+          "Normal"
+        ],
+        "action_code": [
+          "MONITOR",
+          "REPLACE_IMMEDIATELY",
+          "SCHEDULE_MAINTENANCE"
+        ],
+        "priority": [
+          "None",
+          "P1",
+          "P3"
+        ],
+        "soh_percent_range": [
+          56.89,
+          100.0
+        ],
+        "soh_spread_points": 43.11
+      },
+      "label_distribution": {
+        "Healthy | MONITOR | None": {
+          "n_offsets": 595,
+          "soh_min": 100.0,
+          "soh_max": 100.0,
+          "share": 0.5081
+        },
+        "Healthy | SCHEDULE_MAINTENANCE | P1": {
+          "n_offsets": 564,
+          "soh_min": 80.69,
+          "soh_max": 100.0,
+          "share": 0.4816
+        },
+        "End Of Life | REPLACE_IMMEDIATELY | P1": {
+          "n_offsets": 9,
+          "soh_min": 56.89,
+          "soh_max": 79.0,
+          "share": 0.0077
+        },
+        "Healthy | SCHEDULE_MAINTENANCE | P3": {
+          "n_offsets": 3,
+          "soh_min": 100.0,
+          "soh_max": 100.0,
+          "share": 0.0026
+        }
+      },
+      "label_transitions": [
+        {
+          "at_offset": 6,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P1",
+          "to": "Healthy | MONITOR | None",
+          "soh_before": 100.0,
+          "soh_after": 100.0
+        },
+        {
+          "at_offset": 91,
+          "from": "Healthy | MONITOR | None",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 100.0,
+          "soh_after": 78.6
+        },
+        {
+          "at_offset": 97,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P1",
+          "soh_before": 60.5,
+          "soh_after": 92.92
+        },
+        {
+          "at_offset": 126,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P1",
+          "to": "Healthy | MONITOR | None",
+          "soh_before": 100.0,
+          "soh_after": 100.0
+        },
+        {
+          "at_offset": 211,
+          "from": "Healthy | MONITOR | None",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P1",
+          "soh_before": 100.0,
+          "soh_after": 88.21
+        },
+        {
+          "at_offset": 214,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P1",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 80.69,
+          "soh_after": 78.09
+        },
+        {
+          "at_offset": 217,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P1",
+          "soh_before": 79.0,
+          "soh_after": 100.0
+        },
+        {
+          "at_offset": 246,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P1",
+          "to": "Healthy | MONITOR | None",
+          "soh_before": 100.0,
+          "soh_after": 100.0
+        },
+        {
+          "at_offset": 331,
+          "from": "Healthy | MONITOR | None",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P1",
+          "soh_before": 100.0,
+          "soh_after": 95.57
+        },
+        {
+          "at_offset": 366,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P1",
+          "to": "Healthy | MONITOR | None",
+          "soh_before": 100.0,
+          "soh_after": 100.0
+        },
+        {
+          "at_offset": 451,
+          "from": "Healthy | MONITOR | None",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P1",
+          "soh_before": 100.0,
+          "soh_after": 99.04
+        },
+        {
+          "at_offset": 486,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P1",
+          "to": "Healthy | MONITOR | None",
+          "soh_before": 100.0,
+          "soh_after": 100.0
+        },
+        {
+          "at_offset": 571,
+          "from": "Healthy | MONITOR | None",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P1",
+          "soh_before": 100.0,
+          "soh_after": 99.8
+        },
+        {
+          "at_offset": 606,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P1",
+          "to": "Healthy | MONITOR | None",
+          "soh_before": 100.0,
+          "soh_after": 100.0
+        },
+        {
+          "at_offset": 691,
+          "from": "Healthy | MONITOR | None",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P1",
+          "soh_before": 100.0,
+          "soh_after": 99.41
+        },
+        {
+          "at_offset": 726,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P1",
+          "to": "Healthy | MONITOR | None",
+          "soh_before": 100.0,
+          "soh_after": 100.0
+        },
+        {
+          "at_offset": 811,
+          "from": "Healthy | MONITOR | None",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P1",
+          "soh_before": 100.0,
+          "soh_after": 97.31
+        },
+        {
+          "at_offset": 846,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P1",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "soh_before": 100.0,
+          "soh_after": 100.0
+        },
+        {
+          "at_offset": 849,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P1",
+          "soh_before": 100.0,
+          "soh_after": 100.0
+        }
+      ]
+    },
+    "11_thermal_escalation": {
+      "file": "11_thermal_escalation.csv",
+      "description": "Nhiet tang dan 33->59C xuyen qua ca nguong ELEVATED va CRITICAL trong cung mot stream — CO CHU DICH khong on dinh theo diem cat.",
+      "stream_len": 1200,
+      "offsets_tested": 1171,
+      "offset_stride": 1,
+      "consistent_across_offsets": false,
+      "usable_as_fixed_expectation": false,
+      "expected": {
+        "health_stage": [
+          "Healthy"
+        ],
+        "anomaly_status": [
+          "Normal"
+        ],
+        "action_code": [
+          "MONITOR",
+          "SCHEDULE_MAINTENANCE"
+        ],
+        "priority": [
+          "None",
+          "P1",
+          "P3"
+        ],
+        "soh_percent_range": [
+          100.0,
+          100.0
+        ],
+        "soh_spread_points": 0.0
+      },
+      "label_distribution": {
+        "Healthy | SCHEDULE_MAINTENANCE | P3": {
+          "n_offsets": 922,
+          "soh_min": 100.0,
+          "soh_max": 100.0,
+          "share": 0.7874
+        },
+        "Healthy | SCHEDULE_MAINTENANCE | P1": {
+          "n_offsets": 185,
+          "soh_min": 100.0,
+          "soh_max": 100.0,
+          "share": 0.158
+        },
+        "Healthy | MONITOR | None": {
+          "n_offsets": 64,
+          "soh_min": 100.0,
+          "soh_max": 100.0,
+          "share": 0.0547
+        }
+      },
+      "label_transitions": [
+        {
+          "at_offset": 64,
+          "from": "Healthy | MONITOR | None",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "soh_before": 100.0,
+          "soh_after": 100.0
+        },
+        {
+          "at_offset": 986,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P1",
+          "soh_before": 100.0,
+          "soh_after": 100.0
+        }
+      ]
+    },
+    "12_degraded_and_hot": {
+      "file": "12_degraded_and_hot.csv",
+      "description": "Pin chai + dang nong 48C — to hop uu tien cao nhat trong van hanh that.",
+      "stream_len": 1200,
+      "offsets_tested": 1171,
+      "offset_stride": 1,
+      "consistent_across_offsets": false,
+      "usable_as_fixed_expectation": false,
+      "expected": {
+        "health_stage": [
+          "End Of Life",
+          "Healthy"
+        ],
+        "anomaly_status": [
+          "Normal"
+        ],
+        "action_code": [
+          "REPLACE_IMMEDIATELY",
+          "SCHEDULE_MAINTENANCE"
+        ],
+        "priority": [
+          "P1",
+          "P3"
+        ],
+        "soh_percent_range": [
+          69.87,
+          99.24
+        ],
+        "soh_spread_points": 29.37
+      },
+      "label_distribution": {
+        "Healthy | SCHEDULE_MAINTENANCE | P3": {
+          "n_offsets": 845,
+          "soh_min": 80.04,
+          "soh_max": 99.24,
+          "share": 0.7216
+        },
+        "End Of Life | REPLACE_IMMEDIATELY | P1": {
+          "n_offsets": 325,
+          "soh_min": 69.87,
+          "soh_max": 81.8,
+          "share": 0.2775
+        },
+        "Healthy | SCHEDULE_MAINTENANCE | P1": {
+          "n_offsets": 1,
+          "soh_min": 79.45,
+          "soh_max": 79.45,
+          "share": 0.0009
+        }
+      },
+      "label_transitions": [
+        {
+          "at_offset": 233,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P1",
+          "soh_before": 78.51,
+          "soh_after": 79.45
+        },
+        {
+          "at_offset": 234,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P1",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 79.45,
+          "soh_after": 77.66
+        },
+        {
+          "at_offset": 246,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "soh_before": 79.21,
+          "soh_after": 80.3
+        },
+        {
+          "at_offset": 247,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 80.3,
+          "soh_after": 78.55
+        },
+        {
+          "at_offset": 255,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "soh_before": 78.58,
+          "soh_after": 80.97
+        },
+        {
+          "at_offset": 256,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 80.97,
+          "soh_after": 78.95
+        },
+        {
+          "at_offset": 261,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "soh_before": 78.36,
+          "soh_after": 80.04
+        },
+        {
+          "at_offset": 262,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 80.04,
+          "soh_after": 79.74
+        },
+        {
+          "at_offset": 263,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "soh_before": 79.74,
+          "soh_after": 80.13
+        },
+        {
+          "at_offset": 264,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 80.13,
+          "soh_after": 79.62
+        },
+        {
+          "at_offset": 266,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "soh_before": 79.94,
+          "soh_after": 80.93
+        },
+        {
+          "at_offset": 267,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 80.93,
+          "soh_after": 78.83
+        },
+        {
+          "at_offset": 285,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "soh_before": 79.67,
+          "soh_after": 81.17
+        },
+        {
+          "at_offset": 286,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 81.17,
+          "soh_after": 79.46
+        },
+        {
+          "at_offset": 287,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "soh_before": 79.46,
+          "soh_after": 81.93
+        },
+        {
+          "at_offset": 288,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 81.93,
+          "soh_after": 78.82
+        },
+        {
+          "at_offset": 290,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "soh_before": 80.02,
+          "soh_after": 81.48
+        },
+        {
+          "at_offset": 291,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 81.48,
+          "soh_after": 78.93
+        },
+        {
+          "at_offset": 295,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "soh_before": 80.44,
+          "soh_after": 81.19
+        },
+        {
+          "at_offset": 296,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 81.19,
+          "soh_after": 79.17
+        },
+        {
+          "at_offset": 326,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "soh_before": 80.16,
+          "soh_after": 81.54
+        },
+        {
+          "at_offset": 327,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 81.54,
+          "soh_after": 80.29
+        },
+        {
+          "at_offset": 328,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "soh_before": 80.29,
+          "soh_after": 82.85
+        },
+        {
+          "at_offset": 329,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 82.85,
+          "soh_after": 80.31
+        },
+        {
+          "at_offset": 331,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "soh_before": 81.02,
+          "soh_after": 81.44
+        },
+        {
+          "at_offset": 332,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 81.44,
+          "soh_after": 81.0
+        },
+        {
+          "at_offset": 336,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "soh_before": 81.18,
+          "soh_after": 82.14
+        },
+        {
+          "at_offset": 338,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 81.14,
+          "soh_after": 81.31
+        },
+        {
+          "at_offset": 339,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "soh_before": 81.31,
+          "soh_after": 80.62
+        },
+        {
+          "at_offset": 342,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "to": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "soh_before": 80.36,
+          "soh_after": 80.84
+        },
+        {
+          "at_offset": 343,
+          "from": "End Of Life | REPLACE_IMMEDIATELY | P1",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "soh_before": 80.84,
+          "soh_after": 80.63
+        }
+      ]
+    },
+    "13_charging_window": {
+      "file": "13_charging_window.csv",
+      "description": "Dong DUONG (dang sac) — input sai quy uoc. Tai lieu hoa hanh vi khi BE gui nham.",
+      "stream_len": 1200,
+      "offsets_tested": 1171,
+      "offset_stride": 1,
+      "consistent_across_offsets": false,
+      "usable_as_fixed_expectation": false,
+      "expected": {
+        "health_stage": [
+          "Healthy"
+        ],
+        "anomaly_status": [
+          "Normal"
+        ],
+        "action_code": [
+          "MONITOR",
+          "SCHEDULE_MAINTENANCE"
+        ],
+        "priority": [
+          "None",
+          "P1",
+          "P3"
+        ],
+        "soh_percent_range": [
+          97.75,
+          100.0
+        ],
+        "soh_spread_points": 2.25
+      },
+      "label_distribution": {
+        "Healthy | SCHEDULE_MAINTENANCE | P1": {
+          "n_offsets": 560,
+          "soh_min": 99.75,
+          "soh_max": 100.0,
+          "share": 0.4782
+        },
+        "Healthy | MONITOR | None": {
+          "n_offsets": 490,
+          "soh_min": 97.75,
+          "soh_max": 100.0,
+          "share": 0.4184
+        },
+        "Healthy | SCHEDULE_MAINTENANCE | P3": {
+          "n_offsets": 121,
+          "soh_min": 100.0,
+          "soh_max": 100.0,
+          "share": 0.1033
+        }
+      },
+      "label_transitions": [
+        {
+          "at_offset": 490,
+          "from": "Healthy | MONITOR | None",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "soh_before": 100.0,
+          "soh_after": 100.0
+        },
+        {
+          "at_offset": 611,
+          "from": "Healthy | SCHEDULE_MAINTENANCE | P3",
+          "to": "Healthy | SCHEDULE_MAINTENANCE | P1",
+          "soh_before": 100.0,
+          "soh_after": 100.0
+        }
+      ]
+    }
+  },
+  "known_limitations": {
+    "soh_depends_on_sampling_rate": {
+      "measured_2026_08_11": {
+        "dt_10s": 76.1,
+        "dt_20s": 67.7,
+        "dt_30s": 64.9,
+        "dt_48s": 62.0
+      },
+      "note": "CUNG mot qua pin, CUNG SOC, chi doi chu ky lay mau: SOH lech 14 diem. `time` la input tho tinh bang GIAY nen window 300 s va window 1440 s la hai vung phan bo khac nhau doi voi model. BE PHAI CO DINH chu ky lay mau cho toan he (10s trong bo demo nay) va khong duoc doi giua chung; doi nhip lay mau = doi ket qua ma khong co canh bao nao."
+    },
+    "soh_depends_on_position_in_discharge": {
+      "note": "Cung mot chu ky xa, cat window o dau vs cuoi cho SOH khac nhau. Voi pin khoe (xa nguong 80%) bien do nho va nhan on dinh; voi pin SAT nguong bien do len toi hon 20 diem va nhan lat Healthy <-> End Of Life. Xem `soh_spread_points` cua tung kich ban. BE KHONG duoc ra quyet dinh thay pin tu MOT lan doc: lay median nhieu window trong cung chu ky, hoac yeu cau N lan doc lien tiep moi doi trang thai ticket."
+    },
+    "sampling_rate_upper_bound": {
+      "note": "Scaler LFP dang deploy fit `time` tren [0, 1453.9] s => 30 x dt <= 1454 => dt <= 48.5 s. Gateway day 60 s/lan se dua window ra ngoai vung train va SOH sai am tham. Sau khi v2.1 (them Sandia) len production, dai nay noi thanh ~7053 s => dt <= 235 s."
+    }
+  }
+}

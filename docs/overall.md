@@ -72,9 +72,9 @@ duy nhất.
 | MinMaxScaler (6-feature) | v1.3 | `models/weights/scaler.pkl` |
 | Feature StandardScaler (57-dim) | v1.5 | `models/weights/feature_scaler.pkl` |
 | IsolationForest | v1.6 (theo Mamba) | `models/weights/isolation_forest_v1.6.pkl` |
-| **Bộ LFP — Severson** (chọn khi `pack_config.chemistry="LFP"`) | | |
-| Mamba SOH LFP | **v2.0-lfp** | `models/weights/soh_mamba_v2.0-lfp.pth` |
-| Scaler + feature scaler + IsolationForest LFP | v2.0-lfp | `scaler_lfp.pkl`, `feature_scaler_lfp.pkl`, `isolation_forest_v2.0-lfp.pkl` |
+| **Bộ LFP — Severson + SNL** (chọn khi `pack_config.chemistry="LFP"`) | | |
+| Mamba SOH LFP | **v2.1-lfp** (thêm 18 cell SNL đa nhiệt độ) | `models/weights/soh_mamba_v2.1-lfp.pth` |
+| Scaler + feature scaler + IsolationForest LFP | v2.1-lfp | `scaler_lfp.pkl`, `feature_scaler_lfp.pkl`, `isolation_forest_v2.1-lfp.pkl` |
 | **Ngoài luồng Predict** | | |
 | Mamba SOH Long (L≤4096) | v2.2 — dùng bởi `rpc PredictLong`, nạp **lười** | `models/weights/soh_mamba_long_v2.2.pth` |
 | RUL Predictor (cycle-axis) | v1.0 — ⚠️ **KHÔNG nạp bởi service**, không RPC/endpoint nào gọi | `models/weights/soh_mamba_rul_v1.0.pth` |
@@ -130,19 +130,25 @@ val/test cần → model ngoại suy lệch dưới ngưỡng EOL 80%. Chi tiế
 v1.6 đạt MAE 1.34% / RMSE 1.84% (`docs/GH-88` ablation report). Anomaly F1 trên window-shape
 đơn thuần **chưa đạt** 0.80 (GH-70/GH-95) — xem §9.6.
 
-### 4.2. Bộ LFP — Severson et al. 2019 (A123 APR18650M1A, nominal **1.1 Ah**)
+### 4.2. Bộ LFP — Severson et al. 2019 (A123 APR18650M1A, nominal **1.1 Ah**) + SNL 18650 LFP
 
 Dùng khi request khai `pack_config.chemistry="LFP"`. Cell nhỏ hơn NASA và tuổi thọ dài hơn hẳn,
 nên **mọi hằng số hiệu chỉnh đều khác** — đây là nguồn của cả một lớp lỗi (xem §7.2):
 
-| Hằng số | NASA / NMC | LFP / Severson |
+| Hằng số | NASA / NMC | LFP (v2.1-lfp) |
 |---|---|---|
 | Cell danh định (quy dòng về C-rate) | 2.0 Ah | **1.1 Ah** |
-| `cycle_count` chuẩn hoá chia cho | 200 | **2300** |
-| Cụm nhiệt độ lúc train | 4 / 24 / 44 °C | **30 °C** (Severson chạy 1 buồng duy nhất) |
+| `cycle_count` chuẩn hoá chia cho | 200 | **4600** (v2.0-lfp cũ: 2300) |
+| Cụm nhiệt độ lúc train | 4 / 24 / 44 °C | **15 / 25 / 30 / 35 / 40 °C** (v2.0-lfp cũ: chỉ 30 °C) |
 | Dải điện áp per-cell hợp lệ | [2.0, 4.5] V | **[2.0, 3.8] V** |
-| Tốc độ suy giảm quần thể | 0.15 %/chu kỳ | **0.0087 %/chu kỳ** (~2300 chu kỳ tới EOL) |
+| Tốc độ suy giảm quần thể | 0.15 %/chu kỳ | **0.0087 %/chu kỳ** (~2300 chu kỳ tới EOL) ⚠️ chưa cập nhật cho v2.1 |
 | `soc_mode` | `"window"` | `"cycle"` |
+
+**v2.1-lfp (2026-08-11):** train trên 140 cell Severson (buồng 30 °C) **+ 18 cell SNL 18650 LFP**
+ở 15/25/35 °C. Mục đích là vá lỗ hổng nhiệt độ: bộ v2.0 chỉ biết đúng 30 °C nên mọi số đo ngoài
+trời lệch khỏi mốc đó đều bị gắn cờ ngoài phân bố. Test MAE 1.54% / RMSE 2.14% (v2.0: 1.35% /
+1.79%, nhưng **trên test set khác** — v2.1 test set có thêm cell SNL đa nhiệt độ nên khó hơn, hai
+số không so trực tiếp được).
 
 ---
 
@@ -155,7 +161,7 @@ nên **mọi hằng số hiệu chỉnh đều khác** — đây là nguồn c�
 | `soh_mamba_v1.6.pth` | Production Mamba (L=30) | ✅ |
 | `isolation_forest_v1.6.pkl` | IsolationForest | ✅ |
 | `scaler_long.pkl`, `feature_scaler_long.pkl`, `soh_mamba_long_v2.2.pth` | Long model (L=4096, ngoài scope gRPC) | ✅ |
-| `scaler_lfp.pkl`, `feature_scaler_lfp.pkl`, `soh_mamba_v2.0-lfp.pth`, `isolation_forest_v2.0-lfp.pkl` | Bộ LFP — **tuỳ chọn**, thiếu thì service vẫn boot nhưng request `chemistry="LFP"` sẽ lỗi rõ ràng | ✅ |
+| `scaler_lfp.pkl`, `feature_scaler_lfp.pkl`, `soh_mamba_v2.1-lfp.pth`, `isolation_forest_v2.1-lfp.pkl` | Bộ LFP — **tuỳ chọn**, thiếu thì service vẫn boot nhưng request `chemistry="LFP"` sẽ lỗi rõ ràng. ⚠️ 2 file scaler **không có hậu tố version trong tên** nên khi thay bộ mới chúng bị ghi đè tại chỗ — phải bump `LFP_MODEL_VERSION` cùng lúc, nếu không assert version sẽ chặn nạp và mọi request LFP fail | ✅ |
 | `feature_scaler_rul.pkl`, `soh_mamba_rul_v1.0.pth` | RUL Predictor — ⚠️ `feat_dim=54` trong khi extractor sinh **57**, checkpoint này **đã chết** (lưu trước commit thêm Gini). Không code nào nạp nó | ✅ |
 
 `scaler.pkl`/`feature_scaler.pkl` KHÔNG được fit lại trên production data — load từ file lúc
@@ -511,11 +517,14 @@ range-guard §7.3** — cờ này báo cho BE biết đó là ngoại suy ngầm
 | Bộ | Cụm train |
 |---|---|
 | NASA / NMC | 4 / 24 / 44 °C |
-| **LFP** | **30 °C** (Severson chạy 1 buồng duy nhất) |
+| **LFP** (v2.1-lfp) | **15 / 25 / 30 / 35 / 40 °C** (Severson 30 °C + SNL 15/25/35 °C) |
 
 > Dùng nhầm cụm NASA cho LFP thì 30 °C ra khoảng cách 6 °C và 35 °C ra 9 °C — vượt ngưỡng OOD,
 > tức **gần như mọi đọc số ngoài trời của pin mặt trời đều bị gắn cờ sai**. Đã sửa (GH-67), và có
 > **hai** đường sinh cờ này (risk profile + warning `TEMP_OOD`) — cả hai đọc chung một bảng.
+>
+> Với v2.1-lfp và ngưỡng OOD 5 °C (so sánh **strict** `>`), đường LFP giờ chỉ gắn cờ khi nhiệt độ
+> **dưới 10 °C hoặc trên 45 °C**. Toàn dải vận hành ngoài trời 10–45 °C là in-domain.
 
 ### 8.5. Cờ `INSUFFICIENT_DISCHARGE` — `severity: "info"`, KHÔNG phải lỗi
 
@@ -624,6 +633,13 @@ tại thông tin dung lượng** để bất kỳ model nào đọc. Đo trên `
 
 Model **có** phân biệt — nhưng chỉ dưới ~**3.05 V/cell**, tức "đầu gối" cuối đoạn xả. Ở 26.4 V,
 ép sụt 0.96 V trong 87 giây (dốc bất thường) vẫn ra **100.0%**.
+
+> ⚠️ **Cần đo lại trên v2.1-lfp.** Đo thử ngày 2026-08-11 trên v2.1 (payload: 8S/30Ah, xả 15 A
+> đều, 30 °C, soc 60→55%) cho thấy **không còn bão hoà 100%**: 3.33 V/cell ra 98.6% (cycle 100)
+> và 95.2% (cycle 2300), 2.85 V/cell ra 78.3% / 62.9%. Nghĩa là v2.1 phân biệt trên toàn dải áp
+> chứ không chỉ dưới đầu gối. Nhưng payload đo **khác** payload của bảng trên, và mốc
+> `cycle_count=2300` nay chỉ là 0.5 trên thang chuẩn hoá 4600 (v2.0 là 1.0) — nên hai bảng
+> **không so trực tiếp được**. Chạy lại đúng payload gốc trước khi kết luận giới hạn này đã hết.
 
 **Hệ quả cho BE:** pin đang ở dải nghỉ/sạc bình thường (3.2–3.3 V/cell) sẽ **luôn** ra ~100% SOH.
 Đó là câu trả lời trung thực nhất có thể ở điểm vận hành đó, **không phải** bằng chứng pin hoàn

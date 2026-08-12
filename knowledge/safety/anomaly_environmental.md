@@ -5,6 +5,15 @@ enclosure environment rather than the battery's own electrical/thermal
 signals. These are typically reported by IoT enclosure sensors (humidity,
 smoke/water) rather than the BMS itself.
 
+> ⚠️ **Producer: BE / enclosure sensors — not the AI module.** None of the
+> three types below is emitted by `generate_warnings()`, which only sees the
+> voltage/current/temperature window. There is no humidity, smoke or water
+> channel in the model input, so the AI module can neither raise nor confirm
+> these conditions; the "treat as P1" rules here are executed BE-side. A
+> prescription may *cite* this document when BE has already supplied the
+> condition — it will never *detect* it. Safety-recall evaluation must exclude
+> these types from the AI module's expected output.
+
 ## HighHumidity
 - **Threshold:** relative humidity > 85% inside the enclosure.
 - **Symptoms:** condensation risk on terminals/PCB, corrosion onset on

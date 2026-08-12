@@ -17,9 +17,12 @@ DEGRADATION_RATE = 0.15  # % SOH lost per cycle (NASA B0005-B0007 average)
 # thì gọi thợ sớm gấp 17 lần. Cùng mẫu lỗi với TEMPERATURE_TRAIN_CLUSTERS và
 # CYCLE_COUNT_NORM: hằng số hiệu chỉnh theo NASA rò sang đường LFP.
 #
-# 0.0087 suy từ chính bộ Severson mà model LFP được train: EOL 80% ở ~2300 chu kỳ
-# ⇒ 20 điểm SOH / 2300 = 0.0087 %/chu kỳ. Chọn nguồn này để nhất quán với
-# LFP_CYCLE_COUNT_NORM = 2300 trong config.
+# 0.0087 suy từ chính bộ Severson mà model LFP v2.0 được train: EOL 80% ở ~2300 chu
+# kỳ ⇒ 20 điểm SOH / 2300 = 0.0087 %/chu kỳ.
+# ⚠️ v2.1-lfp thêm cell SNL chạy dài hơn nên LFP_CYCLE_COUNT_NORM đã lên 4600, con số
+# này thì CHƯA đổi — nó là giả định tuổi thọ pin, không phải hằng số chuẩn hoá, nên
+# không sync máy móc theo. Hệ quả: rul_cycles_estimate vẫn tính theo cycle life ~2300
+# (ước lượng thận trọng). Đổi thì phải có căn cứ riêng, xem cảnh báo dưới.
 # ⚠️ Nếu có datasheet cycle life của chính pack đang dùng thì số đó sát hơn
 # (Severson là cell 1.1 Ah bị ép sạc nhanh trong lab): thay = 20 / cycle_life.
 DEGRADATION_RATE_BY_CHEMISTRY = {
@@ -29,7 +32,9 @@ DEGRADATION_RATE_BY_CHEMISTRY = {
 # GH-67: dưới ngưỡng này coi như không có dòng xả — cùng quy ước với
 # scripts/preprocess_lfp.py (discharge = current < -0.1 A).
 DISCHARGE_CURRENT_THRESHOLD = -0.1
-MAINTENANCE_SOH  = 85.0  # SOH threshold for scheduling maintenance
+# Planning lookahead only — how far ahead of EOL procurement should start.
+# NOT a health_stage boundary and NOT a ticket trigger: see classify_health_stage().
+MAINTENANCE_SOH  = 85.0
 
 # NASA 18650 empirical: voltage fade 0.004 V/cycle ≈ 0.15% SOH/cycle
 # → conversion factor 0.15/0.004 = 37.5 %SOH per V/cycle
@@ -58,6 +63,29 @@ CURRENT_CRITICAL      = -3.0   # A (1.5C)
 CHEMISTRY_VOLTAGE_PROFILES = {
     "NMC": (VOLTAGE_CRITICAL_LOW, VOLTAGE_WARNING_LOW, VOLTAGE_WARNING_HIGH, VOLTAGE_CRITICAL_HIGH),
     "LFP": (2.5, 2.8, 3.65, 3.8),
+}
+
+# GH-67: ngưỡng nhiệt độ cũng phải theo chemistry — trước đây dùng chung 35/45 cho
+# MỌI loại pin, trong khi chính SOP của dự án (knowledge/safety/anomaly_thermal.md)
+# ghi rõ cell LFP chịu tới 60 °C còn NMC 55 °C.
+#
+# Hệ quả đo được trên pin LFP 8S thật, đặt ngoài trời:
+#     nhiệt độ min=29.0  trung vị=31.8  max=34.5 °C  ->  cách TEMP_WARNING đúng 0.5 °C
+# Hôm nào nắng hơn là dính TEMP_ELEVATED. Cảnh báo đó có severity="warning" nên đẩy
+# risk_level lên Medium/P3 ⇒ sinh ticket giả đều đặn mỗi trưa nắng, trong khi LFP
+# hoàn toàn bình thường ở dải nhiệt đó.
+#
+# Chọn 45/55 cho LFP:
+#   45 °C — mép trên dải sạc khuyến nghị của datasheet LFP phổ thông (0–45 °C)
+#   55 °C — còn 5 °C đệm trước ngưỡng thoát nhiệt 60 °C trong anomaly_thermal.md
+# KHÔNG lấy thẳng 60 °C làm ngưỡng cảnh báo: 60 là mốc SỰ CỐ CHÁY, tới đó thì đã
+# quá muộn để cảnh báo.
+#
+# NMC giữ nguyên 35/45 — nó KHÔNG phải "loại pin thứ hai" mà là ĐƯỜNG MẶC ĐỊNH khi
+# request không khai chemistry. Đổi nó là đổi hành vi của mọi request hiện tại.
+CHEMISTRY_TEMP_PROFILES = {
+    "NMC": (TEMP_WARNING, TEMP_CRITICAL),   # 35 / 45 — giữ nguyên hành vi cũ
+    "LFP": (45.0, 55.0),
 }
 
 
@@ -102,13 +130,20 @@ def classify_anomaly(score: float, soh: float, causal_rate: float | None = None)
 
 
 def classify_health_stage(soh: float) -> str:
-    """Classify battery health using SOH only."""
+    """Classify battery health using SOH only.
+
+    Two stages, split at the EOL threshold: a battery above 80% SOH still has
+    its rated useful life left, so it is Healthy — 80% is exactly the point the
+    industry calls end-of-life, and inventing sub-tiers above it labelled a
+    normal mid-life pack as degrading and opened a maintenance ticket for it.
+
+    MAINTENANCE_SOH (85%) survives as a *planning lookahead* only — see
+    compute_degradation_metrics()/cycles_to_maintenance, which tells BE how many
+    cycles remain before procurement should start. It is no longer a stage
+    boundary and no longer creates a ticket.
+    """
     if soh < EOL_SOH:
         return "End Of Life"
-    if soh < MAINTENANCE_SOH:
-        return "Maintenance Required"
-    if soh < 90.0:
-        return "Degrading"
     return "Healthy"
 
 
@@ -119,7 +154,7 @@ BORDERLINE_CONFIDENCE = 0.7
 
 # Severe → mild; index order doubles as the tie-break preference (safety-first:
 # when two stages hold the same share of samples, report the more severe one).
-_STAGE_ORDER = ["End Of Life", "Maintenance Required", "Degrading", "Healthy"]
+_STAGE_ORDER = ["End Of Life", "Healthy"]
 
 
 def classify_health_stage_probabilistic(mc_preds: list[float]) -> dict:
@@ -128,8 +163,12 @@ def classify_health_stage_probabilistic(mc_preds: list[float]) -> dict:
     Each MC sample approximates a draw from the Bayesian posterior over SOH
     (Gal & Ghahramani, ICML 2016), so the share of samples falling in each
     stage bin is that stage's probability — deciding by argmax over those
-    shares is robust near the hard thresholds (80/85/90) where the point-
-    estimate mean flips stages on ~2% regression error.
+    shares is robust near the hard threshold (80%) where the point-estimate
+    mean flips stages on ~2% regression error.
+
+    With a single threshold there are two stages, so stage_confidence is never
+    below 0.5 and is_borderline only fires in a band around 80% itself — a
+    narrower signal than when four stages were in play, by design.
 
     Thresholds themselves stay in classify_health_stage() — single source.
 
@@ -178,22 +217,23 @@ def compute_risk_profile(
     if health_stage == "End Of Life" or has_critical_warning:
         risk_level = "Critical"
         priority = "P1"
-    elif health_stage == "Maintenance Required" or anomaly_status == "Anomaly":
+    elif anomaly_status == "Anomaly":
         risk_level = "High"
         priority = "P2"
-    elif health_stage == "Degrading" or anomaly_status == "Warning" or has_warning:
+    elif anomaly_status == "Warning" or has_warning:
         risk_level = "Medium"
         priority = "P3"
     else:
         risk_level = "Low"
         priority = "None"
 
-    # action_code must be consistent with risk_level (fix P1+MONITOR edge case)
+    # action_code must be consistent with risk_level (fix P1+MONITOR edge case).
+    # SCHEDULE_REPLACEMENT is no longer reachable: it was produced only by the
+    # "Maintenance Required" stage, which no longer exists now that everything
+    # above the 80% EOL threshold is Healthy. Three action codes remain.
     if health_stage == "End Of Life":
         action_code = "REPLACE_IMMEDIATELY"
-    elif health_stage == "Maintenance Required":
-        action_code = "SCHEDULE_REPLACEMENT"
-    elif health_stage == "Degrading" or anomaly_status in {"Warning", "Anomaly"} or has_warning:
+    elif anomaly_status in {"Warning", "Anomaly"} or has_warning:
         # has_warning here mirrors the priority branch above (P3) — a non-critical
         # warning on an otherwise healthy/normal battery must still result in an
         # action_code other than MONITOR, or the priority/action_code fields
@@ -209,9 +249,11 @@ def compute_risk_profile(
     if soh < EOL_SOH:
         reasons.append(f"SOH {soh:.1f}% is below {EOL_SOH:.0f}% end-of-life threshold")
     elif soh < MAINTENANCE_SOH:
-        reasons.append(f"SOH {soh:.1f}% is below {MAINTENANCE_SOH:.0f}% maintenance threshold")
-    elif soh < 90.0:
-        reasons.append(f"SOH {soh:.1f}% indicates degradation below 90%")
+        # Planning signal, not a fault — the battery is Healthy at this SOH.
+        reasons.append(
+            f"SOH {soh:.1f}% is below the {MAINTENANCE_SOH:.0f}% planning "
+            "lookahead — start replacement procurement, no action due yet"
+        )
 
     if anomaly_status != "Normal":
         reasons.append(f"Sensor anomaly status is {anomaly_status}")
@@ -340,11 +382,17 @@ def compute_degradation_metrics(
 
 
 def get_recommended_action(classification: str, soh: float) -> str:
-    """Map classification + SOH → recommended maintenance action code."""
+    """Map classification + SOH → recommended maintenance action code.
+
+    classification="Degrading" covers both a pack in the 80-90% SOH band and a
+    pack above 90% whose sensor pattern looks anomalous. Neither warrants
+    SCHEDULE_REPLACEMENT any more: above the 80% EOL threshold the pack is
+    Healthy, so the strongest sensible action is an inspection.
+    """
     if classification == "Failed":
         return "REPLACE_IMMEDIATELY"
     elif classification == "Degrading":
-        return "SCHEDULE_REPLACEMENT" if soh < 85.0 else "SCHEDULE_MAINTENANCE"
+        return "SCHEDULE_MAINTENANCE"
     return "MONITOR"
 
 
@@ -400,23 +448,13 @@ def generate_warnings(
                 "— battery should be replaced."
             ),
         })
-    elif soh < 85.0:
-        warnings.append({
-            "code": "SOH_CRITICAL",
-            # "warning", not "critical": this range is health_stage="Maintenance
-            # Required" (action_code=SCHEDULE_REPLACEMENT, not urgent) — a
-            # "critical" severity here fed into compute_risk_profile's
-            # has_critical_warning check and force-escalated priority to P1
-            # even though the action is only "plan replacement soon".
-            "severity": "warning",
-            "message": f"SOH {soh:.1f}% is critically low — plan replacement soon.",
-        })
-    elif soh < 90.0:
-        warnings.append({
-            "code": "SOH_LOW",
-            "severity": "warning",
-            "message": f"SOH {soh:.1f}% is below 90% — monitor degradation rate.",
-        })
+    # No SOH warning is raised above EOL. SOH_CRITICAL (<85%) and SOH_LOW (<90%)
+    # used to fire here at severity="warning", which reached compute_risk_profile's
+    # has_warning check and opened a P3 SCHEDULE_MAINTENANCE ticket — so a pack at
+    # 88% SOH produced a maintenance ticket even though it is Healthy by the 80%
+    # EOL convention. Lead time for procurement is carried by the numeric
+    # cycles_to_maintenance / rul_cycles_estimate fields instead, which BE can act
+    # on without a ticket being forced.
 
     # ── Voltage (index 0) ─────────────────────────────────────────────────
     v = raw[:, 0]
@@ -482,20 +520,24 @@ def generate_warnings(
     # ── Temperature (index 2) ─────────────────────────────────────────────
     if n_features >= 3:
         t_max = float(raw[:, 2].max())
-        if t_max > TEMP_CRITICAL:
+        # GH-67: ngưỡng theo chemistry — xem CHEMISTRY_TEMP_PROFILES.
+        t_warn, t_crit = CHEMISTRY_TEMP_PROFILES.get(
+            chemistry, (TEMP_WARNING, TEMP_CRITICAL)
+        )
+        if t_max > t_crit:
             warnings.append({
                 "code": "TEMP_CRITICAL",
                 "severity": "critical",
                 "message": (
                     f"Peak temperature {t_max:.1f}°C exceeds critical threshold "
-                    f"({TEMP_CRITICAL}°C)."
+                    f"({t_crit}°C)."
                 ),
             })
-        elif t_max > TEMP_WARNING:
+        elif t_max > t_warn:
             warnings.append({
                 "code": "TEMP_ELEVATED",
                 "severity": "warning",
-                "message": f"Peak temperature {t_max:.1f}°C is elevated (>{TEMP_WARNING}°C).",
+                "message": f"Peak temperature {t_max:.1f}°C is elevated (>{t_warn}°C).",
             })
 
         # GH-91: distinct from the safety thresholds above — flags when the

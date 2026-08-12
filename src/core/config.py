@@ -71,7 +71,9 @@ TEMPERATURE_TRAIN_CLUSTERS = (4.0, 24.0, 44.0)  # °C — NASA chamber setpoints
 # cụm nhiệt độ của nó khác hẳn 3 mốc NASA. Dùng nhầm cụm NASA cho request LFP làm
 # mọi giá trị 26–39 °C bị gắn cờ OOD sai (đo được: 30 °C → khoảng cách 6.0 > ngưỡng
 # 5.0), tức gần như MỌI request từ pin solar ngoài trời đều bị báo "ngoài phân bố".
-LFP_TEMPERATURE_TRAIN_CLUSTERS = (30.0,)  # °C — buồng duy nhất của Severson 2019
+# v2.1-lfp: thêm 18 cell SNL ở 15/25/35 °C vào train, nên phủ nhiệt độ rộng hẳn ra —
+# giá trị dưới lấy từ khoá `temperature_clusters` của scaler_lfp.pkl, KHÔNG tự đặt.
+LFP_TEMPERATURE_TRAIN_CLUSTERS = (15.0, 25.0, 30.0, 35.0, 40.0)  # °C — SNL + Severson
 # Tra cứu theo chemistry — dùng chung cho CẢ HAI đường sinh cờ OOD nhiệt độ:
 # risk profile (_Artifacts.temp_clusters) và warning TEMP_OOD (generate_warnings).
 # Sửa một chỗ này là đủ; đừng hardcode cụm ở nơi khác nữa.
@@ -162,7 +164,7 @@ SEED = 42
 # architecture as the default NASA/NMC model. Selected at inference time when
 # pack_config.chemistry == "LFP" — chemistry-aware artifact selection in
 # model_loader.py/inference.py is a separate follow-up step, NOT part of this.
-LFP_MODEL_VERSION = "2.0-lfp"
+LFP_MODEL_VERSION = "2.1-lfp"  # v2.1: +18 cell SNL đa nhiệt độ (15/25/35 °C) vào train
 LFP_NOMINAL_CAPACITY_AH = 1.1  # A123 APR18650M1A (Severson et al. 2019) — vs NASA's 2.0 Ah
 # GH-67: dung lượng cell danh định dùng để quy dòng pack về C-rate lúc INFERENCE.
 # Trước đây LFP_NOMINAL_CAPACITY_AH chỉ được dùng lúc train (preprocess_lfp.py),
@@ -182,7 +184,10 @@ NOMINAL_CAPACITY_AH_BY_CHEMISTRY = {
 # in model_loader.py/inference.py MUST use THIS constant (not CYCLE_COUNT_NORM)
 # when normalizing cycle_count for chemistry=="LFP" requests, or train/inference
 # will mismatch on this feature.
-LFP_CYCLE_COUNT_NORM = 2300.0
+# v2.1-lfp: cell SNL chạy dài hơn Severson nên preprocess nâng norm 2300 → 4600.
+# Giá trị phải khớp khoá `cycle_count_norm` trong scaler_lfp.pkl — lệch là cả cột
+# cycle_count vào model sai đúng bằng tỉ số hai hằng số (2× nếu quên sửa dòng này).
+LFP_CYCLE_COUNT_NORM = 4600.0
 LFP_SCALER_PATH = os.path.join(WEIGHTS_DIR, "scaler_lfp.pkl")
 LFP_FEATURE_SCALER_PATH = os.path.join(WEIGHTS_DIR, "feature_scaler_lfp.pkl")
 LFP_MAMBA_PATH = os.path.join(WEIGHTS_DIR, f"soh_mamba_v{LFP_MODEL_VERSION}.pth")

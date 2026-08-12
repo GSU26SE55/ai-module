@@ -398,9 +398,15 @@ def cycles_to_windows(
     scaler: MinMaxScaler,
     feat_scaler: StandardScaler | None = None,
     soc_mode: str = "cycle",
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    return_meta: bool = False,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray] | tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
     """Window=30, non-overlapping stride, with cycle_count_norm + soc_percent
     appended after scaling — same layout as scripts/preprocess.py.
+
+    return_meta: opt-in 4th return value describing WHERE each window came from
+      (cell, temperature, cycle). Off by default so existing callers keep the
+      3-tuple signature. Without it a test-set MAE is a single aggregate number
+      and per-temperature / per-cell error cannot be computed at all.
 
     soc_mode (bug #10, GH-67):
       "cycle"  — Coulomb-count over the WHOLE discharge segment, then slice the
@@ -421,8 +427,10 @@ def cycles_to_windows(
     varies 90.6 points across the discharge; "window" mode varies 0.
     """
     all_X, all_feat, all_y = [], [], []
+    meta_cell, meta_temp, meta_cycle = [], [], []
+    t_i = BASE_FEATURES.index("temperature")
 
-    for cid in cell_ids:
+    for cell_pos, cid in enumerate(cell_ids):
         for cycle_raw, soh, cycle_idx in all_cells[cid]["cycles"]:
             T = len(cycle_raw)
             cycle_scaled = scaler.transform(cycle_raw).astype(np.float32)
@@ -457,6 +465,13 @@ def cycles_to_windows(
                 all_X.append(window)
                 all_feat.append(window_feat)
                 all_y.append(soh)
+                if return_meta:
+                    meta_cell.append(cell_pos)
+                    # RAW °C, not cycle_scaled: slicing error along the MinMax-scaled
+                    # axis would tie the buckets to whichever scaler was fit that run,
+                    # so numbers could not be compared across retrains.
+                    meta_temp.append(float(cycle_raw[i : i + WINDOW_SIZE, t_i].mean()))
+                    meta_cycle.append(int(cycle_idx))
 
     X = np.array(all_X, dtype=np.float32)
     X_feat = np.array(all_feat, dtype=np.float32)
@@ -465,7 +480,16 @@ def cycles_to_windows(
     if feat_scaler is not None:
         X_feat = feat_scaler.transform(X_feat).astype(np.float32)
 
-    return X, X_feat, y
+    if not return_meta:
+        return X, X_feat, y
+
+    meta = {
+        "cell_idx": np.array(meta_cell, dtype=np.int32),
+        "cell_ids": list(cell_ids),
+        "temp_mean_c": np.array(meta_temp, dtype=np.float32),
+        "cycle_idx": np.array(meta_cycle, dtype=np.int32),
+    }
+    return X, X_feat, y, meta
 
 
 def main() -> None:

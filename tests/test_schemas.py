@@ -292,6 +292,21 @@ class TestWindowSpanGuard:
         """Payload 3 cột không có cột time — không được vỡ."""
         PredictRequest(battery_id="B", readings=_window([3.7, -1.0, 25.0]))
 
+    def test_absolute_timestamp_is_rejected(self):
+        """BE quên rebase `time` → phải báo lỗi, KHÔNG được im lặng trả SOH sai.
+
+        Guard span không bắt được ca này: nhịp 30s bình thường nên span chỉ 870s
+        (dưới trần), chỉ có mốc bắt đầu là sai. Đo được: dời mốc 0s → 900s làm SOH
+        97.85% → 60.21% và lật nhãn sang End Of Life trên pin còn khoẻ.
+        """
+        day = 86400  # BE gửi thẳng "số giây kể từ lúc thiết bị chạy"
+        with pytest.raises(ValidationError, match="rebase"):
+            self._req([day + i * 30 for i in range(30)])
+
+    def test_rebased_time_passes(self):
+        """Đúng quy ước (0, dt, 2·dt, …) thì phải qua."""
+        self._req([i * 30 for i in range(30)])
+
 
 def test_span_cap_stays_within_lfp_scaler_range():
     """GH-67 — trần này bắt nguồn từ dải `time` mà scaler LFP được fit (1453.9s).
