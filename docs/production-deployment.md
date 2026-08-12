@@ -240,11 +240,67 @@ automatic rollback to the previous immutable release.
 
 ## 7. Backend production settings
 
-The existing backend clients already support this topology. BatteryService uses
-gRPC primary plus HTTP fallback, while TicketService uses gRPC. In VPS1
-`/opt/solar/.env.prod`, use the exact ASP.NET nested environment keys below—the
-production Compose loads them through `env_file` and does not translate the
-short `AI_*` aliases used by the development Compose:
+The existing backend client code supports this topology. BatteryService uses
+gRPC primary plus HTTP fallback, while TicketService uses gRPC. However, the
+current backend Helm chart does **not** yet define any `Ai__*`/`TicketAi__*`
+entries in `deploy/helm/solar-battery/values-vps-small.yaml`. Its deployments
+load `solar-config` with `envFrom`, so omitting the keys silently leaves the
+application defaults pointing to the obsolete in-cluster AI names.
+
+For the intended k3s deployment, add this map to the backend production values
+overlay that Jenkins passes to `helm upgrade` (for the current small-VPS setup,
+merge it into the existing `config:` map in `values-vps-small.yaml`):
+
+```yaml
+config:
+  Ai__Enabled: "true"
+  Ai__GrpcAddress: "https://ai.solars.io.vn"
+  Ai__HttpBaseUrl: "https://ai.solars.io.vn"
+  Ai__TimeoutSeconds: "5"
+  Ai__IntervalMinutes: "5"
+  Ai__MinReadings: "30"
+  Ai__MaxScanReadings: "60"
+  Ai__PrescriptionEnabled: "true"
+
+  TicketAi__Enabled: "true"
+  TicketAi__BatteryServiceBaseUrl: "http://batteryservice:80"
+  TicketAi__AiGrpcAddress: "https://ai.solars.io.vn"
+  TicketAi__BatteryGrpcAddress: "http://batteryservice:8081"
+  TicketAi__TimeoutSeconds: "5"
+  TicketAi__MaxDuplicateCandidates: "10"
+```
+
+The current Helm BatteryService only publishes an HTTP service port. Before
+enabling TicketService's internal `BatteryGrpcAddress`, its chart must also
+publish the BatteryService gRPC listener/Service port expected by the backend
+code; that is a separate backend-chart gap, not an AI ingress gap. It does not
+affect BatteryService calling AI, but it affects the ticket sensor-verification
+path.
+
+Render the backend chart and inspect the generated ConfigMap before upgrading:
+
+```bash
+helm template solar-backend deploy/helm/solar-battery \
+  -f deploy/helm/solar-battery/values.yaml \
+  -f deploy/helm/solar-battery/values-vps-small.yaml \
+  | grep -E 'Ai__|TicketAi__'
+```
+
+After `helm upgrade --install`, verify what the live pods actually received:
+
+```bash
+kubectl -n solar-prod rollout status deployment/batteryservice
+kubectl -n solar-prod rollout status deployment/ticketservice
+kubectl -n solar-prod exec deploy/batteryservice -- printenv \
+  | grep -E '^Ai__(Enabled|GrpcAddress|HttpBaseUrl)='
+kubectl -n solar-prod exec deploy/ticketservice -- printenv \
+  | grep -E '^TicketAi__(Enabled|AiGrpcAddress)='
+```
+
+If backend is temporarily deployed with Docker Compose instead of k3s, put the
+same ASP.NET nested keys in VPS1 `/opt/solar/.env.prod`; the production Compose
+loads them through `env_file` and does not translate the short `AI_*` aliases
+used by the development Compose:
 
 ```dotenv
 Ai__Enabled=true
