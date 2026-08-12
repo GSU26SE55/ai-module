@@ -10,15 +10,17 @@ PredictStream inherits UNIMPLEMENTED from the base servicer (GH-41).
 """
 
 import logging
-import os
 from concurrent import futures
 
 import grpc
-from dotenv import load_dotenv
+from grpc_health.v1 import health, health_pb2, health_pb2_grpc
 from pydantic import ValidationError
 
 from src.core import model_loader
+from src.core.artifact_manifest import verify_model_manifest
 from src.core.config import LFP_MODEL_VERSION, LONG_MODEL_VERSION, MODEL_VERSION
+from src.core.metrics import GrpcMetricsInterceptor
+from src.core.runtime import grpc_bind_address, load_environment
 from src.grpc_gen import ai_service_pb2, ai_service_pb2_grpc
 from src.schemas.predict import (
     ClassificationFeedbackRequest,
@@ -593,11 +595,39 @@ def _validate(schema_cls, payload: dict, context):
 # ── Entrypoint ─────────────────────────────────────────────────────────
 
 
-def create_server(port: int, max_workers: int = MAX_WORKERS) -> grpc.Server:
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
+def create_server(
+    port: int,
+    max_workers: int = MAX_WORKERS,
+    host: str = "0.0.0.0",
+) -> grpc.Server:
+    server = grpc.server(
+        futures.ThreadPoolExecutor(max_workers=max_workers),
+        interceptors=(GrpcMetricsInterceptor(),),
+    )
     ai_service_pb2_grpc.add_AiServiceServicer_to_server(AiServiceServicer(), server)
-    server.add_insecure_port(f"0.0.0.0:{port}")
+
+    health_servicer = health.HealthServicer()
+    health_pb2_grpc.add_HealthServicer_to_server(health_servicer, server)
+    health_servicer.set("", health_pb2.HealthCheckResponse.SERVING)
+    health_servicer.set(
+        "aimodule.v1.AiService", health_pb2.HealthCheckResponse.SERVING
+    )
+
+    bound_port = server.add_insecure_port(f"{host}:{port}")
+    if bound_port == 0:
+        raise RuntimeError(f"Unable to bind gRPC server on {host}:{port}")
+    server._ai_health_servicer = health_servicer  # type: ignore[attr-defined]
+    server._ai_bound_port = bound_port  # type: ignore[attr-defined]
     return server
+
+
+def mark_server_not_serving(server: grpc.Server) -> None:
+    health_servicer = getattr(server, "_ai_health_servicer", None)
+    if health_servicer is not None:
+        health_servicer.set("", health_pb2.HealthCheckResponse.NOT_SERVING)
+        health_servicer.set(
+            "aimodule.v1.AiService", health_pb2.HealthCheckResponse.NOT_SERVING
+        )
 
 
 def serve() -> None:
@@ -605,13 +635,17 @@ def serve() -> None:
     # Đường gRPC chạy bằng `python -m src.grpc_server` — KHÔNG qua uvicorn nên không
     # có cờ `--env-file`. Phải tự nạp ở đây, nếu không sửa mỗi main.py thì REST có key
     # còn gRPC (đường BE dùng thật) vẫn không. override=False: env thật thắng .env.
-    load_dotenv(override=False)
-    port = int(os.getenv("GRPC_PORT", DEFAULT_PORT))
+    load_environment()
+    host, port = grpc_bind_address()
+    verify_model_manifest()
     model_loader.load_models()  # once at startup, like the FastAPI lifespan
-    server = create_server(port)
+    server = create_server(port=port, host=host)
     server.start()
-    logger.info("gRPC server listening on port %d (model %s)", port, MODEL_VERSION)
-    server.wait_for_termination()
+    logger.info("gRPC server listening on %s:%d (model %s)", host, port, MODEL_VERSION)
+    try:
+        server.wait_for_termination()
+    finally:
+        mark_server_not_serving(server)
 
 
 if __name__ == "__main__":

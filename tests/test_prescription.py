@@ -12,7 +12,6 @@ from src.core.config import (
     SPECTRAL_FEAT_DIM,
     WINDOW_SIZE,
 )
-
 from src.models.soh_predictor import MambaSOHPredictor
 from src.services.prescription.rule_prescription import build_rule_prescription
 

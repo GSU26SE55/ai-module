@@ -83,10 +83,18 @@ uvicorn main:app --reload --port 8000
 
 The same inference/prescription pipeline is exposed over two transports running side by side:
 
-| Transport | Port | Start | Use for |
-|-----------|------|-------|---------|
-| REST (FastAPI) | 8000 | `uvicorn main:app --port 8000` | current integrations, Swagger UI |
-| gRPC (`aimodule.v1.AiService`) | 50051 (env `GRPC_PORT`) | `python -m src.grpc_server` | lower latency, real-time sensor streaming |
+| Transport | Internal port | Public production endpoint | Use for |
+|-----------|---------------|----------------------------|---------|
+| REST (FastAPI) | 8000 | `https://ai.solars.io.vn` | HTTPS fallback, health, metrics |
+| gRPC (`aimodule.v1.AiService`) | 50051 (env `GRPC_PORT`) | `https://ai.solars.io.vn:443` | primary backend transport, streaming |
+
+In production, FastAPI owns the lifecycle of both transports: model/RAG artifacts
+are verified and loaded once during startup, then the gRPC server starts in the
+FastAPI lifespan. `python -m src.grpc_server` remains available only as a standalone
+development command. Caddy is the only public production ingress and multiplexes
+both transports on TLS port 443; the internal application ports are not published.
+See [`docs/production-deployment.md`](docs/production-deployment.md) for the
+DNS, firewall, VPS and Jenkins contract.
 
 gRPC RPCs: `Predict`, `Prescribe`, `Health` (unary — mirror the REST endpoints, parity-tested field-by-field) and `PredictStream` (bidirectional streaming: N windows in → N predictions out, in order, over one connection).
 
@@ -108,14 +116,17 @@ Predict SOH and battery health classification from 30 timesteps of sensor data.
 {
   "battery_id": "B0005",
   "readings": [
-    [3.92, -0.99, 25.3, -1.00, 3.90, 0.0],
-    [3.87, -0.99, 25.5, -1.00, 3.85, 13.0],
-    "... 30 rows of [voltage, current, temperature, current_load, voltage_load, time]"
+    [3.92, -0.99, 25.3, 0.0],
+    [3.87, -0.99, 25.5, 13.0],
+    "... 30 rows of [voltage, current, temperature, time]"
   ]
 }
 ```
 
-> Legacy 3-feature `[voltage, current, temperature]` is also accepted — auto-aligned.
+> Preferred input is 4 features; the service derives cycle/SOC features. A complete
+> 6-feature row `[voltage, current, temperature, time, cycle_count, soc_percent]`
+> and legacy 3-feature input are also supported. See the protobuf contract for the
+> chemistry-dependent SOC semantics before sending 6 features.
 
 **Response**
 ```json
@@ -147,15 +158,17 @@ Latency SLA: **< 100ms** (P1 Critical ticket requirement)
 
 ```json
 {
-  "status": "ok",
-  "model_version": "1.2",
+  "status": "ready",
+  "model_version": "1.6",
   "scaler_loaded": true,
-  "lstm_loaded": true,
-  "isolation_forest_loaded": true
+  "mamba_loaded": true,
+  "isolation_forest_loaded": true,
+  "lfp_loaded": true,
+  "long_model_loaded": true
 }
 ```
 
-### `POST /prescribe` *(Sprint 3 — planned)*
+### `POST /prescribe`
 
 Turn a prediction result into a step-by-step maintenance prescription, grounded in the SOP knowledge base via RAG.
 

@@ -28,6 +28,29 @@ htmlcov/
 .coverage
 coverage.xml
 
+# Secrets — Docker Compose injects these at runtime. Never bake them into a layer.
+.env
+.env.*
+
+# CI, development and repository metadata are not runtime application files.
+.github/
+.codex/
+.agents/
+docs/
+tests/
+.mcp.json
+.pre-commit-config.yaml
+CLAUDE.md
+Jenkinsfile
+Makefile
+README.md
+ai-be-test-ui.html
+test*.py
+pyproject.toml
+pytest.ini
+requirements-dev.txt
+requirements.txt
+
 # Dữ liệu train/preprocess — chỉ cần lúc train, không cần lúc serve
 data/
 notebooks/
@@ -36,6 +59,10 @@ notebooks/
 logs/
 TestResults/
 *.log
+
+# Mutable production state is mounted from /opt/solar-ai/data.
+models/prescription_history/
+models/classification_feedback/
 
 # Công cụ dev / IDE
 .vscode/

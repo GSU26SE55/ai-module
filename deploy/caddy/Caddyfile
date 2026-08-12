@@ -1,0 +1,33 @@
+{
+	email {$ACME_EMAIL}
+	admin off
+	servers {
+		protocols h1 h2
+	}
+}
+
+{$AI_PUBLIC_DOMAIN} {
+	tls {
+		issuer acme {
+			disable_tlsalpn_challenge
+		}
+	}
+
+	# gRPC and REST intentionally share the same public origin. Caddy detects
+	# application/grpc over HTTP/2 and forwards it to the h2c gRPC listener;
+	# every other request goes to FastAPI.
+	@grpc protocol grpc
+	reverse_proxy @grpc h2c://ai-module:50051
+	reverse_proxy ai-module:8000
+
+	log {
+		output stdout
+		format json
+	}
+}
+
+# This listener is container-internal and exists only for Compose healthchecks.
+# It does not assert that ACME issuance succeeded; the deploy TLS smoke does.
+http://127.0.0.1:8081 {
+	respond /caddy-health 200
+}

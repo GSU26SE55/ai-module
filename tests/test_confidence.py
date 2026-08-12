@@ -14,7 +14,8 @@ def _model():
 
 def test_confidence_shapes_and_range():
     m = _model()
-    x = torch.randn(4, 30, INPUT_FEATURES); f = torch.randn(4, 57)
+    x = torch.randn(4, 30, INPUT_FEATURES)
+    f = torch.randn(4, 57)
     out = predict_with_confidence(m, x, f, n_samples=10)
     for k in ("soh", "std", "confidence", "lower", "upper"):
         assert out[k].shape == (4,)
@@ -26,7 +27,8 @@ def test_confidence_shapes_and_range():
 def test_mc_dropout_produces_variance():
     # With dropout active across passes, std should be > 0 (stochastic).
     m = _model()
-    x = torch.randn(2, 30, INPUT_FEATURES); f = torch.randn(2, 57)
+    x = torch.randn(2, 30, INPUT_FEATURES)
+    f = torch.randn(2, 57)
     out = predict_with_confidence(m, x, f, n_samples=20)
     assert torch.any(out["std"] > 0)
 
@@ -39,6 +41,9 @@ def test_restores_eval_mode():
 
 def test_requires_min_samples():
     import pytest
+
     m = _model()
     with pytest.raises(ValueError):
-        predict_with_confidence(m, torch.randn(1, 30, INPUT_FEATURES), torch.randn(1, 57), n_samples=1)
+        predict_with_confidence(
+            m, torch.randn(1, 30, INPUT_FEATURES), torch.randn(1, 57), n_samples=1
+        )

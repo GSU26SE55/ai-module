@@ -5,9 +5,6 @@ import time
 import numpy as np
 import torch
 
-_MC_LOCK = threading.RLock()  # protects model.train()/eval() during MC Dropout
-logger = logging.getLogger(__name__)
-
 from src.core import model_loader
 from src.core.config import (
     BASE_FEATURES,
@@ -42,6 +39,8 @@ from src.models.anomaly_detector import (
 )
 from src.services import battery_history
 
+_MC_LOCK = threading.RLock()  # protects model.train()/eval() during MC Dropout
+logger = logging.getLogger(__name__)
 _FEATURE_NAMES = FEATURES  # single source of truth: src/core/config.py
 
 
@@ -56,14 +55,32 @@ class _Artifacts:
     codebase keeps hitting.
     """
 
-    __slots__ = ("scaler", "feature_scaler", "soh_model", "iso_model",
-                 "cycle_count_norm", "artifact_set", "model_version", "soc_mode",
-                 "temp_clusters", "nominal_capacity_ah")
+    __slots__ = (
+        "scaler",
+        "feature_scaler",
+        "soh_model",
+        "iso_model",
+        "cycle_count_norm",
+        "artifact_set",
+        "model_version",
+        "soc_mode",
+        "temp_clusters",
+        "nominal_capacity_ah",
+    )
 
-    def __init__(self, scaler, feature_scaler, soh_model, iso_model,
-                 cycle_count_norm, artifact_set, model_version, soc_mode="window",
-                 temp_clusters=TEMPERATURE_TRAIN_CLUSTERS,
-                 nominal_capacity_ah=NOMINAL_CAPACITY_AH):
+    def __init__(
+        self,
+        scaler,
+        feature_scaler,
+        soh_model,
+        iso_model,
+        cycle_count_norm,
+        artifact_set,
+        model_version,
+        soc_mode="window",
+        temp_clusters=TEMPERATURE_TRAIN_CLUSTERS,
+        nominal_capacity_ah=NOMINAL_CAPACITY_AH,
+    ):
         self.scaler = scaler
         self.feature_scaler = feature_scaler
         self.soh_model = soh_model
@@ -96,9 +113,13 @@ def _resolve_artifacts(chemistry: str | None) -> _Artifacts:
                 "exist — refusing to score LFP data with the NASA/NMC model."
             )
         return _Artifacts(
-            model_loader.lfp_scaler, model_loader.lfp_feature_scaler,
-            model_loader.lfp_soh_model, model_loader.lfp_iso_model,
-            LFP_CYCLE_COUNT_NORM, "LFP", LFP_MODEL_VERSION,
+            model_loader.lfp_scaler,
+            model_loader.lfp_feature_scaler,
+            model_loader.lfp_soh_model,
+            model_loader.lfp_iso_model,
+            LFP_CYCLE_COUNT_NORM,
+            "LFP",
+            LFP_MODEL_VERSION,
             model_loader.lfp_soc_mode,
             # GH-67: Severson chạy toàn bộ ở 30 °C — dùng cụm NASA (4/24/44) sẽ
             # gắn cờ OOD cho mọi reading 26–39 °C, tức gần như mọi pin solar.
@@ -108,9 +129,13 @@ def _resolve_artifacts(chemistry: str | None) -> _Artifacts:
             LFP_NOMINAL_CAPACITY_AH,
         )
     return _Artifacts(
-        model_loader.scaler, model_loader.feature_scaler,
-        model_loader.soh_model, model_loader.iso_model,
-        CYCLE_COUNT_NORM, "NASA", MODEL_VERSION,
+        model_loader.scaler,
+        model_loader.feature_scaler,
+        model_loader.soh_model,
+        model_loader.iso_model,
+        CYCLE_COUNT_NORM,
+        "NASA",
+        MODEL_VERSION,
     )
 
 
@@ -143,7 +168,8 @@ def soc_mode_for(chemistry: str | None) -> str:
             "Artifact set for chemistry=%r declares soc_mode=%r, which is neither "
             "'window' nor 'cycle' — reporting 'unknown' so callers do not silently "
             "pick a soc_percent definition the model was not trained on.",
-            chemistry, mode,
+            chemistry,
+            mode,
         )
         return "unknown"
     return mode
@@ -249,7 +275,9 @@ def _append_derived_features(
         current = raw[:, BASE_FEATURES.index("current")]
         time_col = raw[:, BASE_FEATURES.index("time")]
         soc_norm = compute_soc_percent(current, time_col, art.nominal_capacity_ah) / 100.0
-        cycle_count_norm = 0.0 if raw_cycle_count is None else raw_cycle_count / art.cycle_count_norm
+        cycle_count_norm = (
+            0.0 if raw_cycle_count is None else raw_cycle_count / art.cycle_count_norm
+        )
 
     # GH-59: the divisor is fit to each dataset's observed max cycle count (NASA
     # ~197 -> 200; Severson/LFP up to ~2300). A real battery outliving that goes
@@ -393,9 +421,7 @@ def run_inference(
     # computed BEFORE record() below, so it only ever sees cycles strictly before
     # this request (causal, not the offline label's centered/future-peeking window).
     raw_cycle_count = _raw_cycle_count(raw, cycle_idx)
-    rate = battery_history.causal_rate(
-        battery_id, raw_cycle_count, soh_median, CAUSAL_RATE_K
-    )
+    rate = battery_history.causal_rate(battery_id, raw_cycle_count, soh_median, CAUSAL_RATE_K)
     classification = classify_anomaly(score, soh_median, causal_rate=rate)
     battery_history.record(battery_id, raw_cycle_count, soh_median)
     anomaly_confidence = round(min(1.0, max(0.0, abs(score))), 3)
@@ -512,9 +538,7 @@ def _add_long_derived_features(x: np.ndarray) -> np.ndarray:
         ic_parts.append(ic_seg)
         progress_parts.append(progress_seg)
 
-    return np.column_stack(
-        [x, np.concatenate(ic_parts), np.concatenate(progress_parts)]
-    )
+    return np.column_stack([x, np.concatenate(ic_parts), np.concatenate(progress_parts)])
 
 
 def predict_soh_long(

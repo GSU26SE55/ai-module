@@ -58,6 +58,25 @@ def _get_history_store():
     return _history_store
 
 
+def prewarm_prescription_dependencies() -> None:
+    """Load RAG/history dependencies once during application startup."""
+    _get_retriever()
+    _get_history_store()
+
+
+def prescription_dependencies_ready() -> bool:
+    """Return readiness without loading models from a health-check request."""
+    from src.services.prescription.embedding import encoder_ready
+
+    return bool(
+        _retriever is not None
+        and getattr(_retriever, "_ready", False)
+        and _history_store is not None
+        and getattr(_history_store, "_ready", False)
+        and encoder_ready()
+    )
+
+
 def _build_maintenance_query(prediction: dict, risk: dict) -> str:
     """Build semantic search query from structured prediction."""
     soh   = prediction.get("soh_percent", 0)

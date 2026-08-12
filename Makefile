@@ -3,7 +3,7 @@
 #
 # Yêu cầu: Python 3.11 (torch 2.3.1 không hỗ trợ 3.12+). Nếu chưa có: brew install python@3.11
 # Lần đầu:  make setup   → tạo .venv + cài deps
-# Chạy:     make grpc  (BE gọi, :50051)  ·  make serve (REST + Swagger, :8000)
+# Chạy:     make serve  (REST :8000 + gRPC :50051 trong cùng lifecycle)
 
 PY311    ?= python3.11
 VENV     := .venv
@@ -36,10 +36,10 @@ setup-dev: setup ## Cài thêm deps dev (pytest, ruff, ...)
 # ── Chạy service ─────────────────────────────────────────────────────────
 .PHONY: serve
 serve: ## REST/FastAPI (:8000) + Swagger UI /docs — fallback transport
-	$(UVICORN) main:app --reload --port $(PORT)
+	AI_ENABLE_GRPC=true GRPC_PORT=$(GRPC_PORT) $(UVICORN) main:app --reload --port $(PORT)
 
 .PHONY: grpc
-grpc: ## gRPC server (:50051) — BE gọi cái này (primary transport)
+grpc: ## Chỉ chạy standalone gRPC cho development
 	$(PY) -m src.grpc_server
 
 .PHONY: health
@@ -80,18 +80,14 @@ proto: ## Regen Python gRPC stubs từ protos/ai_service.proto
 dummy: ## Sinh dummy model artifacts (dev mode, không cần data thật)
 	$(PY) -X utf8 scripts/create_dummy_artifacts.py
 
-# ── Docker (2 container: gRPC + HTTP) ────────────────────────────────────
+# ── Docker (một container: REST + gRPC) ──────────────────────────────────
 .PHONY: docker-build
 docker-build: ## Build image ai-module
 	docker build -t ai-module:latest .
 
-.PHONY: docker-grpc
-docker-grpc: docker-build ## Chạy gRPC trong container (:50051)
-	docker run --rm -p $(GRPC_PORT):50051 ai-module:latest python -m src.grpc_server
-
-.PHONY: docker-http
-docker-http: docker-build ## Chạy REST trong container (:8000)
-	docker run --rm -p $(PORT):8000 ai-module:latest uvicorn main:app --host 0.0.0.0 --port 8000
+.PHONY: docker-run
+docker-run: docker-build ## Chạy REST + gRPC trong một container
+	docker run --rm -e AI_ENABLE_GRPC=true -p $(PORT):8000 -p $(GRPC_PORT):50051 ai-module:latest
 
 # ── Dọn dẹp ──────────────────────────────────────────────────────────────
 .PHONY: clean
@@ -111,4 +107,4 @@ help: ## Hiện danh sách lệnh
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 	@echo ""
-	@echo "Bắt đầu:  make setup  →  make grpc  (hoặc make serve)"
+	@echo "Bắt đầu:  make setup  →  make serve"

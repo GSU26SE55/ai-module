@@ -3,6 +3,8 @@ name: CI — AI Module
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
 
 jobs:
   test:
@@ -17,10 +19,38 @@ jobs:
           cache: 'pip'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          python -m pip install --upgrade pip==25.3
+          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.3.1
+          python -m pip install --require-hashes -r requirements-runtime.lock
+          python -m pip install -r requirements-dev.txt
 
       - name: Lint (ruff)
-        run: ruff check .
+        run: ruff check main.py src scripts tests deploy/scripts
 
       - name: Test
-        run: pytest tests/ -v --tb=short
+        run: pytest tests/ --cov=src --cov-fail-under=85 --tb=short
+
+      - name: Verify model manifest and protobuf drift
+        run: |
+          python deploy/scripts/verify-models.py
+          python scripts/gen_proto.py
+          git diff --exit-code -- protos src/grpc_gen
+
+      - name: Validate production ingress and Compose
+        run: |
+          secret_file="$(mktemp)"
+          trap 'rm -f "${secret_file}"' EXIT
+          AI_IMAGE='solar-ai-ci:validation' \
+          AI_SECRETS_FILE="${secret_file}" \
+            docker compose \
+              --env-file deploy/host.env.example \
+              -f docker-compose.prod.yml \
+              config --quiet
+          docker run --rm \
+            --entrypoint caddy \
+            -e AI_PUBLIC_DOMAIN=ai.solars.io.vn \
+            -e ACME_EMAIL=ops@solars.io.vn \
+            -v "${GITHUB_WORKSPACE}/deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d \
+            validate --config /etc/caddy/Caddyfile --adapter caddyfile

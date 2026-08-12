@@ -18,18 +18,17 @@ Usage:
 """
 import json
 import logging
-import os
 import time
 import uuid
+
+from src.core.runtime import data_path
+from src.services.prescription.embedding import get_encoder
 
 logger = logging.getLogger(__name__)
 
 # Requires chromadb + sentence-transformers (pinned in requirements.txt) — same
 # optional dependency as rag_retriever.py, lazy-imported below.
-HISTORY_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
-    "models", "prescription_history",
-)
+HISTORY_DIR = str(data_path("AI_PRESCRIPTION_HISTORY_DIR", "prescription_history"))
 
 # FIFO cap — oldest records (by save timestamp) evicted once this is exceeded.
 MAX_RECORDS = 500
@@ -52,10 +51,8 @@ class PrescriptionHistoryStore:
         # not wrapped in its own try/except at the call site, unlike RagRetriever).
         try:
             import chromadb
-            from sentence_transformers import SentenceTransformer
-
             self._client = chromadb.PersistentClient(path=path or HISTORY_DIR)
-            self._encoder = SentenceTransformer("all-MiniLM-L6-v2")
+            self._encoder = get_encoder()
             self._collection = self._client.get_or_create_collection(
                 "prescription_history", metadata={"hnsw:space": "cosine"})
             self._ready = True

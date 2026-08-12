@@ -10,7 +10,6 @@ import numpy as np
 from scipy.stats import kurtosis as scipy_kurtosis
 from scipy.stats import skew as scipy_skew
 
-
 # ---------------------------------------------------------------------------
 # Per-channel feature extraction
 # ---------------------------------------------------------------------------
@@ -262,7 +261,9 @@ def compute_ic_curve_and_discharge_progress(
     q_cumsum = np.cumsum(dq)
 
     dv = np.diff(voltage, prepend=voltage[0])
-    ic = np.where(np.abs(dv) > 1e-4, dq / np.abs(dv), 0.0)
+    abs_dv = np.abs(dv)
+    ic = np.zeros_like(dq)
+    np.divide(dq, abs_dv, out=ic, where=abs_dv > 1e-4)
     ic = np.clip(ic, 0.0, 20.0).astype(np.float32)
 
     total_q = q_cumsum[-1]

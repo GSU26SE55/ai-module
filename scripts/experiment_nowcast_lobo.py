@@ -27,14 +27,16 @@ from torch.utils.data import DataLoader, TensorDataset
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from scripts.preprocess import load_cycles, cycles_to_windows  # noqa: E402
+from scripts.preprocess import cycles_to_windows, load_cycles  # noqa: E402
 from scripts.preprocess_forecast import available_batteries, batteries_at_temp  # noqa: E402
 from scripts.train import setup_logger  # noqa: E402
 from src.core.config import D_MODEL, D_STATE, SPECTRAL_FEAT_DIM  # noqa: E402
 from src.models.soh_predictor import MambaSOHPredictor  # noqa: E402
 
 SEED = 42
-random.seed(SEED); np.random.seed(SEED); torch.manual_seed(SEED)
+random.seed(SEED)
+np.random.seed(SEED)
+torch.manual_seed(SEED)
 torch.cuda.manual_seed_all(SEED)
 
 
@@ -80,15 +82,23 @@ def run_fold(held, train_cycles, test_cycles, epochs, device, logger, official_m
     Xte, yte = torch.tensor(Xte), torch.tensor(yte)
 
     rng = np.random.RandomState(SEED)
-    idx = rng.permutation(len(Xtr)); nv = max(1, int(len(Xtr) * 0.15))
+    idx = rng.permutation(len(Xtr))
+    nv = max(1, int(len(Xtr) * 0.15))
     vi, ti = idx[:nv], idx[nv:]
-    gen = torch.Generator(); gen.manual_seed(SEED)
-    loader = DataLoader(TensorDataset(Xtr[ti], Ftr[ti], ytr[ti]), batch_size=32, shuffle=True, generator=gen)
+    gen = torch.Generator()
+    gen.manual_seed(SEED)
+    loader = DataLoader(
+        TensorDataset(Xtr[ti], Ftr[ti], ytr[ti]), batch_size=32, shuffle=True, generator=gen
+    )
 
     torch.manual_seed(SEED)
-    model = MambaSOHPredictor(input_features=Xtr.shape[-1], feat_dim=SPECTRAL_FEAT_DIM,
-                              d_model=D_MODEL, d_state=D_STATE,
-                              use_official_mamba=official_mamba).to(device)
+    model = MambaSOHPredictor(
+        input_features=Xtr.shape[-1],
+        feat_dim=SPECTRAL_FEAT_DIM,
+        d_model=D_MODEL,
+        d_state=D_STATE,
+        use_official_mamba=official_mamba,
+    ).to(device)
     opt = torch.optim.Adam(model.parameters(), lr=5e-4, weight_decay=1e-5)
     crit = nn.MSELoss()
 
@@ -96,7 +106,9 @@ def run_fold(held, train_cycles, test_cycles, epochs, device, logger, official_m
         model.eval()
         with torch.no_grad():
             pred = model(X.to(device), F.to(device)).cpu() * 100.0
-        return float(torch.mean(torch.abs(pred - y))), float(torch.sqrt(torch.mean((pred - y) ** 2)))
+        return float(torch.mean(torch.abs(pred - y))), float(
+            torch.sqrt(torch.mean((pred - y) ** 2))
+        )
 
     best, best_state, pc = float("inf"), None, 0
     for _ in range(1, epochs + 1):
@@ -124,13 +136,25 @@ def main():
     ap.add_argument("--data-dir", default="data/raw/nasa/cleaned_dataset")
     ap.add_argument("--epochs", type=int, default=60)
     ap.add_argument("--min-cycles", type=int, default=60, help="skip batteries with fewer cycles")
-    ap.add_argument("--temp", type=float, default=None,
-                    help="restrict to batteries at this ambient temperature (e.g. 24) — same-condition, no domain shift")
-    ap.add_argument("--pool", default=None,
-                    help="comma list = EXACT battery pool (train+test). Use for clean same-campaign LOBO, e.g. B0005,B0006,B0007,B0018")
-    ap.add_argument("--folds", default=None, help="comma list of held-out batteries (default: all eligible)")
-    ap.add_argument("--official-mamba", action="store_true",
-                    help="Use official CUDA mamba_ssm (Kaggle/Colab GPU only; same accuracy)")
+    ap.add_argument(
+        "--temp",
+        type=float,
+        default=None,
+        help="restrict to batteries at this ambient temperature (e.g. 24) — same-condition, no domain shift",
+    )
+    ap.add_argument(
+        "--pool",
+        default=None,
+        help="comma list = EXACT battery pool (train+test). Use for clean same-campaign LOBO, e.g. B0005,B0006,B0007,B0018",
+    )
+    ap.add_argument(
+        "--folds", default=None, help="comma list of held-out batteries (default: all eligible)"
+    )
+    ap.add_argument(
+        "--official-mamba",
+        action="store_true",
+        help="Use official CUDA mamba_ssm (Kaggle/Colab GPU only; same accuracy)",
+    )
     args = ap.parse_args()
 
     logger = setup_logger("logs/training")
@@ -143,7 +167,9 @@ def main():
         logger.info(f"Exact pool: {all_ids}")
     elif args.temp is not None:
         all_ids = batteries_at_temp(args.data_dir, args.temp)
-        logger.info(f"Same-condition filter: ambient_temperature = {args.temp}°C -> {len(all_ids)} batteries")
+        logger.info(
+            f"Same-condition filter: ambient_temperature = {args.temp}°C -> {len(all_ids)} batteries"
+        )
     else:
         all_ids = available_batteries(args.data_dir)
     cycles_by = {}
@@ -158,23 +184,35 @@ def main():
     results = []
     for held in fold_ids:
         if held not in cycles_by:
-            logger.warning(f"[hold {held}] not eligible — skipped"); continue
+            logger.warning(f"[hold {held}] not eligible — skipped")
+            continue
         train_cycles = [c for b in cycles_by if b != held for c in cycles_by[b]]
-        out = run_fold(held, train_cycles, cycles_by[held], args.epochs, device, logger,
-                       official_mamba=args.official_mamba)
+        out = run_fold(
+            held,
+            train_cycles,
+            cycles_by[held],
+            args.epochs,
+            device,
+            logger,
+            official_mamba=args.official_mamba,
+        )
         if out is None:
-            logger.warning(f"[hold {held}] empty fold — skipped"); continue
+            logger.warning(f"[hold {held}] empty fold — skipped")
+            continue
         mae, rmse, ntest = out
         logger.info(f"[hold {held}] test {ntest} windows -> MAE {mae:.4f}% | RMSE {rmse:.4f}%")
         results.append((held, mae, rmse))
 
     if results:
-        maes = np.array([r[1] for r in results]); rmses = np.array([r[2] for r in results])
+        maes = np.array([r[1] for r in results])
+        rmses = np.array([r[2] for r in results])
         logger.info("=" * 60)
         logger.info(f"LOBO over {len(results)} batteries:")
-        logger.info(f"  MAE  = {maes.mean():.4f}% ± {maes.std():.4f}%  (min {maes.min():.3f}, max {maes.max():.3f})")
+        logger.info(
+            f"  MAE  = {maes.mean():.4f}% ± {maes.std():.4f}%  (min {maes.min():.3f}, max {maes.max():.3f})"
+        )
         logger.info(f"  RMSE = {rmses.mean():.4f}% ± {rmses.std():.4f}%")
-        logger.info(f"  (4-battery single-fold baseline: MAE 0.61%)")
+        logger.info("  (4-battery single-fold baseline: MAE 0.61%)")
         logger.info("=" * 60)
 
 

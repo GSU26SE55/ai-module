@@ -226,6 +226,7 @@ def dummy_models():
         patch.object(model_loader, "lfp_feature_scaler", feat_scaler),
         patch.object(model_loader, "lfp_soh_model", model),
         patch.object(model_loader, "lfp_iso_model", iso),
+        patch.object(model_loader, "lfp_soc_mode", "window"),
     ):
         yield
 

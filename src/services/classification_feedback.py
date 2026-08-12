@@ -15,12 +15,11 @@ import os
 import threading
 import time
 
+from src.core.runtime import data_path
+
 logger = logging.getLogger(__name__)
 
-FEEDBACK_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "models", "classification_feedback",
-)
+FEEDBACK_DIR = str(data_path("AI_CLASSIFICATION_FEEDBACK_DIR", "classification_feedback"))
 FEEDBACK_PATH = os.path.join(FEEDBACK_DIR, "feedback.jsonl")
 
 # Giá trị hợp lệ — khớp StaffFeedbackEnum phía BE (1/2/3). Sai giá trị phải bị TỪ CHỐI chứ
