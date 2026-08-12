@@ -96,7 +96,7 @@ Priority **tính ra** từ `ImpactScope × UrgencyLevel` matrix (xem `overall.md
 Chi tiết rules → [tech/ai.md](tech/ai.md)
 
 2 core model (không thêm):
-1. **LSTM/CNN-LSTM** — dự đoán SOH (State of Health)
+1. **Mamba (SSM) thuần PyTorch** — dự đoán SOH (State of Health), có FiLM conditioning từ đặc trưng phổ cấp chu kỳ
 2. **Isolation Forest** — phát hiện bất thường
 
 Output: Classification (Normal / Degrading / Failed) + SOH % + confidence score
