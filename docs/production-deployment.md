@@ -41,20 +41,19 @@ Replace `168.144.48.16` everywhere below if that is not the actual public IPv4
 shown on the AI Droplet. Do not add an AAAA record unless IPv6 is configured on
 VPS2, Caddy listens on it and the firewall also permits it.
 
-At the audit on **2026-08-12**, the public authoritative result did not match
-the DNS management screenshot:
+At the follow-up audit on **2026-08-13**, all four authoritative nameservers
+returned the intended Reserved IPv4:
 
 ```text
-ns1.zonedns.vn -> 146.190.201.118
-ns2.zonedns.vn -> 146.190.201.118
-ns3.zonedns.vn -> 146.190.201.118
-ns4.zonedns.vn -> 146.190.201.118
+ns1.zonedns.vn -> 168.144.48.16
+ns2.zonedns.vn -> 168.144.48.16
+ns3.zonedns.vn -> 168.144.48.16
+ns4.zonedns.vn -> 168.144.48.16
 ```
 
-That old address serves nginx with a certificate whose SAN list does not include
-`ai.solars.io.vn`. Therefore production TLS is **not ready** until the A record
-is saved/published at the authoritative DNS provider and all four answers are
-the AI VPS address. Verify from any Internet-connected machine:
+The AAAA result was empty. DNS was ready at that audit, but it remains a
+deployment-time invariant rather than a one-time assumption. Verify from any
+Internet-connected machine before the first release and after every IP change:
 
 ```bash
 dig +short NS solars.io.vn
@@ -65,9 +64,11 @@ dig +short AAAA ai.solars.io.vn
 ```
 
 The four A answers must be identical to VPS2 and the AAAA result must be empty.
-The deployment preflight repeats these authoritative checks and also verifies
-that `AI_PUBLIC_IPV4` is assigned to the current host. It refuses to touch the
-running release when either check fails.
+The deployment preflight repeats these authoritative checks. It accepts
+`AI_PUBLIC_IPV4` only when the address is assigned locally or DigitalOcean's
+link-local metadata service reports the exact address as the active Reserved
+IPv4 for this Droplet. It refuses to touch the running release when these checks
+fail.
 
 ## 3. VPS2 capacity and base packages
 

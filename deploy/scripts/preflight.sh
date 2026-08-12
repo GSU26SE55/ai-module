@@ -13,7 +13,7 @@ fail() {
   exit 1
 }
 
-for command in docker awk cosign dig grep sed sort stat df ip tr tail; do
+for command in docker awk cosign curl dig grep sed sort stat df ip tr tail; do
   command -v "${command}" >/dev/null 2>&1 || fail "missing command: ${command}"
 done
 docker info >/dev/null 2>&1 || fail "Docker daemon is unavailable"
@@ -68,10 +68,8 @@ monitoring_bind_ip="$(env_value AI_MONITORING_BIND_IP)"
 test -n "${monitoring_bind_ip}" \
   || fail "AI_MONITORING_BIND_IP is missing from ${host_env}"
 
-ip -4 -o address show \
-  | awk '{split($4, address, "/"); print address[1]}' \
-  | grep -Fxq "${public_ipv4}" \
-  || fail "AI_PUBLIC_IPV4 ${public_ipv4} is not configured on this VPS"
+"${release_dir}/deploy/scripts/verify-public-ip.sh" "${public_ipv4}" \
+  || fail "AI_PUBLIC_IPV4 ${public_ipv4} is neither a local address nor the active DigitalOcean Reserved IPv4"
 ip address show | grep -Fq "${monitoring_bind_ip}" \
   || fail "AI_MONITORING_BIND_IP ${monitoring_bind_ip} is not configured on this VPS"
 
