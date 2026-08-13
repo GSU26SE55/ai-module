@@ -5,31 +5,37 @@
 | Quyết định | Lựa chọn | Ghi chú |
 |------------|----------|---------|
 | Language | Python 3.11 | — |
-| ML Framework | PyTorch | LSTM/CNN-LSTM |
+| ML Framework | PyTorch | **Mamba (SSM) thuần PyTorch** — không dùng lib `mamba-ssm` CUDA |
 | Anomaly | scikit-learn Isolation Forest | Đủ cho scope capstone |
-| Serving | FastAPI | REST endpoint cho BE gọi |
-| Dataset | NASA Ames (ưu tiên) | CALCE backup |
+| Serving | FastAPI (REST :8000) + gRPC (:50051) | gRPC là transport production BE gọi |
+| Dataset | NASA Ames (mặc định) | Severson + SNL (nhánh LFP) · CALCE backup |
 
 ## Model Spec (bắt buộc thống nhất giữa train và inference)
 
 | Tham số | Giá trị | Ghi chú |
 |---------|---------|---------|
 | Window size | 30 timestep | 30 chu kỳ đo liên tiếp |
-| Input features | 3 | voltage, current, temperature |
-| Normalization | MinMaxScaler [0, 1] | Fit trên train set, lưu scaler.pkl để dùng lại |
-| SOH target | capacity_current / capacity_nominal × 100 | NASA: nominal = 2.0 Ah |
-| Train / Val / Test | 70 / 15 / 15 | Chia theo battery ID, không theo timestep — xem bảng bên dưới |
+| Input features | **6** (`INPUT_FEATURES`) | 4 base (`BASE_FEATURES` = voltage, current, temperature, **time**) + 2 dẫn xuất tính phía server: `cycle_count/CYCLE_COUNT_NORM`, `soc_percent/100` |
+| Feature phụ (FiLM) | **57** (`SPECTRAL_FEAT_DIM`) | 10 spectral + 9 statistical × 3 kênh V/I/T — `extract_window_features()` |
+| Normalization | 2 scaler riêng | `scaler.pkl` (MinMax [0,1] trên 4 cột base) + `feature_scaler.pkl` (trên vector 57). 2 cột dẫn xuất **KHÔNG** qua scaler — đã normalize sẵn |
+| SOH target | capacity_current / capacity_nominal × 100 | NASA = 2.0 Ah · LFP/Severson = 1.1 Ah (`NOMINAL_CAPACITY_AH_BY_CHEMISTRY`) |
+| Train / Val / Test | 24 / 1 / 1 | Chia theo battery ID, không theo timestep — xem bảng bên dưới |
 | Random seed | 42 | Bắt buộc mọi script (train, preprocess) |
 
-**Train/Val/Test split — NASA Ames (cố định, không thay đổi):**
+**Train/Val/Test split — NASA Ames (chia theo battery ID, KHÔNG theo timestep):**
 
-| Split | Battery IDs | Ghi chú |
-|-------|-------------|---------|
-| Train | B0005, B0006, B0007 | ~70% data |
-| Val   | B0018 (70% đầu timestep) | ~15% data |
-| Test  | B0018 (30% cuối timestep) | ~15% data |
+| Split | Battery IDs | Số pin |
+|-------|-------------|--------|
+| Train | B0005/06/07/18, B0025–B0032, B0033, B0034, B0042–B0044, B0041, B0045, B0053, B0054, B0055, B0056, **B0047** | 24 |
+| Val   | B0046 (4°C) | 1 |
+| Test  | B0048 (4°C) — held out hoàn toàn | 1 |
 
-> Chia theo battery ID trước, sau đó chia timestep cho B0018 (val/test). KHÔNG được xáo trộn ngẫu nhiên.
+> **GH-88 (2026-07-08):** B0047 chuyển từ Val sang Train — train 4°C cũ (B0041/45/53–56) chỉ phủ SOH 0–67.2%, thiếu hẳn vùng 67–86% mà val/test cần → model ngoại suy lệch xuống đúng ngưỡng EOL 80%. Chi tiết: `docs/adr/0002-split-rebalance-b0047.md`.
+> **Phạm vi:** split 24/1/1 này áp dụng cho pipeline production window=30 (`soh_mamba_v1.6.pth` trở đi). Model headline bài báo NCKH (`soh_mamba_long_v2.2.pth`, LOBO) train **trước** khi đổi split (commit split-rebalance `899aa45` ngày 2026-07-05, checkpoint v2.2 đã có từ 2026-07-03) nên vẫn dùng split cũ 23/2/1 (B0047 ở val) — số liệu đó không đổi, xem `docs/nckh-paper-plan.md` §3.1.
+> Chia HẲN theo battery ID (1 pin chỉ thuộc 1 split) — đo đúng cross-battery generalization, không phải chia timestep trong 1 pin.
+> **Bắt buộc có pin 4°C trong train** (B0041/45/53/54/55/56/B0047): val/test đều 4°C, nếu train thiếu domain 4°C model phải extrapolate → generalization gap lớn.
+> Nguồn duy nhất của split: `scripts/preprocess.py` (`TRAIN_IDS`/`VAL_IDS`/`TEST_IDS`). Sửa ở đó, không hardcode nơi khác.
+> Bỏ qua: B0036 (SOH spike 122% — nhiễu), B0049–B0052 (quá ngắn/corrupt), B0038–B0040 (dự phòng).
 
 **Metric đánh giá:**
 - SOH regression: MAE < 2%, RMSE < 3%
@@ -37,57 +43,53 @@
 
 ## Model Architecture (bắt buộc nhất quán train & inference)
 
-### 1. LSTM/CNN-LSTM — SOH Prediction
+### 1. MambaSOHPredictor — SOH Prediction
+
+> ⚠️ Dự án **KHÔNG còn dùng CNN-LSTM**. Kiến trúc production là Mamba (SSM) thuần PyTorch.
+> Nguồn sự thật: `src/models/soh_predictor.py`. Đoạn dưới là tóm tắt, không phải bản sao đầy đủ.
+
+Model nhận **2 đầu vào** — `forward(x, x_feat)`:
+
+```text
+x (B, 30, 6) ──> Linear(6 → 64)
+             ──> MambaBlock × 2  (d_model=64, d_state=16, d_conv=4, expand=2)
+             ──> LayerNorm(64)
+             ──> lấy token cuối  h = h[:, -1, :]        (B, 64)
+                                                          │
+x_feat (B, 57) ──> film_proj: Linear(57→57) → SiLU → Linear(57→128) → chunk → γ, β
+                                                          │
+             h = (sigmoid(γ) + 0.5) · h + β              (B, 64)   ← FiLM conditioning
+             ──> Linear(64 → 32) → GELU → Dropout(0.2) → Linear(32 → 1)
+             ──> SOH ∈ [0, 1]  (× 100 khi trả về)
+```
+
+**Bắt buộc nhớ:**
+- **FiLM conditioning không được bỏ** — đặc trưng phổ cấp chu kỳ (57 chiều) điều biến trạng thái ẩn, KHÔNG nối vào input. Bỏ đi thì checkpoint không load được.
+- Pure PyTorch mặc định (Windows-native). Cờ opt-in `use_official_mamba=True` dùng kernel CUDA `mamba_ssm` trên Kaggle/Colab — cùng công thức toán, chỉ nhanh hơn, tự fallback nếu thiếu lib.
+- `d_state=16` cho window=30 (production) và RUL. Model **long-seq L=4096** là kiến trúc KHÁC: Conv1d patch (k=16, s=16) + `PatchDegradationEncoder` + `d_state=32` (`LONG_D_STATE`) + multi-head attention pooling. Đừng gộp 2 cái làm một.
 
 ```python
-import torch.nn as nn
-
-class SOHPredictor(nn.Module):
-    """
-    Input:  (batch, 30, 3)  — 30 timestep, 3 features [voltage, current, temp]
-    Output: (batch, 1)      — SOH% trong khoảng [0, 100]
-    """
-    def __init__(self):
-        super().__init__()
-        # CNN block — trích xuất local pattern
-        self.conv1 = nn.Conv1d(in_channels=3, out_channels=32, kernel_size=3, padding=1)
-        self.relu  = nn.ReLU()
-        self.pool  = nn.MaxPool1d(kernel_size=2)          # (batch, 32, 15)
-
-        # LSTM block — học temporal dependency
-        self.lstm  = nn.LSTM(input_size=32, hidden_size=64,
-                             num_layers=2, batch_first=True,
-                             dropout=0.2)                 # dropout giữa layers
-
-        # FC head
-        self.fc1   = nn.Linear(64, 32)
-        self.fc2   = nn.Linear(32, 1)
-        self.dropout = nn.Dropout(0.2)
-
-    def forward(self, x):                                 # x: (batch, 30, 3)
-        x = x.permute(0, 2, 1)                           # → (batch, 3, 30) cho Conv1d
-        x = self.pool(self.relu(self.conv1(x)))           # → (batch, 32, 15)
-        x = x.permute(0, 2, 1)                           # → (batch, 15, 32) cho LSTM
-        _, (h_n, _) = self.lstm(x)
-        x = h_n[-1]                                       # hidden state lớp cuối
-        x = self.dropout(self.relu(self.fc1(x)))
-        return self.fc2(x).squeeze(-1)                    # → (batch,)
-
-# Training config (BẮT BUỘC)
-OPTIMIZER  = "Adam"
-LR         = 1e-3
-LOSS       = "MSELoss"
-EPOCHS     = 50
-PATIENCE   = 10          # early stopping
+# Training config window=30 — nguồn: scripts/train.py:82-85, 315-320
+OPTIMIZER  = "Adam"      # + weight_decay=1e-5
+LR         = 5e-4
+LOSS       = "weighted MSE"   # == nn.MSELoss() khi tắt --balance-bands
+EPOCHS     = 100         # CLI --epochs, mặc định 100
+PATIENCE   = 15          # early stopping
 BATCH_SIZE = 32
+SCHEDULER  = "ReduceLROnPlateau(factor=0.5, patience=5, min_lr=1e-6)"
 ```
+
+> Đường long-seq dùng bộ hyperparameter khác: `AdamW` + `CosineAnnealingWarmRestarts` + SmoothL1 upweight near-EOL + progressive length warmup (`WARMUP_STAGES`).
 
 ### 2. Isolation Forest — Anomaly Detection
 
 ```python
 from sklearn.ensemble import IsolationForest
 
-# Hyperparameters (BẮT BUỘC)
+# Hyperparameters (BẮT BUỘC) — justification: xem .claude/docs/ai-research-references.md §2
+# - CONTAMINATION 0.1: Liu et al. ICDM 2008 đề xuất 0.05–0.15; NASA dataset ~12-15% near-EOL → 0.1 safe
+# - N_ESTIMATORS 100: Liu et al. 2008 — variance hội tụ ≥ 100 trees; thêm chỉ tăng latency
+# - RANDOM_STATE 42: reproducibility theo .claude/rules/tech/ai.md
 CONTAMINATION = 0.1     # ước tính 10% data là bất thường (NASA dataset)
 N_ESTIMATORS  = 100
 RANDOM_STATE  = 42      # BẮT BUỘC — seed cố định
@@ -97,26 +99,55 @@ iso_forest = IsolationForest(
     n_estimators=N_ESTIMATORS,
     random_state=RANDOM_STATE,
 )
+# ⚠️ fit trên VECTOR 57 CHIỀU (feature_scaler đã transform), KHÔNG phải chuỗi thô (30,6)
 iso_forest.fit(X_train_features)  # fit trên train set, KHÔNG fit lại trên production
-
-# Mapping score → classification
-def classify_anomaly(score: float, soh: float) -> str:
-    """
-    score: IsolationForest decision_function (âm = bất thường hơn)
-    soh:   SOH% từ LSTM
-    """
-    if score > -0.1:            # ngưỡng bình thường
-        return "Normal"
-    elif score > -0.3 or soh >= 80:
-        return "Degrading"
-    else:
-        return "Failed"
 
 # Lưu model sau khi train
 import joblib
 joblib.dump(iso_forest, "models/weights/isolation_forest.pkl")
 # isolation_forest.pkl PHẢI commit vào Git (như scaler.pkl)
 ```
+
+**3 hàm phân loại ĐỘC LẬP** — nguồn: `src/models/anomaly_detector.py`. Đừng gộp làm một:
+
+```python
+def classify_anomaly(score, soh, causal_rate=None) -> str:
+    """SOH là yếu tố CHÍNH. IsolationForest chỉ hạ bậc được khi SOH đã khoẻ."""
+    if soh < EOL_SOH:        # 80.0
+        base = "Failed"
+    elif soh < 90.0:
+        base = "Degrading"
+    else:
+        base = "Degrading" if score < -0.1 else "Normal"
+
+    # GH-95: tốc độ suy giảm so với lịch sử CỦA CHÍNH pin đó → nâng 1 bậc
+    if causal_rate is not None and causal_rate > RATE_THRESHOLD:   # 0.5016 %SOH/cycle
+        return _ANOMALY_TIERS[min(_ANOMALY_TIERS.index(base) + 1, 2)]
+    return base
+
+
+def classify_anomaly_status(score) -> str:
+    """Trạng thái CẢM BIẾN — tách khỏi sức khoẻ pin."""
+    if score <= -0.3: return "Anomaly"
+    if score <= -0.1: return "Warning"
+    return "Normal"
+
+
+def classify_health_stage(soh) -> str:
+    """2 TẦNG. Trên 80% vẫn còn tuổi thọ danh định ⇒ Healthy."""
+    return "End Of Life" if soh < EOL_SOH else "Healthy"
+```
+
+> **health_stage quyết định bằng phân phối MC Dropout**, không phải điểm ước lượng: `classify_health_stage_probabilistic(mc_preds)` lấy argmax trên tỉ lệ mẫu rơi vào từng tầng, trả thêm `stage_probabilities` / `stage_confidence` / `is_borderline` (ngưỡng `BORDERLINE_CONFIDENCE=0.7`). Hoà phiếu → chọn tầng nặng hơn (safety-first).
+>
+> **`MAINTENANCE_SOH` (85%) KHÔNG còn là ranh giới tầng** — chỉ là tín hiệu lookahead cho `cycles_to_maintenance`, không sinh ticket. `SCHEDULE_REPLACEMENT` đã bị khai tử cùng lúc, chỉ còn 3 `action_code`: `REPLACE_IMMEDIATELY` / `SCHEDULE_MAINTENANCE` / `MONITOR`.
+
+> **Cơ sở khoa học (B2):** Mọi anomaly type và hyperparameter trong file này PHẢI cite paper hoặc industry standard. Xem `.claude/docs/ai-research-references.md`:
+> - Phụ lục B2 §1 — paper cho 15 AnomalyType (Overheat, Overvoltage, SOH EOL 80%, …)
+> - Phụ lục B2 §2 — IsolationForest hyperparameter justification
+> - Phụ lục B2 §3 — **CHƯA CẬP NHẬT**: vẫn justify CNN-LSTM, chưa có citation nào cho Mamba/SSM (kiểm tra 2026-08-12: file đó 0 lần nhắc "Mamba"). Cần bổ sung Gu & Dao 2023 (Mamba), Nie et al. ICLR 2023 (PatchTST), Perez et al. AAAI 2018 (FiLM), Gal & Ghahramani ICML 2016 (MC Dropout) trước khi bảo vệ.
+>
+> Hội đồng KLTN sẽ hỏi "tại sao ngưỡng X?" — đừng tự đặt mà không cite.
 
 ---
 
@@ -131,15 +162,13 @@ joblib.dump(iso_forest, "models/weights/isolation_forest.pkl")
 ```python
 import time
 
-def benchmark_inference(model, scaler, sample_input, n_runs=100):
+def benchmark_inference(sample_readings, n_runs=100):
+    """Benchmark TOÀN BỘ run_inference(), không chỉ forward pass —
+    scaler + trích 57 feature + MC Dropout 10 mẫu + IsolationForest đều tính vào SLA."""
     latencies = []
     for _ in range(n_runs):
         start = time.perf_counter()
-        # inference pipeline
-        x = scaler.transform(sample_input)
-        x_tensor = torch.tensor(x, dtype=torch.float32).unsqueeze(0)
-        with torch.no_grad():
-            soh = model(x_tensor).item()
+        run_inference(sample_readings)   # src/services/inference.py
         latencies.append((time.perf_counter() - start) * 1000)  # ms
 
     avg_ms = sum(latencies) / len(latencies)
@@ -155,12 +184,37 @@ def benchmark_inference(model, scaler, sample_input, n_runs=100):
 async def health():
     return {
         "status": "ok",
-        "model_version": "1.0.0",
+        "model_version": MODEL_VERSION,
         "scaler_loaded": scaler is not None,
-        "lstm_loaded": soh_model is not None,
+        "feature_scaler_loaded": feature_scaler is not None,
+        "mamba_loaded": soh_model is not None,
         "isolation_forest_loaded": iso_model is not None,
     }
 ```
+
+> Shape thật của response `/health` (và `rpc Health`) nằm ở `src/routers/health.py` + `protos/ai_service.proto` — nó báo trạng thái của **cả 2 bộ artifact** (NASA + LFP) và cờ nạp lười của model long-seq. Đoạn trên chỉ minh hoạ nguyên tắc.
+
+---
+
+## Serving — Hybrid REST + gRPC (GH-39→42)
+
+<!-- ⚠️ LEADER: section này thêm ở repo ai-module (GH-42) — cần đưa vào nguồn sync workflow-ai để không bị ghi đè -->
+
+Cùng pipeline inference/prescription expose qua 2 transport song song — **KHÔNG duplicate logic**, servicer gRPC gọi chung `run_inference()`/`run_prescription()` với FastAPI:
+
+| Transport | Port | Entrypoint |
+|-----------|------|-----------|
+| REST (FastAPI) | 8000 | `uvicorn main:app` |
+| gRPC `aimodule.v1.AiService` | 50051 (env `GRPC_PORT`) | `python -m src.grpc_server` |
+
+**Quy tắc:**
+- Contract duy nhất: `protos/ai_service.proto` — sửa contract PHẢI qua repo ai-module, chỉ **thêm** field number mới, không reuse/đổi số cũ (wire compatibility). Stub sinh bằng `python scripts/gen_proto.py`, commit vào `src/grpc_gen/`.
+- Validate input gRPC bằng **chính Pydantic schema của REST** — 2 transport reject giống nhau (`ValidationError` → `INVALID_ARGUMENT`).
+- Response 2 transport phải **parity field-by-field** — có test enforce (`tests/test_grpc_server.py`).
+- `PredictStream` (bidi): 1 request = 1 window 30 đầy đủ = 1 response, in-order; window lỗi giữa stream → stream abort sau k−1 responses (bidi không có per-message error).
+- gRPC insecure — chỉ nội bộ docker network, KHÔNG expose port 50051 ra ngoài.
+- Benchmark trước khi ship thay đổi serving: `python scripts/benchmark_grpc.py` (transport overhead <50ms luôn enforce; SLA <100ms enforce với `--real-weights` trên môi trường deploy).
+- BE integration: `docs/grpc-integration-be.md`.
 
 ---
 
@@ -168,14 +222,28 @@ async def health():
 
 ### Đường dẫn chuẩn (bắt buộc nhất quán giữa training và inference)
 
+**2 bộ artifact tách theo chemistry** — chọn lúc inference ở `_resolve_artifacts(chemistry)`:
+
+```text
+ai-module/models/weights/
+├── [bộ mặc định — NASA/NMC]
+│   ├── scaler.pkl                     # MinMax trên 4 cột base
+│   ├── feature_scaler.pkl             # scaler cho vector 57 chiều
+│   ├── soh_mamba_v1.6.pth             # MODEL_VERSION
+│   └── isolation_forest_v1.6.pkl
+├── [bộ LFP — chemistry="LFP", Severson + SNL]
+│   ├── scaler_lfp.pkl
+│   ├── feature_scaler_lfp.pkl
+│   ├── soh_mamba_v2.1-lfp.pth         # LFP_MODEL_VERSION
+│   └── isolation_forest_v2.1-lfp.pkl
+└── [long-seq / RUL — không phải đường production]
+    ├── soh_mamba_long_v2.2.pth · scaler_long.pkl · feature_scaler_long.pkl
+    └── soh_mamba_rul_v1.0.pth · feature_scaler_rul.pkl
 ```
-ai-module/
-└── models/
-    └── weights/
-        ├── scaler.pkl                    # MinMaxScaler — fit trên train set
-        ├── soh_lstm_v{major}.{minor}.pth # LSTM/CNN-LSTM weights
-        └── isolation_forest_v{major}.{minor}.pkl  # Isolation Forest
-```
+
+> ⚠️ **Đổi artifact LFP phải sync 3 hằng trong `src/core/config.py`**: `LFP_MODEL_VERSION`,
+> `LFP_CYCLE_COUNT_NORM`, `LFP_TEMPERATURE_TRAIN_CLUSTERS` — lấy đúng từ khoá trong
+> `scaler_lfp.pkl`, đừng tự đặt. Lệch là hỏng **im lặng**, không có exception.
 
 ### Versioning strategy
 
@@ -189,7 +257,7 @@ ai-module/
 - Tăng minor version (`v1.0 → v1.1`) khi retrain cùng architecture nhưng khác data/hyperparameter
 - Tăng major version (`v1.x → v2.0`) khi thay đổi architecture (e.g., thêm attention layer)
 - `scaler.pkl` lưu kèm metadata version để phát hiện mismatch với model
-- Cả 3 artifacts **phải commit vào Git** cùng 1 commit khi update
+- Cả **4 artifact của một bộ** (model + scaler + feature_scaler + iforest) **phải commit vào Git** cùng 1 commit khi update — thiếu `feature_scaler` là inference sai im lặng
 
 ### Lưu artifacts sau khi train (bắt buộc kèm metadata)
 
@@ -201,62 +269,62 @@ joblib.dump({
     "scaler": scaler,
     "version": "1.0",
     "trained_on": ["B0005", "B0006", "B0007"],  # battery IDs dùng để fit
-    "features": ["voltage", "current", "temperature"],
+    "features": BASE_FEATURES,   # ["voltage", "current", "temperature", "time"]
+    # bộ LFP còn lưu thêm: "cycle_count_norm", "temperature_clusters"
 }, "models/weights/scaler.pkl")
 
-# Lưu LSTM model
+# Lưu Mamba model
 torch.save({
     "model_state_dict": soh_model.state_dict(),
-    "version": "1.0",
+    "version": MODEL_VERSION,       # "1.6"
     "window_size": 30,
-    "input_features": 3,
-}, "models/weights/soh_lstm_v1.0.pth")
+    "input_features": 6,
+    "feat_dim": 57,
+}, f"models/weights/soh_mamba_v{MODEL_VERSION}.pth")
 ```
 
 ### Load artifacts khi inference (FastAPI startup)
 
+Thực tế nằm ở `src/core/model_loader.py` (load 1 lần khi khởi động, không load lại per-request). Nguyên tắc bắt buộc:
+
 ```python
-# main.py — load 1 lần khi khởi động, không load lại per-request
-import os
-import joblib
-import torch
+# Đường dẫn + version lấy TỪ src/core/config.py, KHÔNG hardcode lại
+from src.core.config import (
+    MODEL_VERSION, SCALER_VERSION, FEATURE_SCALER_VERSION,
+    MAMBA_PATH, SCALER_PATH, FEATURE_SCALER_PATH, ISO_FOREST_PATH,
+    INPUT_FEATURES, SPECTRAL_FEAT_DIM, D_MODEL, D_STATE,
+)
 
-SCALER_VERSION = "1.0"
-MODEL_VERSION  = "1.0"
-
-SCALER_PATH      = "models/weights/scaler.pkl"
-LSTM_PATH        = f"models/weights/soh_lstm_v{MODEL_VERSION}.pth"
-ISO_FOREST_PATH  = f"models/weights/isolation_forest_v{MODEL_VERSION}.pkl"
-
-# ⚠️ Kiểm tra file tồn tại TRƯỚC khi load — cho phép báo lỗi rõ ràng thay vì traceback cryptic
+# ⚠️ Kiểm tra file tồn tại TRƯỚC khi load — báo lỗi rõ thay vì traceback cryptic
 for path, label in [
-    (SCALER_PATH,     "MinMaxScaler"),
-    (LSTM_PATH,       "LSTM model"),
-    (ISO_FOREST_PATH, "Isolation Forest"),
+    (SCALER_PATH,         "MinMaxScaler"),
+    (FEATURE_SCALER_PATH, "Feature scaler (57-dim)"),
+    (MAMBA_PATH,          "Mamba SOH model"),
+    (ISO_FOREST_PATH,     "Isolation Forest"),
 ]:
     assert os.path.exists(path), (
         f"[STARTUP] {label} artifact not found at '{path}'. "
         f"Run training script and commit all artifacts in models/weights/ before starting."
     )
 
+# Version assertion cho CẢ 3 artifact có metadata
 scaler_artifact = joblib.load(SCALER_PATH)
-assert scaler_artifact["version"] == SCALER_VERSION, (
-    f"Scaler version mismatch: expected {SCALER_VERSION}, got {scaler_artifact['version']}"
-)
-scaler = scaler_artifact["scaler"]
+assert scaler_artifact["version"] == SCALER_VERSION
 
-checkpoint = torch.load(LSTM_PATH, map_location="cpu")
-assert checkpoint["version"] == MODEL_VERSION, (
-    f"Model version mismatch: expected {MODEL_VERSION}, got {checkpoint['version']}"
+checkpoint = torch.load(MAMBA_PATH, map_location="cpu")
+assert checkpoint["version"] == MODEL_VERSION
+soh_model = MambaSOHPredictor(
+    input_features=INPUT_FEATURES,   # 6
+    d_model=D_MODEL, d_state=D_STATE,
+    feat_dim=SPECTRAL_FEAT_DIM,      # 57
 )
-soh_model = SOHPredictor()
 soh_model.load_state_dict(checkpoint["model_state_dict"])
 soh_model.eval()
-
-iso_model = joblib.load(ISO_FOREST_PATH)
 ```
 
-> **Tại sao cần metadata?** Nếu `scaler.pkl` được refit (v1.1) nhưng `soh_lstm_v1.0.pth` không được update, inference sẽ ra kết quả sai mà không có error. Version assertion bắt lỗi này ngay khi startup thay vì âm thầm predict sai.
+> **Tại sao cần metadata?** Nếu `scaler.pkl` được refit nhưng `soh_mamba_v1.6.pth` không update, inference ra kết quả sai mà **không có error**. Version assertion bắt lỗi ngay lúc startup thay vì âm thầm predict sai.
+>
+> **Model long-seq nạp LƯỜI** (lần gọi `PredictLong` đầu tiên), không nạp lúc startup — nó nặng hơn nhiều và phần lớn deploy không dùng tới.
 
 ### Git LFS (nếu model file > 100MB)
 
@@ -268,7 +336,7 @@ git lfs track "models/weights/*.pkl"
 git add .gitattributes
 ```
 
-> Với PyTorch LSTM nhỏ (< 50MB) và Isolation Forest (< 5MB): commit trực tiếp vào Git — không cần LFS cho scope capstone.
+> Với model Mamba nhỏ (< 50MB) và Isolation Forest (< 5MB): commit trực tiếp vào Git — không cần LFS cho scope capstone.
 
 ---
 
@@ -279,7 +347,8 @@ git add .gitattributes
 - Output bắt buộc: Classification (Normal / Degrading / Failed) + SOH % + confidence score
 - IoT data pipeline chỉ thêm Sprint 8 nếu core model xong
 - Scaler (MinMaxScaler) phải được lưu tại `models/weights/scaler.pkl` sau khi train — load lại khi inference, không fit lại trên production data
-- `scaler.pkl` và `isolation_forest.pkl` phải được commit vào Git — inference cần cùng artifacts với training
+- Cả 4 artifact của mỗi bộ (model · scaler · feature_scaler · iforest) phải commit vào Git — inference cần cùng artifacts với training
+- Hằng số model chỉ khai báo ở `src/core/config.py` — KHÔNG hardcode lại `window=30`, `input_features=6`, `feat_dim=57`, đường dẫn weights, hay cụm nhiệt độ ở nơi khác
 - Inference latency **PHẢI** benchmark và đạt < 100ms trước khi merge
 
 **Simplicity First:** Chỉ implement model/endpoint mà issue yêu cầu — không thêm hyperparameter tuning, architecture variant, hoặc preprocessing step chưa được approve.

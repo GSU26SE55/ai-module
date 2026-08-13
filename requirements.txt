@@ -1,13 +1,51 @@
 # AI Module — GSU26SE55
 # Pin all versions — do NOT use >= or ~= to ensure reproducibility
 
-torch==2.3.1
+torch==2.6.0
 numpy==1.26.4
 pandas==2.2.2
-scikit-learn==1.5.0
+scikit-learn==1.6.1
 scipy==1.13.1
-pydantic==2.7.4
-fastapi==0.111.1
+pydantic==2.13.4
+fastapi==0.141.1
 uvicorn[standard]==0.30.1
-python-multipart==0.0.9
+python-multipart==0.0.30
 joblib==1.4.2
+h5py==3.11.0  # Offline Severson/SNL MATLAB v7.3 preprocessing; not in runtime image
+
+# RAG / Prescription Layer (GH-20) — chỉ dùng cho POST /prescribe?enrich=true
+# ⚠️ Exception có chủ đích so với rule ai.md ("chỉ PyTorch + scikit-learn") — xem logs/GH-20/plan.md
+chromadb==0.5.3
+# ChromaDB 0.5.3 still calls the legacy capture(distinct_id, event, ...)
+# API. PostHog 6+ removed that signature and produces an error on every Chroma
+# startup even when anonymized telemetry is disabled.
+posthog==5.4.0
+sentence-transformers==5.7.0
+# Pin explicitly instead of leaving this transitive: releases before 5.5.0
+# contain HIGH-severity remote-code-execution vulnerabilities detected by Trivy.
+transformers==5.15.0
+anthropic==0.34.2
+
+# LLM provider chain (GH-79) — DeepSeek chính + Gemini backup, Anthropic optional
+# Nối tiếp ngoại lệ ADR-0001 — xem docs/adr/0003-llm-provider-chain.md
+# pydantic ở trên bị google-genai kéo lên 2.13.4 (từ 2.7.4) — đã verify fastapi/chromadb/anthropic
+# vẫn tương thích (pip check sạch + test_schemas.py, test_routers.py pass)
+openai==2.44.0
+google-genai==2.10.0
+
+# gRPC contract + codegen (GH-39) — serving lib ngang hàng FastAPI, KHÔNG phải ML framework
+# (không vi phạm rule "chỉ PyTorch + scikit-learn") — xem logs/GH-39/plan.md
+# Pin cả 3 cùng nhau: protobuf runtime phải khớp version codegen của grpcio-tools
+grpcio==1.81.1
+grpcio-tools==1.81.1
+grpcio-health-checking==1.81.1
+protobuf==6.33.6
+
+# Runtime observability. Exposes HTTP, gRPC and Python process metrics.
+prometheus-client==0.22.1
+
+# Nạp .env lúc khởi động (GH-env) — KHÔNG phải ML framework, không vi phạm rule
+# "chỉ PyTorch + scikit-learn". Trước đây gói này chỉ có mặt GIÁN TIẾP qua
+# uvicorn[standard]; container không chắc có, mà thiếu nó thì key LLM không bao giờ
+# được nạp và enrich=true âm thầm rơi về rule-based. Ghim tường minh.
+python-dotenv==1.2.2

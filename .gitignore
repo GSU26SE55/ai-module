@@ -5,11 +5,26 @@
 .DS_Store
 Thumbs.db
 logs/*.log
+logs/**/*.log
 
 # Dataset — raw và processed không commit (kích thước lớn)
 data/raw/
 data/processed/
+data/processed_long/
 *.mat
+*.pt
+
+# Demo IoT scenarios — CSV sinh lại được, KHÔNG commit (13 file x 1200 dòng ~ 640 KB
+# và sẽ đổi mỗi lần artifact model đổi). Sinh lại bằng:
+#     python -X utf8 scripts/gen_iot_scenarios.py
+# manifest.json CÓ commit — nó là kỳ vọng đã kiểm chứng (1171 điểm cắt/kịch bản)
+# mà BE đọc để viết test tích hợp, và là mốc so sánh khi model lên version mới.
+demo/iot_simulator/*.csv
+
+# Node — KHÔNG commit (AI module là Python thuần; tránh lặp lại sự cố node_modules)
+node_modules/
+package.json
+package-lock.json
 
 # Python cache
 __pycache__/
@@ -18,8 +33,24 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
+models/checkpoints*/
+
+# Prescription long-term memory (GH-83) — runtime data accumulated from real
+# /prescribe calls + technician feedback, NOT a reproducible artifact like
+# models/embeddings/ (static KB, committed).
+models/prescription_history/
+models/classification_feedback/
+
+# Local production/deploy outputs
+deploy.env
+sbom*.json
 
 # Virtual environments
 .venv/
 venv/
 env/
+
+# Node — KHÔNG commit (AI module là Python thuần; tránh lặp lại sự cố node_modules trên feat/RAG_struct)
+node_modules/
+package.json
+package-lock.json

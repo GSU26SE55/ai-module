@@ -17,6 +17,10 @@
       "Bash(ls:*)",
       "Bash(cp:*)",
       "Bash(mv:*)",
+      "Bash(dotnet:*)",
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(node:*)",
       "Bash(python:*)",
       "Bash(python3:*)",
       "Bash(pip:*)",
@@ -39,6 +43,12 @@
             "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/be/block-dangerous-commands.sh",
             "timeout": 5,
             "statusMessage": "Checking command safety..."
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/lifecycle/scan-secrets-precommit.sh",
+            "timeout": 10,
+            "statusMessage": "Scanning staged diff for secrets..."
           }
         ]
       },
@@ -61,6 +71,48 @@
         "hooks": [
           {
             "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/be/post-edit-feedback.sh",
+            "timeout": 10,
+            "statusMessage": "Checking BE code patterns..."
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/be/validate-namespace.sh",
+            "timeout": 5,
+            "statusMessage": "Validating namespace..."
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/be/check-dbcontext-update.sh",
+            "timeout": 5,
+            "statusMessage": "Checking entity registration..."
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/be/check-di-registration.sh",
+            "timeout": 5,
+            "statusMessage": "Checking DI registration..."
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/be/check-build.sh",
+            "timeout": 60,
+            "statusMessage": "Building .NET project..."
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/fe/post-edit-feedback.sh",
+            "timeout": 10,
+            "statusMessage": "Checking FE code patterns..."
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/fe/check-build.sh",
+            "timeout": 60,
+            "statusMessage": "TypeScript type check..."
+          },
+          {
+            "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/ai/check-ruff.sh",
             "timeout": 15,
             "statusMessage": "Ruff lint + format check..."
@@ -70,6 +122,38 @@
             "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/ai/check-random-seed.sh",
             "timeout": 5,
             "statusMessage": "Checking random seed in training script..."
+          },
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/lifecycle/track-edits-suggest-compact.sh",
+            "timeout": 5,
+            "statusMessage": "Tracking session size..."
+          }
+        ]
+      }
+    ],
+
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/lifecycle/session-start.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/lifecycle/stop-suggest-lesson.sh",
+            "timeout": 5
           }
         ]
       }

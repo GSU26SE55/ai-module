@@ -133,7 +133,7 @@ You are implementing GitHub Issue #$ISSUE_NUMBER for a Frontend (ReactJS/React N
 Follow ALL coding conventions in .codex/skills/fe/ (feature folder structure,
 TanStack Query hooks, service layer, Zod schemas, shadcn/ui, shared/lib/axios.ts only).
 
-Branch to create: feature/GH-$ISSUE_NUMBER-$SLUG
+Branch to create: feat/GH-$ISSUE_NUMBER-$SLUG
 
 == IMPLEMENTATION PLAN ==
 [toàn bộ nội dung logs/GH-$ISSUE_NUMBER/plan.md được paste ở đây]
@@ -158,7 +158,7 @@ Rules:
 ### Bước 3 — Tạo branch
 ```bash
 # Slug: viết thường, chỉ a-z/0-9/gạch ngang, tối đa 5 từ
-# Ví dụ: "Add Battery CRUD API" → feature/GH-42-add-battery-crud-api
+# Ví dụ: "Add Battery CRUD API" → feat/GH-42-add-battery-crud-api
 SLUG=$(gh issue view $ISSUE_NUMBER --json title -q '.title' \
   | tr '[:upper:]' '[:lower:]' \
   | tr -cs 'a-z0-9' '-' \
@@ -166,7 +166,7 @@ SLUG=$(gh issue view $ISSUE_NUMBER --json title -q '.title' \
   | cut -d'-' -f1-5 \
   | sed 's/-$//')
 
-git checkout -b feature/GH-$ISSUE_NUMBER-$SLUG
+git checkout -b feat/GH-$ISSUE_NUMBER-$SLUG
 ```
 
 ### Bước 4 — Implement theo đúng cấu trúc
@@ -191,19 +191,45 @@ src/
     ├── components/
     │   ├── layout/              ← AppLayout, AuthLayout, Sidebar, Header
     │   ├── common/              ← LoadingSpinner, ErrorBoundary, EmptyState
-    │   └── ui/                  ← shadcn generated components
+    │   └── ui/                  ← shadcn generated components (thực tế: src/components/ui/)
     ├── context/
     │   └── authContext.tsx      ← AuthProvider: hydrate sessionStore từ cookie khi boot
     ├── lib/
     │   ├── axios.ts             ← Axios instance + interceptors (không tạo instance mới)
+    │   ├── authz.ts             ← RBAC: P constants, checkPermission(), checkRole()
     │   └── errors.ts            ← HttpError, EntityError, handleErrorApi
     ├── utils/
-    │   └── queryKeys.ts         ← KEY (root) + QUERY_KEY (factories)
+    │   ├── queryKeys.ts         ← KEY (root) + QUERY_KEY (factories)
+    │   └── endpoints.ts         ← ENDPOINTS — single source of truth cho API paths
     ├── stores/
     │   └── sessionStore.ts      ← Zustand: token, user, setToken, logout
+    ├── enums/                   ← `as const` + type alias — dùng cross-feature
+    │   ├── session.enum.ts      ← UserRole
+    │   ├── account.enum.ts      ← AccountStatusEnum, AvatarSourceEnum, RefreshTokenStatus
+    │   ├── ticket.enum.ts       ← TicketStatusEnum, TicketPriorityEnum, ImpactScopeEnum, ...
+    │   ├── battery.enum.ts      ← BatteryStatusEnum
+    │   ├── site.enum.ts         ← SiteStatusEnum
+    │   └── common.enum.ts       ← TrendDir
     └── types/
         ├── api.types.ts         ← ResponseData<T>, PaginationResponse<T>, ErrorEntity
+        ├── ticket.types.ts      ← TicketDTO, TicketDetailDTO, payloads (re-export từ ticket.enum)
+        ├── session.types.ts     ← SessionUser, decodeToken, redirectByRole
         └── common.types.ts      ← BaseFilterPagination, shared query types
+```
+
+**Enum placement rule (bắt buộc):**
+- Dùng ≥ 2 feature → `src/shared/enums/{domain}.enum.ts`
+- Chỉ 1 feature dùng → `src/features/{feature}/enums/{domain}.enum.ts`
+- `types/*.ts` KHÔNG định nghĩa enum inline — import từ `enums/` rồi re-export
+- Dùng `z.nativeEnum(SomeEnum)` trong Zod schema — không dùng `z.enum([...])`
+
+**Enum pattern chuẩn:**
+```ts
+export const TicketStatusEnum = {
+  New: "New",
+  Open: "Open",
+} as const;
+export type TicketStatusEnum = (typeof TicketStatusEnum)[keyof typeof TicketStatusEnum];
 ```
 
 **Không đặt file mới vào `shared/` trừ khi dùng ở ≥ 2 feature khác nhau.**

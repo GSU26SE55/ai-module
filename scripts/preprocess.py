@@ -1,136 +1,415 @@
 """
-Preprocessing script: NASA Ames .mat files → windowed tensors (30, 3).
+Preprocessing script: NASA cleaned_dataset CSV → windowed tensors (30, 6) + window-level features.
+
+Strategy:
+  - MinMaxScaler fit/applied on raw timesteps
+  - Spectral+Kurtosis features computed PER 30-STEP WINDOW, matching
+    src/services/inference.py exactly (run_inference() only ever receives a
+    single 30-step window per request — it has no access to the full cycle,
+    so training must use the same window-scoped features or the model sees
+    an out-of-distribution input at serving time). A prior version computed
+    these on the full cycle (200-800 pts, richer FFT resolution) and shared
+    one feature vector across all windows of a cycle — this caused severe
+    train/serve skew (StandardScaler outliers up to -20 vs the expected
+    ~[-3, 3] range) and unusable predictions in production.
 
 Usage:
-    python scripts/preprocess.py --data-dir data/raw/nasa --output-dir data/processed
+    python scripts/preprocess.py --data-dir data/raw/nasa/cleaned_dataset --output-dir data/processed
 
-Output files:
-    data/processed/train.pt  — {"X": Tensor(N,30,3), "y": Tensor(N,)}
-    data/processed/val.pt
-    data/processed/test.pt
+Output:
+    data/processed/{train,val,test}.pt
+    Each: {"X": Tensor(N,30,6), "X_feat": Tensor(N,54), "y": Tensor(N,)}
 """
 
 import argparse
 import os
 import random
+import sys
 
 import joblib
 import numpy as np
+import pandas as pd
 import torch
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from src.core.config import (
+    BASE_FEATURES,
+    CYCLE_COUNT_NORM,
+    FEATURE_SCALER_PATH,
+    FEATURE_SCALER_VERSION,
+    FEATURE_SCALER_VERSION_LONG,
+    LONG_FEATURE_SCALER_PATH,
+    LONG_INPUT_FEATURES,
+    LONG_SCALER_PATH,
+    RAW_FEATURES,
+    SCALER_VERSION,
+    WINDOW_SIZE,
+    WINDOW_STRIDE,
+)
+from src.features.extractor import (
+    compute_ic_feature,
+    compute_phase_mask,
+    compute_soc_percent,
+    extract_window_features,
+)
 
 SEED = 42
+NOMINAL_CAPACITY = 2.0
+MIN_SOH = 10.0  # filter failed/incomplete cycles (capacity ≈ 0 at extreme temps)
+
+# 24 train / 1 val / 1 test — NASA cleaned_dataset
+# Val/Test are 4°C (B0046 / B0048). The original 15-battery train set had NO 4°C
+# cells, so the model had to extrapolate across a temperature domain it never saw
+# — the main cross-battery generalization gap. The 4°C additions below (B0041/45/53
+# /54/55/56) close that gap; B0033/B0034 add the longest degradation curves in the
+# dataset (~197 cycles → highest L=4096 window yield). Different battery ID = different
+# physical cell, so 4°C siblings of the val/test cells are valid train data (no leakage).
+# GH-88: B0047 moved val → train. The six 4°C train cells only span SOH 0–67.2%,
+# while val/test demand predictions up to ~83–86% — the "4°C + high-SOH" region was
+# absent from train, causing systematic underprediction right at the EOL 80% threshold
+# (v1.5: true 82.9% → pred 71–79). B0047 (SOH 0–83.7%) fills that region; B0048 stays
+# fully held out, so the test protocol remains honest. See docs/adr (GH-88).
+# B0025-B0032: 24°C / 43°C, 28-40 cycles, limited degradation but adds temperature diversity
+# B0042-B0044: 22°C, ~65 good cycles after filter, full degradation curve
+# Skipped: B0036 (SOH spikes to 122% — noisy capacity), B0049-B0052 (too short/corrupt)
+TRAIN_IDS = [
+    "B0005",
+    "B0006",
+    "B0007",
+    "B0018",  # original group — 24°C, 132-168 cycles
+    "B0025",
+    "B0026",
+    "B0027",
+    "B0028",  # 24°C, 28 cycles
+    "B0029",
+    "B0030",
+    "B0031",
+    "B0032",  # 43°C (high-temp), 40 cycles
+    "B0042",
+    "B0043",
+    "B0044",  # 22°C, full degradation curve
+    "B0033",
+    "B0034",  # 24°C, 196-197 cycles — full curve to SOH~10%
+    "B0041",
+    "B0045",
+    "B0053",  # 4°C, 25-70 cycles (SOH 30-61) — NEW temp domain
+    "B0054",
+    "B0055",
+    "B0056",  # 4°C, 102 cycles each (SOH 37-67) — matches B0048 band
+    "B0047",  # 4°C, SOH 0-83.7% — GH-88: fills the missing 4°C high-SOH region
+]
+VAL_IDS = ["B0046"]  # 4°C, 72 cycles, SOH 0-86.4% — held out
+TEST_IDS = ["B0048"]  # 4°C, 72 cycles — held out entirely
+
 random.seed(SEED)
 np.random.seed(SEED)
 torch.manual_seed(SEED)
 
-# Battery ID split — fixed, do NOT shuffle
-TRAIN_IDS = ["B0005", "B0006", "B0007"]
-VAL_IDS = ["B0018"]  # first 70% of timesteps
-TEST_IDS = ["B0018"]  # last 30% of timesteps
 
-WINDOW_SIZE = 30
-FEATURES = ["voltage_measured", "current_measured", "temperature_measured"]
-NOMINAL_CAPACITY = 2.0
+def load_cycles(data_dir: str, battery_id: str) -> list[tuple[np.ndarray, float, int]]:
+    """Load each discharge cycle as (array, soh, cycle_idx) — not yet sliced.
 
+    cycle_idx (GH-54): 0-based position of the cycle within this battery's
+    kept discharge cycles (after test_id sort + filtering) — the model's
+    aging-progress signal, normalized later by CYCLE_COUNT_NORM."""
+    meta_path = os.path.join(data_dir, "metadata.csv")
+    cycles_dir = os.path.join(data_dir, "data")
+    meta = pd.read_csv(meta_path)
 
-def load_battery(mat_path: str) -> tuple[np.ndarray, np.ndarray]:
-    """Load a NASA .mat file and return (features, soh) arrays."""
-    import scipy.io
+    discharge = (
+        meta[
+            (meta["battery_id"] == battery_id)
+            & (meta["type"] == "discharge")
+            & (meta["Capacity"].notna())
+        ]
+        .sort_values("test_id")
+        .reset_index(drop=True)
+    )
 
-    battery_name = os.path.splitext(os.path.basename(mat_path))[0]
-    data = scipy.io.loadmat(mat_path)
-    battery = data[battery_name][0][0]
-    cycles = battery["cycle"][0]
+    if len(discharge) == 0:
+        raise ValueError(f"No discharge cycles for '{battery_id}'")
 
-    all_features, all_soh = [], []
-    for cycle in cycles:
-        cycle_type = str(cycle["type"][0])
-        if cycle_type != "discharge":
+    cycles = []
+    for _, row in discharge.iterrows():
+        csv_path = os.path.join(cycles_dir, row["filename"])
+        if not os.path.exists(csv_path):
             continue
-        capacity = float(cycle["data"][0][0]["Capacity"][0][0])
-        soh = capacity / NOMINAL_CAPACITY * 100
+        df = pd.read_csv(csv_path)
+        if not all(col in df.columns for col in RAW_FEATURES):
+            continue
+        n = min(len(df[col]) for col in RAW_FEATURES)
+        cycle = np.stack(
+            [df[col].values[:n].astype(np.float32) for col in RAW_FEATURES], axis=1
+        )
+        soh = float(row["Capacity"]) / NOMINAL_CAPACITY * 100
+        if n >= WINDOW_SIZE and soh >= MIN_SOH:
+            cycles.append((cycle, soh, len(cycles)))
 
-        voltage = cycle["data"][0][0]["Voltage_measured"][0]
-        current = cycle["data"][0][0]["Current_measured"][0]
-        temp = cycle["data"][0][0]["Temperature_measured"][0]
-
-        min_len = min(len(voltage), len(current), len(temp))
-        for i in range(0, min_len - WINDOW_SIZE + 1, WINDOW_SIZE):
-            window = np.stack(
-                [
-                    voltage[i : i + WINDOW_SIZE],
-                    current[i : i + WINDOW_SIZE],
-                    temp[i : i + WINDOW_SIZE],
-                ],
-                axis=1,
-            )
-            all_features.append(window)
-            all_soh.append(soh)
-
-    return np.array(all_features, dtype=np.float32), np.array(all_soh, dtype=np.float32)
+    return cycles
 
 
-def make_windows(
+def collect_cycles(
     data_dir: str, battery_ids: list[str]
-) -> tuple[np.ndarray, np.ndarray]:
-    X_list, y_list = [], []
+) -> list[tuple[np.ndarray, float, int]]:
+    all_cycles = []
     for bid in battery_ids:
-        mat_path = os.path.join(data_dir, f"{bid}.mat")
-        if not os.path.exists(mat_path):
-            raise FileNotFoundError(f"Battery file not found: {mat_path}")
-        X, y = load_battery(mat_path)
-        X_list.append(X)
-        y_list.append(y)
-    return np.concatenate(X_list), np.concatenate(y_list)
+        cycles = load_cycles(data_dir, bid)
+        print(f"  {bid}: {len(cycles)} cycles")
+        all_cycles.extend(cycles)
+    return all_cycles
 
 
-def main():
+def cycles_to_windows(
+    cycles: list[tuple[np.ndarray, float, int]],
+    scaler: MinMaxScaler,
+    feat_scaler: StandardScaler | None = None,
+    long_seq: bool = False,
+    soc_mode: str = "window",
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Scale cycles, then slice windows and compute a per-window feature vector
+    for each — matching src/services/inference.py's run_inference() exactly.
+
+    long_seq=True: extends each cycle to LONG_INPUT_FEATURES (6) by appending
+    IC curve (dQ/dV) and phase mask columns before scaling. The supplied scaler
+    must have been fit on 6-feature data (scaler_long.pkl).
+
+    long_seq=False (GH-54): appends 2 derived columns AFTER scaling the 4 base
+    columns — cycle_count_norm (cycle_idx / CYCLE_COUNT_NORM, constant per
+    cycle) and soc_percent/100. Both are already in ~[0,1] by construction, so
+    scaler.pkl stays a 4-feature scaler. Model input becomes (WINDOW_SIZE, 6).
+
+    soc_mode — how that soc_percent column is Coulomb-counted (GH-67 bug #10,
+    found on the LFP pipeline and confirmed identical here):
+
+      "window" (DEFAULT, what v1.6 was trained with)
+          compute_soc_percent() is called on each 30-row slice. Its docstring is
+          explicit that SOC is "RELATIVE TO THE WINDOW: 100% at the first row",
+          so EVERY window starts at 100.0 and the channel spans only ~[0.91, 1.0]
+          — a near-constant that carries no position information. Worse, it does
+          not match serving: with the recommended 6-column payload BE sends the
+          battery's REAL SOC, which spans ~[0.09, 1.0]. Measured on a 4C discharge
+          the two differ by 90.6 points of range.
+
+      "cycle" (CORRECT)
+          Counts once over the whole discharge cycle, then slices, so soc falls
+          ~100% -> ~0% across the cycle: a real position-within-discharge signal
+          AND the same semantics BE sends.
+
+    Why the default is still "window": train.py writes
+    soh_mamba_v{MODEL_VERSION}.pth, so flipping the default would let a plain
+    re-run overwrite the shipped v1.6 artifacts with *different* semantics under
+    the *same* version number — exactly the silent mismatch the version asserts
+    exist to catch. Switch to "cycle" only together with a MODEL_VERSION bump.
+    The chosen mode is recorded in scaler.pkl's metadata so any artifact
+    self-documents which one produced it.
+    """
+    all_X, all_feat, all_y = [], [], []
+
+    for cycle_raw, soh, cycle_idx in cycles:
+        T = len(cycle_raw)
+
+        if long_seq:
+            # Extend raw cycle: append IC curve + phase mask before scaling
+            ic = compute_ic_feature(cycle_raw[:, 0], cycle_raw[:, 1])  # (T,)
+            phase = compute_phase_mask(cycle_raw[:, 1])  # (T,)
+            cycle_ext = np.column_stack([cycle_raw, ic, phase])  # (T, 6)
+            cycle_scaled = scaler.transform(cycle_ext).astype(np.float32)
+        else:
+            cycle_scaled = scaler.transform(cycle_raw).astype(np.float32)
+
+        # GH-59: clip to [0,1] — defensive symmetry with inference.py's
+        # _append_derived_features(); a no-op for NASA data (max cycle_idx ~197).
+        cycle_count_norm = np.float32(np.clip(cycle_idx / CYCLE_COUNT_NORM, 0.0, 1.0))
+
+        # soc_mode="cycle": Coulomb-count ONCE over the whole discharge cycle so each
+        # window inherits its true position (soc falls ~100% -> ~0% across the cycle).
+        # See the soc_mode note in cycles_to_windows' docstring for why the default
+        # is still the historical per-window behaviour.
+        soc_cycle = (
+            compute_soc_percent(cycle_raw[:, 1], cycle_raw[:, 3]) / 100.0
+            if soc_mode == "cycle" and not long_seq
+            else None
+        )
+
+        # Non-overlapping sliding windows
+        for i in range(0, T - WINDOW_SIZE + 1, WINDOW_STRIDE):
+            window = cycle_scaled[i : i + WINDOW_SIZE]
+            # Per-window features (voltage/current/temperature only) — matches
+            # run_inference()'s extract_window_features(x_scaled[:, :3]) exactly,
+            # since inference only ever sees this same WINDOW_SIZE slice.
+            window_feat = extract_window_features(window[:, :3])  # (54,)
+            if not long_seq:
+                # GH-54: derived columns from the RAW window (current=col1, time=col3)
+                if soc_cycle is not None:
+                    soc_norm = soc_cycle[i : i + WINDOW_SIZE]
+                else:
+                    raw_win = cycle_raw[i : i + WINDOW_SIZE]
+                    soc_norm = compute_soc_percent(raw_win[:, 1], raw_win[:, 3]) / 100.0
+                window = np.column_stack(
+                    [
+                        window,
+                        np.full(WINDOW_SIZE, cycle_count_norm, dtype=np.float32),
+                        soc_norm,
+                    ]
+                )
+            all_X.append(window)
+            all_feat.append(window_feat)
+            all_y.append(soh)
+
+    X = np.array(all_X, dtype=np.float32)
+    X_feat = np.array(all_feat, dtype=np.float32)
+    y = np.array(all_y, dtype=np.float32)
+
+    if feat_scaler is not None:
+        X_feat = feat_scaler.transform(X_feat).astype(np.float32)
+
+    return X, X_feat, y
+
+
+def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data-dir", default="data/raw/nasa")
+    parser.add_argument("--data-dir", default="data/raw/nasa/cleaned_dataset")
     parser.add_argument("--output-dir", default="data/processed")
+    parser.add_argument(
+        "--soc-mode",
+        choices=["cycle", "window"],
+        default="window",
+        help="How soc_percent is Coulomb-counted. 'window' (DEFAULT, historical) counts "
+        "within each 30-row slice, so every window starts at 100%% and the channel is a "
+        "near-constant carrying no position information — and it does NOT match the real "
+        "SOC that BE sends in the 6-column payload. 'cycle' counts over the whole discharge "
+        "cycle and is the CORRECT semantics. Default stays 'window' so re-running this "
+        "script reproduces the shipped v1.6 artifacts byte-for-byte; switch to 'cycle' "
+        "TOGETHER WITH a MODEL_VERSION bump (see the note in cycles_to_windows)."
+    )
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
+    print(f"Window size: {WINDOW_SIZE} | Stride: {WINDOW_STRIDE}")
 
-    X_train, y_train = make_windows(args.data_dir, TRAIN_IDS)
-    X_val_all, y_val_all = make_windows(args.data_dir, VAL_IDS)
+    print("\nLoading train cycles...")
+    train_cycles = collect_cycles(args.data_dir, TRAIN_IDS)
 
-    # B0018 split: first 70% → val, last 30% → test
-    split = int(len(X_val_all) * 0.7)
-    X_val, y_val = X_val_all[:split], y_val_all[:split]
-    X_test, y_test = X_val_all[split:], y_val_all[split:]
+    print("Loading val cycles...")
+    val_cycles = collect_cycles(args.data_dir, VAL_IDS)
 
-    # Fit scaler on train only
-    N_train, W, F = X_train.shape
-    scaler = MinMaxScaler()
-    X_train_2d = X_train.reshape(-1, F)
-    X_train_scaled = scaler.fit_transform(X_train_2d).reshape(N_train, W, F)
-    X_val_scaled = scaler.transform(X_val.reshape(-1, F)).reshape(len(X_val), W, F)
-    X_test_scaled = scaler.transform(X_test.reshape(-1, F)).reshape(len(X_test), W, F)
+    print("Loading test cycles...")
+    test_cycles = collect_cycles(args.data_dir, TEST_IDS)
 
+    long_seq = WINDOW_SIZE > 30
+    os.makedirs(os.path.dirname("models/weights/scaler.pkl"), exist_ok=True)
+
+    if long_seq:
+        # Long-seq mode (WINDOW_SIZE=4096): add IC curve + phase mask → 6 features.
+        # Fit a separate MinMaxScaler on 8-feature train data → scaler_long.pkl.
+        # The 6-feature scaler.pkl (for the production window=30 model) is unchanged.
+        print(
+            f"\nLong-seq mode (WINDOW_SIZE={WINDOW_SIZE}): adding IC curve + phase mask (features 7-8)..."
+        )
+        train_raw_ext = []
+        for cycle_raw, _, _ in train_cycles:
+            ic = compute_ic_feature(cycle_raw[:, 0], cycle_raw[:, 1])
+            phase = compute_phase_mask(cycle_raw[:, 1])
+            train_raw_ext.append(np.column_stack([cycle_raw, ic, phase]))
+        train_raw_ext = np.concatenate(train_raw_ext, axis=0)
+
+        scaler = MinMaxScaler()
+        scaler.fit(train_raw_ext)
+        joblib.dump(
+            {
+                "scaler": scaler,
+                "version": "1.0",
+                "trained_on": TRAIN_IDS,
+                "features": BASE_FEATURES + ["ic_dqdv", "phase_mask"],
+                "n_features": LONG_INPUT_FEATURES,
+            },
+            LONG_SCALER_PATH,
+        )
+        print(
+            f"Saved scaler_long ({LONG_INPUT_FEATURES} features) -> {LONG_SCALER_PATH}"
+        )
+    else:
+        # Standard window=30 mode: 4-feature (BASE_FEATURES) MinMaxScaler — 2 cột derived GH-54 KHÔNG qua scaler
+        print("\nFitting MinMaxScaler...")
+        train_raw = np.concatenate([c for c, _, _ in train_cycles], axis=0)
+        scaler = MinMaxScaler()
+        scaler.fit(train_raw)
+        joblib.dump(
+            {
+                "scaler": scaler,
+                "version": SCALER_VERSION,
+                "trained_on": TRAIN_IDS,
+                "features": BASE_FEATURES,
+                "soc_mode": args.soc_mode,  # self-document which semantics produced this
+            },
+            "models/weights/scaler.pkl",
+        )
+        print("Saved scaler -> models/weights/scaler.pkl")
+
+    # Extract cycle-level features for train
+    print("\nExtracting cycle-level Spectral+Kurtosis features...")
+    X_train_raw, X_feat_train_raw, y_train = cycles_to_windows(
+        train_cycles, scaler, long_seq=long_seq, soc_mode=args.soc_mode
+    )
+    print(f"  Train: {len(X_train_raw)} windows, feat shape: {X_feat_train_raw.shape}")
+
+    feat_scaler = StandardScaler()
+    X_feat_train = feat_scaler.fit_transform(X_feat_train_raw).astype(np.float32)
+
+    feat_scaler_out = LONG_FEATURE_SCALER_PATH if long_seq else FEATURE_SCALER_PATH
+    feat_scaler_ver = (
+        FEATURE_SCALER_VERSION_LONG if long_seq else FEATURE_SCALER_VERSION
+    )
+    os.makedirs(os.path.dirname(feat_scaler_out), exist_ok=True)
     joblib.dump(
         {
-            "scaler": scaler,
-            "version": "1.0",
-            "trained_on": TRAIN_IDS,
-            "features": FEATURES,
+            "scaler": feat_scaler,
+            "version": feat_scaler_ver,
+            "n_features": X_feat_train.shape[1],
         },
-        "models/weights/scaler.pkl",
+        feat_scaler_out,
+    )
+    print(f"Saved feature_scaler -> {feat_scaler_out}")
+
+    X_val, X_feat_val, y_val = cycles_to_windows(
+        val_cycles, scaler, feat_scaler, long_seq=long_seq, soc_mode=args.soc_mode
+    )
+    X_test, X_feat_test, y_test = cycles_to_windows(
+        test_cycles, scaler, feat_scaler, long_seq=long_seq, soc_mode=args.soc_mode
     )
 
-    for name, X, y in [
-        ("train", X_train_scaled, y_train),
-        ("val", X_val_scaled, y_val),
-        ("test", X_test_scaled, y_test),
-    ]:
-        torch.save(
-            {"X": torch.tensor(X), "y": torch.tensor(y)},
-            os.path.join(args.output_dir, f"{name}.pt"),
-        )
-        print(f"✓ Saved {name}.pt — {len(X)} samples")
+    print("\nSplit summary:")
+    print(
+        f"  Train: {len(X_train_raw):>5} windows from {len(train_cycles)} cycles  ({len(TRAIN_IDS)} batteries)"
+    )
+    print(
+        f"  Val  : {len(X_val):>5} windows from {len(val_cycles)} cycles  ({len(VAL_IDS)} batteries: {VAL_IDS})"
+    )
+    print(
+        f"  Test : {len(X_test):>5} windows from {len(test_cycles)} cycles  ({len(TEST_IDS)} batteries: {TEST_IDS})"
+    )
 
-    print("\n✅ Preprocessing complete.")
+    for name, X, X_feat, y in [
+        ("train", X_train_raw, X_feat_train, y_train),
+        ("val", X_val, X_feat_val, y_val),
+        ("test", X_test, X_feat_test, y_test),
+    ]:
+        path = os.path.join(args.output_dir, f"{name}.pt")
+        torch.save(
+            {
+                "X": torch.tensor(X, dtype=torch.float32),
+                "X_feat": torch.tensor(X_feat, dtype=torch.float32),
+                "y": torch.tensor(y, dtype=torch.float32),
+                "feature_scaler_version": FEATURE_SCALER_VERSION,
+            },
+            path,
+        )
+        print(f"Saved {name}.pt  ({len(X)} samples)")
+
+    print("\nPreprocessing complete.")
 
 
 if __name__ == "__main__":

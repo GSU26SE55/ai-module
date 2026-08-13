@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GSU26SE55 — Core Flow (Lite)</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      margin: 0; padding: 0;
+      background: #f7f8fa;
+      color: #1f2937;
+      line-height: 1.6;
+    }
+    header {
+      background: linear-gradient(135deg, #0f172a 0%, #1e40af 100%);
+      color: white;
+      padding: 24px 40px;
+    }
+    header h1 { margin: 0 0 6px 0; font-size: 22px; font-weight: 600; }
+    header .meta { font-size: 13px; opacity: 0.9; }
+
+    nav {
+      position: sticky; top: 0;
+      background: white;
+      border-bottom: 1px solid #e5e7eb;
+      padding: 10px 40px;
+      z-index: 10;
+      display: flex; gap: 8px; flex-wrap: wrap;
+    }
+    nav a {
+      padding: 6px 12px; border-radius: 6px;
+      text-decoration: none;
+      font-size: 13px; font-weight: 500;
+      color: #374151;
+      border: 1px solid #e5e7eb;
+    }
+    nav a:hover { background: #f3f4f6; border-color: #9ca3af; }
+
+    main { padding: 28px 40px 48px; max-width: 1200px; margin: 0 auto; }
+
+    section {
+      background: white;
+      border-radius: 10px;
+      padding: 24px;
+      margin-bottom: 20px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    }
+    section h2 {
+      margin: 0 0 6px 0;
+      font-size: 19px;
+      display: flex; align-items: center; gap: 10px;
+    }
+    section h2 .num {
+      background: #1e40af; color: white;
+      width: 28px; height: 28px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center; justify-content: center;
+      font-size: 13px; font-weight: 600;
+    }
+    section .intro {
+      color: #6b7280;
+      font-size: 13px;
+      margin-bottom: 14px;
+    }
+
+    .actors-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+      margin: 12px 0 20px;
+    }
+    .actor-card {
+      border: 1px solid #e5e7eb;
+      border-left: 4px solid;
+      border-radius: 6px;
+      padding: 12px 14px;
+      background: #fafbfc;
+    }
+    .actor-card h4 { margin: 0 0 4px 0; font-size: 14px; }
+    .actor-card p { margin: 0; font-size: 12px; color: #4b5563; }
+    .actor-card.admin    { border-left-color: #ef4444; }
+    .actor-card.manager  { border-left-color: #3b82f6; }
+    .actor-card.staff    { border-left-color: #10b981; }
+    .actor-card.customer { border-left-color: #8b5cf6; }
+    .actor-card.system   { border-left-color: #f59e0b; }
+
+    .mermaid {
+      text-align: center;
+      padding: 12px 0;
+      overflow-x: auto;
+    }
+
+    .note-box {
+      background: #fffbeb;
+      border: 1px solid #fcd34d;
+      border-left: 4px solid #f59e0b;
+      color: #78350f;
+      border-radius: 8px;
+      padding: 12px 14px;
+      font-size: 13px;
+      margin: 12px 0;
+    }
+
+    footer {
+      text-align: center;
+      padding: 20px;
+      font-size: 12px;
+      color: #6b7280;
+      border-top: 1px solid #e5e7eb;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>GSU26SE55 — Core Flow (Lite Version)</h1>
+  <div class="meta">Flow nghiệp vụ chính · Happy path · 4 role · Scope: SE-only · ITIL Ticket &amp; SLA Management</div>
+</header>
+
+<nav>
+  <a href="#overview">1. Big Picture</a>
+  <a href="#admin">2. Admin</a>
+  <a href="#customer">3. Customer</a>
+  <a href="#manager">4. Manager</a>
+  <a href="#staff">5. Staff</a>
+  <a href="#ticket">6. Ticket Lifecycle</a>
+  <a href="#sla">7. SLA Escalation</a>
+</nav>
+
+<main>
+
+<!-- ============ 1. BIG PICTURE ============ -->
+<section id="overview">
+  <h2><span class="num">1</span>Big Picture — Toàn hệ thống trong 1 diagram</h2>
+  <p class="intro">Flow chính: System phát hiện bất thường → auto-create ticket thẳng OPEN (bỏ qua NEW) hoặc Customer tạo thủ công qua NEW → Manager xem xét priority tự động → assign Staff → Staff xử lý + ghi log → Manager approve → Customer rate → Close.</p>
+
+  <div class="actors-row">
+    <div class="actor-card admin"><h4>🔴 Admin</h4><p>Setup hệ thống · Battery asset · SLA rules</p></div>
+    <div class="actor-card customer"><h4>🟣 Customer</h4><p>Tạo ticket · Theo dõi · Rate</p></div>
+    <div class="actor-card manager"><h4>🔵 Manager</h4><p>Xem xét priority · Assign · Approve · Escalate</p></div>
+    <div class="actor-card staff"><h4>🟢 Staff</h4><p>Xử lý ticket · Ghi log · Link/tạo Wiki nếu cần</p></div>
+    <div class="actor-card system"><h4>🟡 System</h4><p>Dependency check · Auto alert · SLA timer · Auto-escalate 2/3 SLA</p></div>
+  </div>
+
+  <div class="mermaid">
+flowchart LR
+    A[🔴 Admin<br/>Setup system<br/>+ Battery assets] -.->|one-time| B
+
+    B[🟣 Customer<br/>Phát hiện sự cố pin] --> C[Tạo ticket thủ công<br/>→ status NEW]
+    SYS[🟡 System<br/>Dependency check<br/>→ tính priority tự động<br/>→ auto-create status OPEN] --> D
+    C --> D[🔵 Manager<br/>Nhận ticket]
+    D --> E[Xem xét priority tự động<br/>+ Assign Staff theo tầng]
+    E --> SLAt[⚙️ System<br/>Start SLA timer<br/>Auto-escalate tại 2/3 SLA]
+    SLAt --> F[🟢 Staff<br/>Xử lý + ghi log<br/>Link/tạo Wiki nếu cần]
+    F --> G[Mark Resolved]
+    G --> H[🔵 Manager<br/>Review Log + Approve]
+    H --> I[🟣 Customer<br/>Rate &amp; Close]
+
+    classDef admin fill:#fee2e2,stroke:#ef4444,color:#7f1d1d
+    classDef customer fill:#ede9fe,stroke:#8b5cf6,color:#4c1d95
+    classDef manager fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a
+    classDef staff fill:#d1fae5,stroke:#10b981,color:#064e3b
+    classDef system fill:#fffbeb,stroke:#f59e0b,color:#78350f
+
+    class A admin
+    class B,C,I customer
+    class D,E,H manager
+    class F,G staff
+    class SLAt,SYS system
+  </div>
+</section>
+
+<!-- ============ 2. ADMIN ============ -->
+<section id="admin">
+  <h2><span class="num">2</span>🔴 Admin</h2>
+  <p class="intro">Chỉ setup ban đầu. Không tham gia nghiệp vụ hằng ngày. ThresholdConfig được định nghĩa riêng cho từng Battery Type.</p>
+
+  <div class="mermaid">
+flowchart LR
+    A([Login]) --> B[Tạo accounts<br/>Manager/Staff/Customer]
+    B --> C[Tạo Battery Type<br/>LFP · NMC · ...]
+    C --> D[Cấu hình ThresholdConfig<br/>per Battery Type<br/>V · T · SOC · I · SOH]
+    D --> E[Tạo Battery Asset<br/>serial · gán Customer]
+    E --> F[Định nghĩa<br/>SLA rules P1/P2/P3<br/>+ Staff tier mapping]
+    F --> G([Setup xong])
+
+    classDef node fill:#fef2f2,stroke:#ef4444,color:#7f1d1d
+    class A,B,C,D,E,F,G node
+  </div>
+</section>
+
+<!-- ============ 3. CUSTOMER ============ -->
+<section id="customer">
+  <h2><span class="num">3</span>🟣 Customer</h2>
+  <p class="intro">Dùng mobile app — xem pin, tạo ticket khi có sự cố. Priority do System tính tự động, Customer không tự chọn. Ảnh/video đính kèm giúp Manager xem xét chính xác hơn. Khi ticket ở WAITING_CUSTOMER, Customer comment → System tự động resume SLA.</p>
+
+  <div class="mermaid">
+flowchart LR
+    A([Mở app]) --> B[Xem pin<br/>real-time]
+    B --> C{Có sự cố?}
+    C -->|Không| B
+    C -->|Có| D[Tạo ticket<br/>+ ảnh/video]
+    D --> E[Xem priority gợi ý<br/>do System tính tự động]
+    E --> F[Submit · Theo dõi status]
+    F --> G[Nhận kết quả xử lý]
+    G --> H{Hài lòng?}
+    H -->|Có| I([Rate &amp; Close])
+    H -->|Không| J[Reopen<br/>trong 7 ngày]
+    J --> F
+
+    classDef node fill:#f5f3ff,stroke:#8b5cf6,color:#4c1d95
+    classDef decision fill:#fef3c7,stroke:#f59e0b,color:#92400e
+    class A,B,D,E,F,G,I,J node
+    class C,H decision
+  </div>
+</section>
+
+<!-- ============ 4. MANAGER ============ -->
+<section id="manager">
+  <h2><span class="num">4</span>🔵 Manager</h2>
+  <p class="intro">Điều phối ticket — xem xét priority tự động (từ System), điều chỉnh nếu cần, assign Staff đúng tầng, review Wiki trước khi approve.</p>
+
+  <div class="note-box">
+    Priority do <strong>System tính tự động</strong> từ classification + dependency. Manager <strong>xem xét và có thể điều chỉnh</strong> dựa trên ảnh/thông số Customer — không tự đặt priority từ đầu. Sau khi assign, priority <strong>không thay đổi</strong>. Breach SLA → escalate thêm nhân lực, không đổi deadline.
+  </div>
+
+  <div class="mermaid">
+flowchart LR
+    A([Login]) --> B[Xem ticket queue<br/>+ priority tự động]
+    B --> C[Xem ảnh · thông số sensor<br/>· dependency report]
+    C --> D{Priority phù hợp?}
+    D -->|Có| E[Assign Staff theo tầng<br/>P1→Tier1 · P2→Tier2 · P3→Tier3]
+    D -->|Cần điều chỉnh| F[Điều chỉnh priority<br/>+ ghi lý do bắt buộc]
+    F --> E
+    E --> G[Chờ Staff xử lý]
+    G --> H{Staff Resolved?}
+    H -->|System auto-escalate 2/3 SLA<br/>hoặc SLA breach| I[Escalate / Reassign<br/>tầng cao hơn]
+    I --> G
+    H -->|Yes| J[Review Maintenance Log<br/>+ xem Wiki đã link chưa?]
+    J --> K{OK?}
+    K -->|Reject| G
+    K -->|Approve| L([CLOSED_PENDING_RATE])
+
+    classDef node fill:#eff6ff,stroke:#3b82f6,color:#1e3a8a
+    classDef decision fill:#fef3c7,stroke:#f59e0b,color:#92400e
+    class A,B,C,E,F,G,I,J,L node
+    class D,H,K decision
+  </div>
+</section>
+
+<!-- ============ 5. STAFF ============ -->
+<section id="staff">
+  <h2><span class="num">5</span>🟢 Staff</h2>
+  <p class="intro">Nhận ticket được giao và xử lý theo mô hình băng chuyền. System tự động escalate tại 2/3 SLA — sau đó Staff cũ bị block hoàn toàn, trách nhiệm chuyển sang Staff mới (tầng trên).</p>
+
+  <div class="note-box">
+    <strong>Nguyên tắc escalate (băng chuyền):</strong> SLA là thời gian <em>tối đa cho phép</em> — không phải mốc để chờ tới cùng.<br/>
+    — <strong>Mốc tối thiểu:</strong> Sau <strong>1/2 SLA</strong> (P1: 2h · P2: 12h · P3: 36h) mà chưa có solution → phải đánh giá lại.<br/>
+    — <strong>Mốc cứng (System auto):</strong> Đến <strong>2/3 SLA</strong> (P1: ~2h40 · P2: 16h · P3: 48h) mà chưa RESOLVED → <strong>System tự động ESCALATED + block Staff cũ</strong>. Staff mới (tầng trên) chịu trách nhiệm đóng ticket.
+  </div>
+
+  <div class="mermaid">
+flowchart LR
+    A([Login]) --> B[Nhận ticket<br/>sắp xếp theo SLA còn lại]
+    B --> C[Update IN_PROGRESS<br/>· Tra Wiki · Phân tích]
+    C --> D{Xử lý được<br/>trong SLA còn lại?}
+    D -->|Cần thông tin Customer| E[WAITING_CUSTOMER<br/>pause SLA]
+    E -->|Customer comment<br/>→ System auto-resume| D
+    D -->|System auto tại 2/3 SLA<br/>hoặc tự escalate sớm| F[🔺 ESCALATED<br/>Staff cũ bị block<br/>Manager reassign tầng trên]
+    D -->|Có solution| G[Ghi Maintenance Log<br/>+ link/tạo Wiki nếu cần]
+    G --> H([Mark Resolved])
+
+    classDef node fill:#ecfdf5,stroke:#10b981,color:#064e3b
+    classDef decision fill:#fef3c7,stroke:#f59e0b,color:#92400e
+    classDef warn fill:#fecaca,stroke:#dc2626,color:#7f1d1d
+    class A,B,C,E,G,H node
+    class D decision
+    class F warn
+  </div>
+</section>
+
+<!-- ============ 6. TICKET LIFECYCLE ============ -->
+<section id="ticket">
+  <h2><span class="num">6</span>Ticket Lifecycle</h2>
+  <p class="intro">Vòng đời 1 ticket qua các trạng thái — đầy đủ kể cả escalation, incident và reopen.</p>
+
+  <div class="note-box">
+    Priority do <strong>System tính tự động</strong>, Manager xem xét và có thể điều chỉnh <strong>1 lần duy nhất</strong> khi triage (OPEN → ASSIGNED). Sau đó <strong>không thay đổi</strong> trong toàn bộ vòng đời ticket. Breach SLA → escalate thêm nhân lực, không đổi deadline hay priority.
+  </div>
+
+  <div class="mermaid">
+stateDiagram-v2
+    [*] --> NEW : Customer tạo thủ công
+    [*] --> OPEN : System auto-create từ alert<br/>(priority đã tính sẵn, bỏ qua NEW)
+
+    NEW --> OPEN : Manager tiếp nhận
+    OPEN --> ASSIGNED : Manager xem xét priority<br/>+ assign Staff → start SLA timer
+
+    ASSIGNED --> IN_PROGRESS : Staff nhận &amp; bắt đầu
+    IN_PROGRESS --> WAITING_CUSTOMER : Chờ thông tin từ Customer<br/>→ pause SLA
+    WAITING_CUSTOMER --> IN_PROGRESS : Customer comment<br/>→ System auto-resume SLA
+    IN_PROGRESS --> WAITING_PARTS : Cần linh kiện / on-site<br/>→ pause SLA
+    WAITING_PARTS --> IN_PROGRESS : Có linh kiện<br/>→ Staff resume thủ công
+
+    IN_PROGRESS --> RESOLVED : Staff mark resolved
+    IN_PROGRESS --> ESCALATED : Staff request escalate<br/>HOẶC System auto tại 2/3 SLA<br/>HOẶC SLA breach (P1/P2)
+
+    ESCALATED --> ASSIGNED : Manager reassign<br/>tầng Staff cao hơn
+    ESCALATED --> INCIDENT : Nhiều ticket liên quan<br/>hoặc rủi ro an toàn
+    ESCALATED --> CLOSED_REJECTED : Manager reject ngoài scope
+
+    INCIDENT --> ASSIGNED : Incident được điều phối<br/>về staff/lead staff
+
+    RESOLVED --> CLOSED_PENDING_RATE : Manager approve
+    CLOSED_PENDING_RATE --> CLOSED : Customer rate / auto 7 ngày
+    CLOSED_PENDING_RATE --> OPEN : Customer reopen (trong 7 ngày)
+    RESOLVED --> IN_PROGRESS : Manager reject → gửi lại Staff
+
+    CLOSED --> [*]
+    CLOSED_REJECTED --> [*]
+
+    note right of ASSIGNED
+        SLA Timer:
+        P1 Critical: 4h
+        P2 High: 24h
+        P3 Normal: 72h
+    end note
+
+    note right of ESCALATED
+        Trigger:
+        (1) Staff request escalate
+        (2) System auto tại 2/3 SLA
+        (3) P1/P2 breach → auto ESCALATED
+        (4) P3 breach → xử lý theo chuẩn P2
+        (5) Reopen ≥ 2 lần
+        Sau escalate: Staff cũ bị block
+        Staff mới (tầng trên) đóng ticket
+    end note
+
+    note right of INCIDENT
+        1 ticket parent điều phối
+        nhiều ticket con liên quan
+        cùng nguyên nhân.
+        Auto-close child khi
+        parent CLOSED.
+    end note
+  </div>
+</section>
+
+<!-- ============ 7. SLA ESCALATION ============ -->
+<section id="sla">
+  <h2><span class="num">7</span>SLA Escalation</h2>
+  <p class="intro">3 track priority độc lập. System auto-escalate tại 2/3 SLA. P3 breach → xử lý theo chuẩn P2. Priority không thay đổi khi escalate.</p>
+
+  <div class="note-box" style="background:#eff6ff;border-color:#93c5fd;border-left-color:#3b82f6;color:#1e3a8a;">
+    <strong>⚠️ Lưu ý về E2→P1 và E3→P2:</strong> Các mũi tên này thể hiện <em>luồng xử lý tiếp theo</em> được áp chuẩn SLA cao hơn — <strong>không có nghĩa là hệ thống tự động đổi priority</strong>. Ticket vẫn ở trạng thái <strong>ESCALATED</strong>; chính <strong>Manager</strong> mới là người quyết định reassign senior Staff. System chỉ auto-notify và auto-change status → ESCALATED.
+  </div>
+
+  <div class="mermaid">
+flowchart LR
+    Start([Ticket ASSIGNED<br/>SLA timer start])
+
+    Start --> P1{P1 Critical<br/>4 giờ}
+    P1 -->|Xử lý xong| OK1[✅ RESOLVED]
+    P1 -->|80% SLA| W1[⚠️ Warning<br/>notify Staff + Manager]
+    W1 --> P1
+    P1 -->|Breach 100%| E1[🔺 Auto-escalate<br/>Manager + Senior Staff]
+
+    Start --> P2{P2 High<br/>24 giờ}
+    P2 -->|Xử lý xong| OK2[✅ RESOLVED]
+    P2 -->|80% SLA| W2[⚠️ Warning<br/>notify Staff]
+    W2 --> P2
+    P2 -->|Breach 100%| E2[🔺 Escalate<br/>Manager reassign senior]
+
+    Start --> P3{P3 Normal<br/>72 giờ}
+    P3 -->|Xử lý xong| OK3[✅ RESOLVED]
+    P3 -->|80% SLA| W3[⚠️ Reminder<br/>notify Staff]
+    W3 --> P3
+    P3 -->|Breach 100%| E3[🔺 Escalate — xử lý<br/>theo chuẩn P2<br/>Manager reassign senior]
+
+    E1 --> C1[🚨 Incident flag<br/>notify Admin nếu rủi ro an toàn]
+    E2 --> P1
+    E3 --> P2
+
+    classDef level fill:#fef3c7,stroke:#f59e0b,color:#78350f
+    classDef ok fill:#d1fae5,stroke:#10b981,color:#064e3b
+    classDef warn fill:#fed7aa,stroke:#ea580c,color:#7c2d12
+    classDef escalate fill:#fecaca,stroke:#dc2626,color:#7f1d1d
+    classDef critical fill:#7f1d1d,color:#fff,stroke:#450a0a
+    classDef startNode fill:#1e40af,color:#fff
+
+    class Start startNode
+    class P1,P2,P3 level
+    class OK1,OK2,OK3 ok
+    class W1,W2,W3 warn
+    class E1,E2,E3 escalate
+    class C1 critical
+  </div>
+</section>
+
+</main>
+
+<footer>
+  GSU26SE55 · Core Flow Lite · Happy path · Cho chi tiết đầy đủ xem <a href="core-business-flow.html">core-business-flow.html</a>
+</footer>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'default',
+    flowchart: { curve: 'basis', padding: 16, nodeSpacing: 40, rankSpacing: 50 },
+    state: { padding: 10 }
+  });
+</script>
+
+</body>
+</html>

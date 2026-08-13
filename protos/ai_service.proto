@@ -1,0 +1,541 @@
+// AI Module gRPC contract — GSU26SE55 (GH-39)
+//
+// Mirrors the REST Pydantic schemas in src/schemas/predict.py and
+// src/schemas/prescribe.py, including the flat backward-compat fields
+// kept until BE migrates to the nested response.
+//
+// Numeric fields use `double` (Python float is 64-bit; proto `float`
+// would silently truncate values on round-trip).
+//
+// Regenerate stubs with: python scripts/gen_proto.py
+
+syntax = "proto3";
+
+package aimodule.v1;
+
+option csharp_namespace = "AiModule.V1";
+
+service AiService {
+  // Mirror of POST /predict
+  rpc Predict(PredictRequest) returns (PredictResponse);
+  // Mirror of POST /prescribe
+  rpc Prescribe(PrescribeRequest) returns (PrescribeResponse);
+  // Mirror of GET /health
+  rpc Health(HealthRequest) returns (HealthResponse);
+  // Bidirectional streaming variant of Predict (server impl lands in GH-41)
+  rpc PredictStream(stream PredictRequest) returns (stream PredictResponse);
+  // Mirror of POST /verify-ticket — chấm điểm ticket thủ công thật/rác + dò trùng mô tả.
+  rpc VerifyTicket(VerifyTicketRequest) returns (VerifyTicketResponse);
+  // Mirror of POST /prescribe/feedback — kỹ thuật viên phản hồi 1 prescription đã trả.
+  rpc SubmitFeedback(SubmitFeedbackRequest) returns (SubmitFeedbackResponse);
+  // Mirror of POST /predict/long — SOH từ chuỗi dài (L ≤ 4096 timestep) bằng model
+  // long-sequence (attention pooling). KHÁC Predict: 1 forward pass, KHÔNG MC-dropout,
+  // KHÔNG anomaly (IsolationForest chỉ train trên phân bố feature của window=30).
+  rpc PredictLong(PredictLongRequest) returns (PredictLongResponse);
+  // Mirror of POST /predict/feedback — kỹ thuật viên chấm lại phân loại AI đã đưa ra.
+  rpc SubmitClassificationFeedback(ClassificationFeedbackRequest)
+      returns (ClassificationFeedbackResponse);
+  // Mirror of POST /suggest/staff — xếp hạng nhân viên phù hợp xử lý ticket.
+  // Human-in-the-loop: AI chỉ gợi ý + nêu lý do, Manager quyết định giao cho ai.
+  rpc SuggestStaff(SuggestStaffRequest) returns (SuggestStaffResponse);
+  // Mirror of POST /suggest/kb — xếp hạng bài viết KB để tham khảo khi sửa chữa.
+  // Human-in-the-loop: kỹ thuật viên bấm áp dụng thì BE mới tạo TicketKbReference.
+  rpc SuggestKb(SuggestKbRequest) returns (SuggestKbResponse);
+}
+
+// ── Predict ────────────────────────────────────────────────────────────
+
+// One timestep of sensor values. Window = 30 timesteps. Accepted lengths:
+//   6 (preferred, GH-56) — [voltage, current, temperature, time, cycle_count,
+//      soc_percent]. cycle_count (raw cycle index) is constant across the
+//      window; soc_percent (0-100) varies per timestep. Both are used AS-IS,
+//      with no re-derivation and no validation — so a wrong soc_percent is a
+//      SILENT failure, not an INVALID_ARGUMENT.
+//
+//      ⚠️ soc_percent semantics depend on WHICH ARTIFACT SET scores the request,
+//      because each set was trained on a different definition:
+//        pack_config.chemistry = "LFP"  -> LFP artifacts (soc_mode="cycle").
+//            Send SOC scoped to the DISCHARGE: ~100% at the start of the
+//            discharge, falling through it (~9% at the end). This is what a real
+//            battery SOC looks like across one discharge, so BE's own SOC works.
+//        anything else (NASA/NMC default, soc_mode="window")
+//            Send WINDOW-LOCAL SOC: ~100% at the FIRST ROW OF THIS WINDOW,
+//            decreasing across the 30 rows only. Feeding full-discharge SOC here
+//            is out of the training distribution.
+//      Getting it wrong shifts predicted SOH with no error raised. If unsure for
+//      the non-LFP path, send 4 columns and let the server derive it.
+//   4 — [voltage, current, temperature, time]. cycle_count/soc_percent are
+//      derived server-side (GH-54: window-local Coulomb counting; cycle_count
+//      defaults to 0 unless the RPC's cycle_idx is set — REST has no such field).
+//   3 — legacy artifacts (voltage, current, temperature).
+message Reading {
+  repeated double values = 1;
+}
+
+// GH-77: named-field alternative to Reading — gRPC parity with the REST
+// object-format readings added in GH-76. cycle_count/soc_percent use
+// `optional` so absence is distinguishable from 0.0 (checked via HasField()).
+message ReadingFields {
+  double voltage = 1;
+  double current = 2;
+  double temperature = 3;
+  double time = 4;
+  optional double cycle_count = 5;
+  optional double soc_percent = 6;
+}
+
+// GH-65: pack-to-cell normalization for multi-cell packs (e.g. 12V ≈ 3S NMC,
+// 12.8V ≈ 4S LFP). voltage_cell = voltage_pack / n_series is applied server-side
+// BEFORE the scaler and BEFORE warning thresholds. GH-67: chemistry selects the
+// per-cell voltage warning profile ("LFP" for LiFePO4; unset/unknown = NASA/NMC
+// defaults); capacity_ah (pack nominal Ah) rescales current to the NASA 2 Ah
+// cell's C-rate equivalent (current × 2.0 / capacity_ah) before the scaler,
+// range guard and current thresholds. n_series 0/unset is treated as 1,
+// capacity_ah 0/unset = no rescale (proto3 defaults).
+message PackConfig {
+  int32 n_series = 1;
+  string chemistry = 2;
+  double capacity_ah = 3;
+}
+
+message PredictRequest {
+  string battery_id = 1;
+  repeated Reading readings = 2;
+  // GH-77: named-field alternative to `readings`. If non-empty, takes
+  // precedence over `readings` (mirrors REST's Union-type acceptance).
+  repeated ReadingFields reading_objects = 3;
+  // GH-65: omit for single-cell (legacy behavior unchanged).
+  PackConfig pack_config = 4;
+}
+
+message WarningItem {
+  string code = 1;      // e.g. "VOLTAGE_LOW", "TEMP_CRITICAL", "SOH_LOW"
+  string severity = 2;  // "warning" | "critical"
+  string message = 3;
+}
+
+message FeatureStat {
+  double mean = 1;
+  double min = 2;
+  double max = 3;
+}
+
+message PredictionInfo {
+  double soh_percent = 1;
+  double soh_confidence = 2;               // MC Dropout, exp(-soh_std/5) in (0,1]
+  double soh_std = 3;                      // MC Dropout std in % SOH
+  int32 rul_cycles_estimate = 4;
+  double degradation_rate_per_cycle = 5;
+  string soh_trend = 6;                    // "accelerating" | "stable" | "slowing"
+  int32 cycles_to_maintenance = 7;
+  repeated double soh_trajectory = 8;
+  string health_stage = 9;
+  // GH-86: MC-distribution staging — probability per stage, confidence of the
+  // chosen stage, and a borderline flag for the gray zone near 80/85/90.
+  map<string, double> stage_probabilities = 10;
+  double stage_confidence = 11;
+  bool is_borderline = 12;
+}
+
+message AnomalyInfo {
+  double anomaly_score = 1;
+  string anomaly_status = 2;
+  double anomaly_confidence = 3;  // IsolationForest magnitude — NOT calibrated probability
+}
+
+message RiskInfo {
+  string risk_level = 1;
+  // P1 / P2 / P3 / None — GH-23: suggested Urgency signal from battery severity
+  // only (no ImpactScope here), NOT the final ticket Priority. BE combines this
+  // with its own ImpactScope via the Impact x Urgency Priority Matrix
+  // (design.md) — see docs/ai-be-integration.md §4.
+  string priority = 2;
+  string action_code = 3;
+  repeated string reasons = 4;
+}
+
+message EvidenceInfo {
+  repeated WarningItem warnings = 1;
+  map<string, FeatureStat> feature_summary = 2;
+}
+
+message ResponseMetadata {
+  string model_version = 1;
+  int32 window_size = 2;
+  int32 input_features = 3;
+  double inference_ms = 4;
+  // GH-65: pack→cell divisor applied to voltage (1 = single cell).
+  int32 n_series = 5;
+  // GH-91: distance (°C) to nearest NASA training chamber setpoint (4/24/44°C)
+  // and whether it exceeds the OOD threshold (extrapolation risk).
+  double temperature_domain_distance = 6;
+  bool is_temperature_ood = 7;
+  // GH-67: which voltage-warning profile / C-rate divisor were applied
+  // (empty/0 = NASA/NMC defaults) — trace for real-battery validation logs.
+  string chemistry = 8;
+  double capacity_ah = 9;
+}
+
+message PredictResponse {
+  string battery_id = 1;
+  PredictionInfo prediction = 2;
+  AnomalyInfo anomaly = 3;
+  RiskInfo risk = 4;
+  EvidenceInfo evidence = 5;
+  ResponseMetadata metadata = 6;
+
+  // Backward-compatible flat fields. Keep until BE migrates to nested response.
+  double soh_percent = 7;
+  string classification = 8;  // "Normal" | "Degrading" | "Failed"
+  double confidence = 9;      // MC Dropout soh_confidence, range [0, 1] — NOT the
+                               // IsolationForest score (see anomaly.anomaly_confidence for that)
+  double inference_ms = 10;
+
+  int32 rul_cycles_estimate = 11;
+  double degradation_rate_per_cycle = 12;
+  string soh_trend = 13;
+  int32 cycles_to_maintenance = 14;
+  repeated double soh_trajectory = 15;
+
+  double anomaly_score = 16;
+  string recommended_action = 17;  // MONITOR | SCHEDULE_MAINTENANCE | SCHEDULE_REPLACEMENT | REPLACE_IMMEDIATELY
+
+  repeated WarningItem warnings = 18;
+  map<string, FeatureStat> feature_summary = 19;
+}
+
+// ── Prescribe ──────────────────────────────────────────────────────────
+
+message PrescribeRequest {
+  string battery_id = 1;
+  repeated Reading readings = 2;
+
+  // Optional battery history context (PrescribeRequest extends PredictRequest)
+  optional int32 age_cycles = 3;
+  optional string last_maintenance_date = 4;
+  repeated string ticket_history = 5;
+  // If true, also run RAG + LLM enrichment (slower, off the P1 hot-path).
+  bool enrich = 6;
+  // GH-65: omit for single-cell (legacy behavior unchanged).
+  PackConfig pack_config = 7;
+  // GH-82: if true (and enrich=true), run the agentic chain — diagnosis
+  // statement → LLM query generation → multi-query retrieval (2 LLM calls).
+  // Ignored when enrich=false.
+  bool agentic = 8;
+}
+
+message RetrievedDoc {
+  string title = 1;
+  string content = 2;
+  string source = 3;  // e.g. "maintenance/bms_warning_codes.md"
+  double relevance_score = 4;
+  // GH-82: which search query retrieved this doc — "template" on the
+  // non-agentic path, the generated query text on the agentic path.
+  string retrieved_via = 5;
+}
+
+message PrescribeResponse {
+  string battery_id = 1;
+
+  // Prediction context (from /predict). GH-87: deprecated — kept for backward
+  // compat, superseded by the nested prediction/anomaly/risk blocks below.
+  double soh_percent = 2;
+  string risk_level = 3;  // Critical / High / Medium / Low
+  // P1 / P2 / P3 / None — GH-23: suggested Urgency signal from battery severity
+  // only (no ImpactScope here), NOT the final ticket Priority. BE combines this
+  // with its own ImpactScope via the Impact x Urgency Priority Matrix
+  // (design.md) — see docs/ai-be-integration.md §4.
+  string priority = 4;
+  string action_code = 5;
+
+  // Prescription (rule-based by default; LLM-generated when enriched=true)
+  string prescription = 6;
+  repeated string action_steps = 7;
+  repeated string escalation_conditions = 8;
+  repeated string ppe_required = 9;
+  repeated string sop_references = 10;
+
+  // True when LLM+RAG enrichment ran successfully; false = rule-based fallback.
+  bool enriched = 11;
+
+  // Retrieved evidence (empty unless enriched)
+  repeated RetrievedDoc maintenance_docs = 12;
+  repeated RetrievedDoc safety_docs = 13;
+
+  // Safety gate
+  bool human_verification_required = 14;
+  repeated string safety_warnings = 15;
+
+  double inference_ms = 16;
+  double rag_ms = 17;
+  double llm_ms = 18;
+
+  // Which provider generated the prescription: "deepseek" / "gemini" / "anthropic" / "none".
+  string llm_provider = 19;
+
+  // GH-81: true when the LLM output was blocked by safety-gate output
+  // validation (forbidden action / unsafe judge verdict) — the returned
+  // prescription is the rule-based fallback and human_verification_required
+  // is always true.
+  bool blocked = 20;
+
+  // GH-82: agentic chain metrics — query-gen latency and the LLM-generated
+  // search queries (empty on the template path or query-gen fallback).
+  double query_gen_ms = 21;
+  repeated string generated_queries = 22;
+
+  // GH-83: uuid4 identifying the saved history record — only set when
+  // enrich=true and the write succeeded; "" on the rule-only path or if the
+  // history store is unavailable. Pass this to POST /prescribe/feedback (REST-only).
+  string prescription_id = 23;
+
+  // GH-87: nested prediction/anomaly/risk context — reuses the same messages
+  // as PredictResponse, so GH-86 uncertainty (health_stage, stage_probabilities,
+  // stage_confidence, is_borderline, soh_confidence, soh_std) reaches BE via
+  // Prescribe (the last output) instead of being lost behind the flat fields
+  // above. Always populated — run_inference() runs unconditionally as step 1
+  // of run_prescription(), regardless of enrich.
+  PredictionInfo prediction = 24;
+  AnomalyInfo anomaly = 25;
+  RiskInfo risk = 26;
+
+  // GH-84: true when this response was served from the idempotency cache
+  // (same battery_id/readings/enrich/agentic within the TTL window) instead
+  // of re-running inference/RAG/LLM. Never true for a blocked=true result —
+  // blocked responses are never cached.
+  bool cached = 27;
+}
+
+// ── Health ─────────────────────────────────────────────────────────────
+
+message HealthRequest {}
+
+message HealthResponse {
+  string status = 1;
+  string model_version = 2;
+  bool scaler_loaded = 3;
+  bool mamba_loaded = 4;
+  bool isolation_forest_loaded = 5;
+  // GH-67: the LFP (Severson-trained) artifact set is OPTIONAL — a NASA-only
+  // deploy boots fine without it, but then every request carrying
+  // pack_config.chemistry="LFP" fails at inference instead of being silently
+  // mis-scored with the NASA weights. REST /health already exposed these; gRPC
+  // is the transport BE actually uses, so it needs them too or BE cannot check
+  // LFP readiness before shipping traffic.
+  bool lfp_loaded = 6;
+  string lfp_model_version = 7;
+
+  // GH-67 follow-up: soc_mode là thuộc tính của BỘ ARTIFACT, không phải của
+  // request — mỗi bộ được train với một ĐỊNH NGHĨA soc_percent khác nhau.
+  // Caller PHẢI đọc 2 field này để biết gửi soc_percent kiểu nào, thay vì
+  // hardcode theo chemistry (sẽ sai âm thầm nếu bộ NASA/NMC được retrain).
+  //   "window" → soc_percent phải là WINDOW-LOCAL: ~100% ở HÀNG ĐẦU của window
+  //              này, giảm dần qua 30 hàng. Không chắc thì gửi 4 cột.
+  //   "cycle"  → soc_percent phải scope theo CẢ CHU KỲ XẢ: ~100% đầu chu kỳ,
+  //              giảm tới ~9% cuối chu kỳ (đúng SOC thật của pin).
+  string soc_mode = 8;       // của bộ mặc định (NASA/NMC)
+  string lfp_soc_mode = 9;   // của bộ LFP; "" khi lfp_loaded=false
+
+  // Model long-sequence (L ≤ 4096) dùng cho rpc PredictLong. Nạp LƯỜI ở lần gọi
+  // đầu (không phải lúc boot), nên long_loaded=false chỉ nghĩa là "chưa ai gọi",
+  // KHÔNG phải "thiếu artifact".
+  bool long_loaded = 10;
+  string long_model_version = 11;
+}
+
+// ── VerifyTicket ───────────────────────────────────────────────────────
+// Chấm điểm ticket thủ công (thật/rác) + dò trùng mô tả với ticket đang mở.
+// Human-in-the-loop: AI chỉ gắn nhãn + lý do, Manager quyết định cuối.
+
+// Snapshot sensor pin tại thời điểm phát hiện — để AI đối chiếu mô tả với thực tế.
+message TicketSensorSnapshot {
+  double soh_percent = 1;
+  double voltage = 2;
+  double current = 3;
+  double temperature = 4;
+  double soc_percent = 5;
+  bool has_active_alert = 6;   // pin có alert đang mở tại thời điểm đó
+}
+
+// 1 ticket ứng viên để so trùng (đang mở, cùng pin).
+message DuplicateCandidate {
+  string ticket_id = 1;
+  string description = 2;
+  int32 category = 3;          // TicketCategoryEnum (khớp BE) — cùng category → nghi trùng cao hơn
+}
+
+message VerifyTicketRequest {
+  string title = 1;
+  string description = 2;
+  string detected_at = 3;                        // ISO UTC, optional ("" nếu không có)
+  int32 category = 4;                             // TicketCategoryEnum ticket mới
+  TicketSensorSnapshot sensor_snapshot = 5;      // optional
+  bool has_sensor_snapshot = 6;                  // false → bỏ qua đối chiếu sensor
+  repeated DuplicateCandidate candidates = 7;    // ticket đang mở cùng pin để so trùng
+}
+
+message VerifyTicketResponse {
+  string verdict = 1;              // "legitimate" | "suspicious"
+  double score = 2;                // [0..1] — độ hợp lệ (1 = chắc chắn thật)
+  string reason = 3;               // lý do (tiếng Việt, cho Manager đọc)
+  string duplicate_of_ticket_id = 4;  // "" nếu không nghi trùng
+  double duplicate_score = 5;      // [0..1] độ tương đồng cao nhất với candidate
+  string duplicate_reason = 6;     // lý do nghi trùng
+}
+
+
+// ── SubmitFeedback (GH-83) ─────────────────────────────────────────────────
+// BE gọi sau khi kỹ thuật viên xử lý xong 1 prescription. Bản "accepted" được
+// dùng làm few-shot cho ca tương tự sau này, nên gửi feedback càng nhiều thì
+// prescription càng bám thực tế.
+message SubmitFeedbackRequest {
+  string prescription_id = 1;        // lấy từ PrescribeResponse.prescription_id
+  string status = 2;                 // "accepted" | "edited" | "rejected" — sai giá trị → INVALID_ARGUMENT
+  repeated string edited_steps = 3;  // các bước sau khi KTV sửa; rỗng nếu status != "edited"
+  string note = 4;                   // ghi chú tự do, "" nếu không có
+}
+
+message SubmitFeedbackResponse {
+  bool success = 1;                  // false không xảy ra — prescription_id sai thì trả NOT_FOUND
+}
+
+// ── PredictLong ────────────────────────────────────────────────────────
+// SOH từ chuỗi dài (GH-10). Khác Predict ở BA điểm, đọc kỹ trước khi dùng:
+//   1. Độ dài: 31..4096 timestep (Predict cố định đúng 30).
+//   2. KHÔNG có MC-dropout ⇒ KHÔNG có soh_confidence / soh_std / health_stage.
+//   3. KHÔNG có anomaly ⇒ KHÔNG có anomaly_score / risk / warnings.
+//      IsolationForest được train trên phân bố feature của window=30; chạy nó
+//      trên chuỗi dài là ngoài phân bố, nên đường này cố tình không trả.
+// Dùng cho phân tích/biểu đồ lịch sử dài, KHÔNG thay thế Predict ở hot-path
+// tạo ticket — luồng đó vẫn phải dùng Prescribe (xem §0 grpc-integration-be.md).
+message PredictLongRequest {
+  string battery_id = 1;
+  // 31..4096 hàng. Mỗi hàng 4 cột [voltage, current, temperature, time] hoặc
+  // legacy 3 cột. cycle_count/soc_percent KHÔNG dùng ở đường này (model long
+  // tự sinh IC-curve + discharge-progress từ 4 cột gốc) — gửi thừa cũng bị bỏ.
+  repeated Reading readings = 2;
+  // GH-65/67: chuẩn hoá pack→cell giống Predict. n_series chia voltage,
+  // capacity_ah quy đổi C-rate. chemistry KHÔNG chọn artifact ở đường này —
+  // model long chỉ có một bộ (NASA), gửi chemistry="LFP" cũng dùng bộ đó.
+  PackConfig pack_config = 3;
+}
+
+message PredictLongResponse {
+  string battery_id = 1;
+  double soh_percent = 2;      // [0, 100]
+  int32 seq_len = 3;           // số timestep thực nhận
+  string device = 4;           // "cpu" / "cuda" — model long chạy GPU nếu có
+  double inference_ms = 5;
+  string model_version = 6;    // LONG_MODEL_VERSION, khác MODEL_VERSION của Predict
+}
+
+// ── ClassificationFeedback ─────────────────────────────────────────────
+// F4 — khép vòng học cho nhánh anomaly. BE lưu staff_feedback từ lâu nhưng chưa có
+// đường gửi ngược về AI, nên AI không bao giờ biết mình phân loại sai.
+message ClassificationFeedbackRequest {
+  string battery_id = 1;
+  // Nhãn AI ĐÃ đưa ra: "Normal" | "Degrading" | "Failed". KHÔNG phải nhãn đúng —
+  // verdict mới nói AI đúng hay sai. Giá trị lạ → INVALID_ARGUMENT.
+  string classification = 2;
+  // "correct" | "false_positive" | "false_negative" — khớp StaffFeedbackEnum của BE
+  // (1/2/3). BE map số sang chuỗi trước khi gửi, để hợp đồng không phụ thuộc thứ tự
+  // enum của riêng bên nào.
+  string verdict = 3;
+  string model_version = 4;   // version đã sinh ra nhãn đó; "" nếu không rõ
+  string classified_at = 5;   // ISO UTC lúc phân loại; "" nếu không có
+  string note = 6;
+}
+
+message ClassificationFeedbackResponse {
+  bool success = 1;
+  int32 total = 2;
+  int32 correct = 3;
+  int32 false_positive = 4;
+  int32 false_negative = 5;
+  // ⚠️ has_precision/has_recall phân biệt "chưa ai chấm" với "đã chấm và sai hết".
+  // proto3 scalar không nullable nên 0.0 một mình là mơ hồ ở đúng chỗ nguy hiểm nhất.
+  double precision = 6;
+  bool has_precision = 7;
+  double recall = 8;
+  bool has_recall = 9;
+}
+
+// ── SuggestStaff / SuggestKb ───────────────────────────────────────────
+// Gợi ý nhân viên xử lý + tài liệu KB tham khảo cho 1 ticket.
+//
+// ai-module KHÔNG đọc được DB của TicketService, nên BE truy vấn ứng viên rồi
+// GỬI KÈM trong request — cùng cách VerifyTicketRequest.candidates đang làm.
+// Không có RPC nào ở đây đọc dữ liệu ngoài request.
+//
+// Chấm điểm là DETERMINISTIC (luật), không gọi LLM: kết quả ổn định giữa các lần
+// gọi và mỗi gợi ý kèm `reason` giải thích được — thứ Manager sẽ hỏi đầu tiên.
+
+message StaffCandidate {
+  string staff_id = 1;
+  string full_name = 2;
+  int32 skill_tier = 3;                // StaffSkillTierEnum: 1/2/3
+  repeated string skill_codes = 4;     // chuỗi TỰ DO, so khớp sau khi lowercase+trim
+  int32 active_tickets = 5;            // BE đếm sẵn (ĐÃ loại PreviousPrimaryHandler)
+  int32 max_concurrent = 6;            // 0 = không giới hạn
+}
+
+message SuggestStaffRequest {
+  int32 category = 1;                  // TicketCategoryEnum
+  int32 priority = 2;                  // TicketPriorityEnum; 0 = ticket chưa gán priority
+  string description = 3;              // Title + Description ticket
+  repeated StaffCandidate candidates = 4;
+  int32 top_n = 5;                     // 0 → mặc định 5, tối đa 10
+}
+
+message StaffSuggestion {
+  string staff_id = 1;
+  string full_name = 2;
+  double score = 3;                    // [0..1]
+  string reason = 4;                   // tiếng Việt, cho Manager đọc
+  bool tier_ok = 5;
+}
+
+message SuggestStaffResponse {
+  repeated StaffSuggestion suggestions = 1;
+  // Lý do danh sách rỗng/yếu — để UI nói được "vì sao không có ai" thay vì bảng trắng.
+  string note = 2;
+}
+
+message KbCandidate {
+  string kb_id = 1;
+  string code = 2;
+  string title = 3;
+  repeated string tags = 4;
+  int32 category = 5;                  // TicketCategoryEnum
+  int32 helpful_count = 6;
+}
+
+message SuggestKbRequest {
+  int32 category = 1;
+  string description = 2;              // Title + Description ticket
+  repeated KbCandidate candidates = 3;
+  int32 top_n = 4;
+
+  // Dữ liệu AI đã sinh cho CHÍNH ticket này (bảng ticket_ai_suggestions của BE).
+  // Rỗng với ticket do Customer tạo — khi đó chỉ dựa vào `description`.
+  repeated string ai_action_steps = 5;
+  // Tín hiệu MẠNH NHẤT: tài liệu AI thực sự truy hồi qua RAG lúc kê đơn.
+  // ⚠️ ai_kb_doc_refs là ĐƯỜNG DẪN FILE trong knowledge base của ai-module
+  // (vd "maintenance/bms_warning_codes.md"), KHÔNG phải KnowledgeBaseArticle.Code —
+  // hai kho tài liệu tách rời, chỉ so khớp mềm theo token được.
+  repeated string ai_sop_references = 6;
+  repeated string ai_kb_doc_refs = 7;
+}
+
+message KbSuggestion {
+  string kb_id = 1;
+  string code = 2;
+  string title = 3;
+  double score = 4;
+  string reason = 5;
+}
+
+message SuggestKbResponse {
+  repeated KbSuggestion suggestions = 1;
+  string note = 2;
+}

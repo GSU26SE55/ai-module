@@ -2,7 +2,7 @@
 Creates dummy model artifacts for development so the FastAPI app can boot.
 Run once after cloning the repo if models/weights/ is empty.
 
-Real artifacts (trained on NASA dataset) will replace these in Sprint 3-4.
+Real artifacts (trained on NASA dataset) will replace these after training.
 """
 
 import os
@@ -13,12 +13,26 @@ import joblib
 import numpy as np
 import torch
 from sklearn.ensemble import IsolationForest
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.core.config import ISO_FOREST_PATH, LSTM_PATH, SCALER_PATH, WEIGHTS_DIR
-from src.models.soh_predictor import SOHPredictor
+from src.core.config import (
+    BASE_FEATURES,
+    FEATURE_SCALER_PATH,
+    FEATURE_SCALER_VERSION,
+    FEATURES,
+    INPUT_FEATURES,
+    ISO_FOREST_PATH,
+    MAMBA_PATH,
+    MODEL_VERSION,
+    SCALER_PATH,
+    SCALER_VERSION,
+    SPECTRAL_FEAT_DIM,
+    WEIGHTS_DIR,
+    WINDOW_SIZE,
+)
+from src.models.soh_predictor import MambaSOHPredictor
 
 SEED = 42
 random.seed(SEED)
@@ -27,38 +41,53 @@ torch.manual_seed(SEED)
 
 os.makedirs(WEIGHTS_DIR, exist_ok=True)
 
-# Dummy scaler — fit on random data with correct feature count (3)
+# Dummy scaler — fit on random data with configured feature count
 scaler = MinMaxScaler()
-scaler.fit(np.random.rand(200, 3))
+scaler.fit(np.random.rand(200, len(BASE_FEATURES)))  # GH-54: scaler = 4 base cols
 joblib.dump(
     {
         "scaler": scaler,
-        "version": "1.0",
+        "version": SCALER_VERSION,
         "trained_on": ["dummy"],
-        "features": ["voltage", "current", "temperature"],
+        "features": FEATURES,
     },
     SCALER_PATH,
 )
 print(f"✓ Saved dummy scaler → {SCALER_PATH}")
+feat_scaler = StandardScaler()
+feat_scaler.fit(np.random.rand(200, SPECTRAL_FEAT_DIM))
+joblib.dump(
+    {
+        "scaler": feat_scaler,
+        "version": FEATURE_SCALER_VERSION,
+        "n_features": SPECTRAL_FEAT_DIM,
+    },
+    FEATURE_SCALER_PATH,
+)
+print(f"Saved dummy feature scaler -> {FEATURE_SCALER_PATH}")
 
-# Dummy LSTM — random weights, correct architecture
-model = SOHPredictor()
+
+# Dummy Mamba — random weights, correct architecture
+model = MambaSOHPredictor(input_features=INPUT_FEATURES, feat_dim=SPECTRAL_FEAT_DIM)
 torch.save(
     {
         "model_state_dict": model.state_dict(),
-        "version": "1.0",
-        "window_size": 30,
-        "input_features": 3,
+        "version": MODEL_VERSION,
+        "window_size": WINDOW_SIZE,
+        "input_features": INPUT_FEATURES,
+        "feat_dim": SPECTRAL_FEAT_DIM,
     },
-    LSTM_PATH,
+    MAMBA_PATH,
 )
-print(f"✓ Saved dummy LSTM → {LSTM_PATH}")
+print(f"✓ Saved dummy Mamba model → {MAMBA_PATH}")
 
-# Dummy IsolationForest — fit on random flattened windows (30*3=90 features)
+# Dummy IsolationForest — fit on spectral+statistical features (matches train.py:
+# iso.fit(X_feat_train), NOT the raw window — run_inference() calls decision_function
+# on the 57-dim extract_window_features() output).
 iso = IsolationForest(contamination=0.1, n_estimators=100, random_state=SEED)
-iso.fit(np.random.rand(200, 90))
+iso.fit(np.random.rand(200, SPECTRAL_FEAT_DIM))
 joblib.dump(iso, ISO_FOREST_PATH)
 print(f"✓ Saved dummy IsolationForest → {ISO_FOREST_PATH}")
 
 print("\n✅ Dummy artifacts created. App can now boot.")
-print("   Replace with real trained artifacts in Sprint 3-4.")
+print("   Replace with real trained artifacts by running scripts/train.py.")

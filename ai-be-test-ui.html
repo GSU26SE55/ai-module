@@ -1,0 +1,542 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI ↔ BE — Bảng test qua Backend</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --line:#2a2f3a;
+    --fg:#e6e9ef; --muted:#98a2b3; --accent:#5b9dff;
+    --ok:#3ecf8e; --warn:#f5a524; --err:#f2555a; --info:#7c8cff;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: light){
+    :root{ --bg:#f6f7f9; --panel:#fff; --panel2:#f0f2f5; --line:#dfe3ea;
+           --fg:#131720; --muted:#5b6472; --accent:#1f6feb; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font:14px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  header{padding:18px 22px;border-bottom:1px solid var(--line);background:var(--panel)}
+  h1{margin:0 0 4px;font-size:18px}
+  .sub{color:var(--muted);font-size:13px}
+  .wrap{max-width:1180px;margin:0 auto;padding:18px 22px 60px}
+  .bar{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;
+       background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:16px}
+  label{display:block;font-size:12px;color:var(--muted);margin-bottom:4px}
+  input,select{background:var(--panel2);color:var(--fg);border:1px solid var(--line);
+       border-radius:7px;padding:7px 9px;font:13px var(--mono);min-width:150px}
+  input[size="42"]{min-width:330px}
+  button{background:var(--accent);color:#fff;border:0;border-radius:7px;
+       padding:8px 13px;font-size:13px;font-weight:600;cursor:pointer}
+  button:hover{filter:brightness(1.08)} button:disabled{opacity:.5;cursor:not-allowed}
+  button.ghost{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+  button.sm{padding:5px 10px;font-size:12px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+        padding:15px;margin-bottom:13px}
+  .card h3{margin:0 0 3px;font-size:14.5px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .ep{font:11.5px var(--mono);color:var(--muted);word-break:break-all}
+  .why{color:var(--muted);font-size:12.5px;margin:8px 0 10px;
+       border-left:2px solid var(--line);padding-left:10px}
+  .why b{color:var(--fg)}
+  .row{display:flex;gap:9px;flex-wrap:wrap;align-items:flex-end;margin-bottom:9px}
+  .tag{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:20px;letter-spacing:.3px}
+  .t-new{background:rgba(91,157,255,.16);color:var(--accent)}
+  .t-mgr{background:rgba(245,165,36,.16);color:var(--warn)}
+  .out{font:12px var(--mono);white-space:pre-wrap;word-break:break-word;
+       background:var(--panel2);border:1px solid var(--line);border-radius:7px;
+       padding:10px;max-height:340px;overflow:auto;margin-top:9px;display:none}
+  .out.show{display:block}
+  .st{font-size:12px;font-weight:700;margin-left:auto}
+  .ok{color:var(--ok)} .err{color:var(--err)} .warn{color:var(--warn)} .info{color:var(--info)}
+  .verdict{margin-top:8px;padding:8px 10px;border-radius:7px;font-size:12.5px;display:none}
+  .verdict.show{display:block}
+  .v-ok{background:rgba(62,207,142,.11);border:1px solid rgba(62,207,142,.35)}
+  .v-err{background:rgba(242,85,90,.11);border:1px solid rgba(242,85,90,.35)}
+  .v-warn{background:rgba(245,165,36,.11);border:1px solid rgba(245,165,36,.35)}
+  .fields{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+  .f{font:11px var(--mono);padding:2px 7px;border-radius:5px;
+     background:rgba(62,207,142,.13);color:var(--ok)}
+  .f.miss{background:rgba(242,85,90,.13);color:var(--err)}
+  .note{background:rgba(245,165,36,.09);border:1px solid rgba(245,165,36,.3);
+        border-radius:9px;padding:12px 14px;margin-bottom:16px;font-size:13px}
+  .note code{font:12px var(--mono);background:var(--panel2);padding:1px 5px;border-radius:4px}
+  h2.sec{font-size:13px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);
+         margin:24px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+  .flow{background:var(--panel2);border-radius:7px;padding:8px 11px;font:11.5px var(--mono);
+        color:var(--muted);margin-bottom:10px}
+  .dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:5px}
+  .d-on{background:var(--ok)} .d-off{background:var(--err)}
+</style>
+</head>
+<body>
+<header>
+  <h1>AI ↔ BE — Bảng test qua Backend</h1>
+  <div class="sub">
+    Mọi request đi tới <b>Backend</b>. Backend mới gọi sang AI.
+    Trang này <b>không bao giờ</b> gọi thẳng <code>:4015</code> — đúng như luồng chạy thật.
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="note">
+    <b>Phải mở qua <code>http://localhost:5173</code></b> — không phải <code>file://</code>.<br>
+    Backend chỉ whitelist CORS đúng origin đó (<code>Cors__AllowedOrigins__2</code>), mở bằng
+    file:// sẽ bị trình duyệt chặn hết và trông như backend chết.
+    <div style="margin-top:8px">
+      <code>cd ~/Documents/capstone/ai-module && python3 -m http.server 5173</code><br>
+      rồi vào <code>http://localhost:5173/ai-be-test-ui.html</code>
+    </div>
+  </div>
+
+  <div class="bar">
+    <div><label>Backend (API Gateway)</label>
+      <input id="base" value="http://localhost:4001" size="24"></div>
+    <div><label>Admin</label><input id="admEmail" value="admin@yourdomain.com" size="24"></div>
+    <div><label>Mật khẩu</label><input id="admPass" value="Admin123@" size="14"></div>
+    <div><label>Manager (cho re-verify)</label>
+      <input id="mgrEmail" value="manager.demo@solarbattery.local" size="26"></div>
+    <div><label>Mật khẩu</label><input id="mgrPass" value="Password123@" size="14"></div>
+    <button onclick="login()">Đăng nhập</button>
+    <button class="ghost" onclick="discover()" id="btnDisc" disabled>Tự tìm ID</button>
+    <div class="st" id="authSt"><span class="dot d-off"></span>chưa đăng nhập</div>
+  </div>
+
+  <div class="bar">
+    <div><label>batteryAssetId</label><input id="assetId" size="42" placeholder="bấm Tự tìm ID"></div>
+    <div><label>alertId</label><input id="alertId" size="42"></div>
+    <div><label>classificationId</label><input id="clsId" size="42"></div>
+    <div><label>ticketId</label><input id="ticketId" size="42"></div>
+  </div>
+
+  <h2 class="sec">Chiều AI → BE — dữ liệu AI sinh ra, đọc qua API của Backend</h2>
+
+  <div class="card">
+    <h3>1. Lịch sử SOH + 12 trường AI <span class="st" id="s1"></span></h3>
+    <div class="ep">GET /api/v1/soh-predictions?batteryAssetId=…</div>
+    <div class="flow">job nền BE → gRPC Predict → AI → lưu DB → API này đọc ra</div>
+    <div class="why">
+      Kiểm đủ <b>12 trường</b> AI trả về. Trước đây bridge chỉ giữ 9 trường và vứt phần còn lại
+      ngay tại ranh giới — mất hẳn, không lấy lại được.<br>
+      <b>Bẫy:</b> thiếu <code>batteryAssetId</code> thì API trả <b>list rỗng kèm 200</b>, trông như
+      hỏng nhưng thực ra là gọi thiếu tham số.
+    </div>
+    <div class="row"><button onclick="run1()">Chạy</button>
+      <button class="ghost sm" onclick="run1(true)">Thử BỎ assetId (phải ra list rỗng)</button></div>
+    <div class="fields" id="f1"></div>
+    <div class="verdict" id="v1"></div><div class="out" id="o1"></div>
+  </div>
+
+  <div class="card">
+    <h3>2. Phân loại bất thường <span class="st" id="s2"></span></h3>
+    <div class="ep">GET /api/v1/anomaly-classifications?batteryAssetId=…</div>
+    <div class="flow">IsolationForest của AI → BE lưu → API này đọc ra</div>
+    <div class="why">Nguồn <code>classificationId</code> cho mục 7.</div>
+    <div class="row"><button onclick="run2()">Chạy</button></div>
+    <div class="verdict" id="v2"></div><div class="out" id="o2"></div>
+  </div>
+
+  <h2 class="sec">Chiều BE → AI — Backend gọi sang AI</h2>
+
+  <div class="card">
+    <h3>3. SOH chuỗi dài <span class="tag t-new">MỚI</span><span class="st" id="s3"></span></h3>
+    <div class="ep">GET /api/v1/soh-predictions/long?batteryAssetId=…&limit=300</div>
+    <div class="flow">BE → gRPC <b>PredictLong</b> → AI (model 2.2)</div>
+    <div class="why">
+      BE tự lấy số đo từ DB rồi gọi AI — bạn không phải dán payload.<br>
+      <b>Điểm phải nhìn:</b> <code>modelVersion</code> phải là <b>2.2</b>, khác <b>1.6</b> của SOH
+      thường. Hai bộ trọng số riêng ⇒ <b>đừng so hai con số SOH với nhau</b>.<br>
+      Đường này cố ý không có anomaly/risk ⇒ <b>không dùng để quyết định tạo ticket</b>.
+    </div>
+    <div class="row">
+      <div><label>limit (31..4096)</label><input id="longLimit" value="300" size="8"></div>
+      <button onclick="run3()">Chạy</button>
+    </div>
+    <div class="verdict" id="v3"></div><div class="out" id="o3"></div>
+  </div>
+
+  <div class="card">
+    <h3>4. Dự đoán hàng loạt <span class="tag t-new">MỚI</span><span class="st" id="s4"></span></h3>
+    <div class="ep">GET /api/v1/soh-predictions/batch?limit=10</div>
+    <div class="flow">BE → gRPC <b>PredictStream</b> (bidi, nhiều pin trong 1 kết nối)</div>
+    <div class="why">
+      <b>Đọc <code>isComplete</code> TRƯỚC khi nhìn <code>items</code>.</b>
+      Bidi stream không có lỗi theo từng message: một pin có cửa sổ sai làm đứt cả lượt.
+      Pin không có trong <code>items</code> nghĩa là <b>chưa được chấm</b> — KHÔNG phải
+      "pin bình thường". Hiển thị nhầm hai thứ này là nói sai sự thật với người vận hành.
+    </div>
+    <div class="row">
+      <div><label>limit</label><input id="batchLimit" value="10" size="8"></div>
+      <button onclick="run4()">Chạy</button>
+    </div>
+    <div class="verdict" id="v4"></div><div class="out" id="o4"></div>
+  </div>
+
+  <div class="card">
+    <h3>5. Kê đơn bảo trì thủ công <span class="tag t-new">MỚI</span><span class="st" id="s5"></span></h3>
+    <div class="ep">POST /api/alerts/{alertId}/ai-prescription?agentic=…</div>
+    <div class="flow">BE → gRPC <b>Prescribe</b> (enrich=true) → AI → RAG + LLM</div>
+    <div class="why">
+      Trả <code>escalationConditions</code>, <code>blocked</code>, <code>cached</code> — ba trường
+      trước đây bridge nhận rồi vứt.<br>
+      <b>409 "Cửa sổ thiếu cycle_count" KHÔNG phải lỗi:</b> pin LiFePO4 dùng bộ trọng số
+      <code>soc_mode="cycle"</code>, bắt buộc 6 cột. Chỉ một số đo thiếu <code>cycle_count</code>
+      là BE dừng trước khi gọi — vì gửi đi cầm chắc bị từ chối. Bấm
+      <b>Tìm alert chạy được</b> để lấy alert khác.
+    </div>
+    <div class="row">
+      <label style="display:flex;align-items:center;gap:6px;margin:0">
+        <input type="checkbox" id="agentic" style="min-width:auto">
+        <span style="color:var(--fg)">agentic (2 lượt LLM, chậm hơn)</span></label>
+      <button onclick="run5()">Chạy</button>
+      <button class="ghost sm" onclick="findAlert()">Tìm alert chạy được</button>
+    </div>
+    <div class="verdict" id="v5"></div><div class="out" id="o5"></div>
+  </div>
+
+  <div class="card">
+    <h3>6. Phản hồi prescription <span class="tag t-new">MỚI</span><span class="st" id="s6"></span></h3>
+    <div class="ep">POST /api/alerts/{alertId}/prescription-feedback</div>
+    <div class="flow">BE → gRPC <b>SubmitFeedback</b> → AI (few-shot cho ca sau)</div>
+    <div class="why">
+      <b>Chạy mục 5 trước</b> để alert có <code>AiPrescriptionId</code>.<br>
+      <b>409</b> = alert chưa từng được kê đơn ·
+      <b>410</b> = AI không còn giữ id (store lệch giữa 2 container) ·
+      <b>503</b> = không gọi được AI.
+    </div>
+    <div class="row">
+      <div><label>status</label><select id="pfStatus">
+        <option>accepted</option><option>edited</option><option>rejected</option></select></div>
+      <button onclick="run6()">Chạy</button>
+    </div>
+    <div class="verdict" id="v6"></div><div class="out" id="o6"></div>
+  </div>
+
+  <div class="card">
+    <h3>7. Phản hồi phân loại <span class="tag t-new">MỚI</span><span class="st" id="s7"></span></h3>
+    <div class="ep">POST /api/v1/anomaly-classifications/{classificationId}/feedback</div>
+    <div class="flow">BE lưu DB → gRPC <b>SubmitClassificationFeedback</b> → AI (dữ liệu retrain)</div>
+    <div class="why">
+      Khép vòng học cho nhánh anomaly. Trước đây <code>staff_feedback</code> chỉ nằm trong DB của
+      BE và <b>không bao giờ</b> tới AI ⇒ AI phân loại sai mãi mà không biết để sửa.<br>
+      BE gọi AI <b>sau</b> khi đã lưu, và cố ý bỏ qua kết quả: AI sập không được biến thao tác đã
+      thành công của Staff thành lỗi.
+    </div>
+    <div class="row">
+      <div><label>đánh giá</label><select id="cfVal">
+        <option value="1">1 — Correct (AI đúng)</option>
+        <option value="2">2 — FalsePositive (AI báo nhầm)</option>
+        <option value="3">3 — FalseNegative (AI bỏ sót)</option></select></div>
+      <button onclick="run7()">Chạy</button>
+    </div>
+    <div class="verdict" id="v7"></div><div class="out" id="o7"></div>
+  </div>
+
+  <div class="card">
+    <h3>8. Chấm ticket thật/rác <span class="tag t-mgr">CẦN MANAGER</span><span class="st" id="s8"></span></h3>
+    <div class="ep">POST /api/admin/tickets/{ticketId}/re-verify</div>
+    <div class="flow">TicketService → gRPC <b>VerifyTicket</b> → AI → ghi verdict vào ticket</div>
+    <div class="why">
+      Token Admin sẽ nhận <b>403</b> — endpoint này chỉ cho Manager.<br>
+      <b>Ba điều kiện phải khớp cả ba mới ra 200:</b>
+      <code>origin=1</code> (khách tự tạo) · <code>ai_verify_status ∈ {1,4}</code> ·
+      ticket chưa đóng. Trả <b>400</b> nghĩa là ticket đã có verdict — guard idempotent, không phải lỗi.<br>
+      Bấm <b>Tìm ticket đủ điều kiện</b> để lấy đúng loại.
+    </div>
+    <div class="row">
+      <button onclick="run8()">Chạy</button>
+      <button class="ghost sm" onclick="findTicket()">Tìm ticket đủ điều kiện</button>
+    </div>
+    <div class="verdict" id="v8"></div><div class="out" id="o8"></div>
+  </div>
+
+  <h2 class="sec">Chạy tất cả</h2>
+  <div class="card">
+    <div class="why">
+      Chạy tuần tự 1→8, đúng thứ tự phụ thuộc (mục 6 cần mục 5 chạy trước).
+      Kết quả tổng kết ngay bên dưới.
+    </div>
+    <div class="row"><button onclick="runAll()" id="btnAll">Chạy toàn bộ</button></div>
+    <div class="verdict" id="vAll"></div>
+  </div>
+
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const base = () => $('base').value.replace(/\/+$/,'');
+let TOK = '', MGR = '';
+
+function setSt(id, txt, cls){ const e=$(id); e.textContent=txt; e.className='st '+(cls||''); }
+function show(id, data){
+  const e=$(id); e.classList.add('show');
+  e.textContent = typeof data==='string' ? data : JSON.stringify(data,null,2);
+}
+function verdict(id, html, cls){
+  const e=$(id); e.classList.add('show'); e.className='verdict show '+cls; e.innerHTML=html;
+}
+
+/* Mọi request đều đi tới Backend. Không có đường nào tới :4015 trong file này. */
+async function call(path, {method='GET', body=null, token=null}={}){
+  const h={};
+  if(body) h['Content-Type']='application/json';
+  const t = token || TOK;
+  if(t) h['Authorization']='Bearer '+t;
+  let r;
+  try{
+    r = await fetch(base()+path,{method,headers:h,body:body?JSON.stringify(body):undefined});
+  }catch(e){
+    // Lỗi mạng ở đây gần như luôn là CORS hoặc backend chưa chạy — nói rõ để khỏi
+    // đi sửa nhầm phía AI.
+    return {status:0, data:{ loi:'Không gọi được backend: '+e.message,
+      goiY:'Kiểm: (1) mở trang qua http://localhost:5173 chứ không phải file:// '+
+           '(2) backend đang chạy: docker ps | grep apigateway' }};
+  }
+  let d; try{ d = await r.json(); }catch{ d = await r.text().catch(()=> ''); }
+  return {status:r.status, data:d};
+}
+
+async function login(){
+  setSt('authSt','đang đăng nhập…','info');
+  const a = await call('/api/auth/login',{method:'POST',
+    body:{email:$('admEmail').value,password:$('admPass').value}});
+  TOK = a.data?.data?.tokens?.accessToken || '';
+  const m = await call('/api/auth/login',{method:'POST',
+    body:{email:$('mgrEmail').value,password:$('mgrPass').value}});
+  MGR = m.data?.data?.tokens?.accessToken || '';
+  if(!TOK){ setSt('authSt','Admin đăng nhập THẤT BẠI','err'); show('o1',a.data); return; }
+  $('btnDisc').disabled = false;
+  setSt('authSt', (MGR?'✔ Admin + Manager':'✔ Admin (Manager THẤT BẠI — mục 8 sẽ 403)'),
+        MGR?'ok':'warn');
+  discover();
+}
+
+/* Tự tìm ID để không phải dán tay — và ưu tiên bản ghi DÙNG ĐƯỢC:
+   asset phải có prediction, alert phải thuộc asset đó. */
+async function discover(){
+  setSt('authSt','đang tìm ID…','info');
+  const as = await call('/api/battery-assets?pageNumber=1&pageSize=50');
+  const ids = (as.data?.data?.items||[]).map(x=>x.id);
+  let picked='';
+  for(const id of ids){
+    const p = await call('/api/v1/soh-predictions?batteryAssetId='+id+'&pageNumber=1&pageSize=1');
+    if((p.data?.data?.totalItems||0) > 0){ picked=id; break; }
+  }
+  $('assetId').value = picked || ids[0] || '';
+
+  const al = await call('/api/alerts?pageNumber=1&pageSize=50');
+  const alerts = al.data?.data?.items||[];
+  const mine = alerts.find(x => (x.batteryAssetId||'') === $('assetId').value);
+  $('alertId').value = (mine||alerts[0])?.id || '';
+
+  const cl = await call('/api/v1/anomaly-classifications?batteryAssetId='+$('assetId').value+
+                        '&pageNumber=1&pageSize=1');
+  $('clsId').value = cl.data?.data?.items?.[0]?.id || '';
+
+  setSt('authSt','✔ đã tìm xong ID','ok');
+}
+
+async function findAlert(){
+  setSt('s5','đang dò…','info');
+  const al = await call('/api/alerts?pageNumber=1&pageSize=40');
+  for(const a of (al.data?.data?.items||[])){
+    const r = await call('/api/alerts/'+a.id+'/ai-prescription?agentic=false',{method:'POST'});
+    if(r.status===200){ $('alertId').value=a.id;
+      setSt('s5','✔ tìm được: '+a.id.slice(0,8)+'…','ok');
+      verdict('v5','Đã đổi alertId sang một alert kê được đơn. Bấm <b>Chạy</b>.','v-ok'); return; }
+  }
+  setSt('s5','không tìm thấy','err');
+  verdict('v5','Không alert nào kê được đơn — mọi pin đều thiếu <code>cycle_count</code> '+
+          'trong cửa sổ 30 số đo gần nhất.','v-warn');
+}
+
+async function findTicket(){
+  setSt('s8','đang dò…','info');
+  const r = await call('/api/admin/tickets?pageNumber=1&pageSize=50',{token:MGR||TOK});
+  const items = r.data?.data?.items||[];
+  // ⚠️ API trả enum dưới dạng CHUỖI ("ManualByCustomer"/"Open"/"Skipped"), KHÔNG phải số.
+  // So với số (origin===1) sẽ không bao giờ khớp và nút này im lặng vô dụng.
+  const CLOSED = ['ClosedPendingRate','Closed','ClosedRejected'];
+  const ok = items.find(t => t.origin==='ManualByCustomer' && !CLOSED.includes(t.status) &&
+                             ['Pending','Skipped'].includes(t.aiVerifyStatus));
+  if(ok){ $('ticketId').value=ok.id; setSt('s8','✔ '+(ok.code||ok.id.slice(0,8)),'ok');
+    verdict('v8',`Ticket <b>${ok.code}</b> đủ cả ba điều kiện `+
+      `(${ok.origin} · ${ok.status} · ${ok.aiVerifyStatus}). Bấm <b>Chạy</b>.`,'v-ok'); return; }
+  const any = items.find(t => t.origin==='ManualByCustomer');
+  if(any) $('ticketId').value=any.id;
+  setSt('s8','không có ticket đủ điều kiện','warn');
+  verdict('v8','Mọi ticket khách tự tạo đều đã có verdict hoặc đã đóng ⇒ sẽ trả '+
+    '<b>400/409</b>, đó là guard đúng.<br>Muốn thử lại đường 200, đưa 1 ticket về Pending:'+
+    '<br><code>docker exec solar-postgres psql -U postgres -d ticket_db -c "UPDATE tickets SET '+
+    'ai_verify_status=1, ai_verify_score=NULL, ai_verify_reason=NULL WHERE id=\''+
+    ($('ticketId').value||'&lt;id&gt;')+'\';"</code>','v-warn');
+}
+
+const NEED12 = ['healthStage','stageConfidence','isBorderline','sohStd','rulCyclesEstimate',
+  'aiPriority','riskLevel','actionCode','sohTrend','degradationRatePerCycle',
+  'cyclesToMaintenance','isTemperatureOod'];
+
+async function run1(skipId){
+  setSt('s1','…','info'); $('f1').innerHTML='';
+  const q = skipId ? '' : 'batteryAssetId='+$('assetId').value+'&';
+  const r = await call('/api/v1/soh-predictions?'+q+'pageNumber=1&pageSize=5');
+  show('o1', r.data); setSt('s1', r.status, r.status===200?'ok':'err');
+  const items = r.data?.data?.items||[];
+  if(skipId){
+    verdict('v1', items.length===0
+      ? '✔ Đúng như mô tả: <b>200 nhưng list RỖNG</b>. <code>batteryAssetId</code> là bắt buộc — '+
+        'thiếu nó API vẫn trả 200, rất dễ bị đọc nhầm thành "API hỏng".'
+      : '✗ Bất ngờ: không có assetId mà vẫn ra '+items.length+' bản ghi.',
+      items.length===0?'v-ok':'v-err');
+    return;
+  }
+  if(!items.length){ verdict('v1','Không có prediction cho pin này — chọn pin khác (bấm '+
+    '<b>Tự tìm ID</b>).','v-warn'); return; }
+  const it = items[0];
+  const miss = NEED12.filter(f => !(f in it));
+  $('f1').innerHTML = NEED12.map(f =>
+    `<span class="f${miss.includes(f)?' miss':''}">${f}</span>`).join('');
+  verdict('v1', miss.length
+    ? `✗ Thiếu ${miss.length}/12 trường: <code>${miss.join(', ')}</code> — bridge lại đang vứt dữ liệu AI.`
+    : `✔ Đủ <b>12/12</b> trường. Model chấm pin này: <b>${it.modelVersion}</b>`+
+      (it.modelVersion==='2.1-lfp'
+        ? ' — đúng bộ LFP cho pin LiFePO4.'
+        : ' — nếu đây là pin LiFePO4 mà thấy <b>1.6</b> thì đang bị chấm bằng weight sai (lệch ~60 điểm SOH, không báo lỗi).'),
+    miss.length?'v-err':'v-ok');
+}
+
+async function run2(){
+  setSt('s2','…','info');
+  const r = await call('/api/v1/anomaly-classifications?batteryAssetId='+$('assetId').value+
+                       '&pageNumber=1&pageSize=5');
+  show('o2', r.data); setSt('s2', r.status, r.status===200?'ok':'err');
+  const items = r.data?.data?.items||[];
+  if(items.length){ $('clsId').value = items[0].id;
+    verdict('v2',`✔ ${items.length} bản ghi. Đã điền <code>classificationId</code> cho mục 7.`,'v-ok'); }
+  else verdict('v2','Không có classification cho pin này.','v-warn');
+}
+
+async function run3(){
+  setSt('s3','…','info');
+  const r = await call('/api/v1/soh-predictions/long?batteryAssetId='+$('assetId').value+
+                       '&limit='+$('longLimit').value);
+  show('o3', r.data); setSt('s3', r.status, r.status===200?'ok':(r.status===409?'warn':'err'));
+  const d = r.data?.data;
+  if(r.status===200 && d){
+    verdict('v3', `✔ SOH <b>${d.sohPercent}%</b> · seq <b>${d.seqLen}</b> · model <b>${d.modelVersion}</b>`+
+      (d.modelVersion!=='1.6'
+        ? ' — đúng bộ trọng số LONG, khác 1.6 của SOH thường.'
+        : ' <br>✗ Trùng 1.6 nghĩa là gọi nhầm sang model window=30.'),
+      d.modelVersion!=='1.6'?'v-ok':'v-err');
+  } else if(r.status===409){
+    verdict('v3','Pin chưa đủ 31 số đo hợp lệ — lý do nghiệp vụ, không phải đứt tích hợp.','v-warn');
+  } else if(r.status===503){
+    verdict('v3','✗ <b>503</b> — BE không gọi được AI. Kiểm <code>solar-ai-module-grpc</code>.','v-err');
+  }
+}
+
+async function run4(){
+  setSt('s4','…','info');
+  const r = await call('/api/v1/soh-predictions/batch?limit='+$('batchLimit').value);
+  show('o4', r.data); setSt('s4', r.status, r.status===200?'ok':'err');
+  const d = r.data?.data;
+  if(r.status===200 && d){
+    const n=(d.items||[]).length, req=d.requestedCount;
+    verdict('v4', d.isComplete
+      ? `✔ <b>${n}/${req}</b> pin được chấm trong 1 kết nối · <code>isComplete=true</code>`
+      : `⚠ <b>${n}/${req}</b> — <code>isComplete=false</code>, stream đứt: `+
+        `<code>${d.abortReason||'?'}</code><br>`+
+        `<b>${req-n} pin còn lại CHƯA được chấm</b> — không được hiểu là pin bình thường.`,
+      d.isComplete?'v-ok':'v-warn');
+  }
+}
+
+async function run5(){
+  setSt('s5','…','info');
+  const r = await call('/api/alerts/'+$('alertId').value+'/ai-prescription?agentic='+
+                       ($('agentic').checked?'true':'false'), {method:'POST'});
+  show('o5', r.data); setSt('s5', r.status, r.status===200?'ok':(r.status===409?'warn':'err'));
+  const d = r.data?.data;
+  if(r.status===200 && d){
+    const has = ['escalationConditions','blocked','cached'].filter(f=>f in d);
+    verdict('v5', `✔ AI kê được đơn — <b>${(d.actionSteps||[]).length}</b> bước · `+
+      `3 trường từng bị vứt: <b>${has.length}/3</b> · <code>cached=${d.cached}</code>`+
+      `<br><code>prescriptionId = ${d.prescriptionId||'(rỗng)'}</code>`+
+      (d.prescriptionId ? ' → dùng được cho mục 6.'
+                        : ' <br>✗ Rỗng ⇒ vòng phản hồi đứt tại ranh giới bridge.'),
+      d.prescriptionId ? 'v-ok':'v-err');
+  } else if(r.status===409){
+    verdict('v5','Pin thiếu số đo hợp lệ (thường là thiếu <code>cycle_count</code>). '+
+      'Đường đi vẫn thông — bấm <b>Tìm alert chạy được</b>.','v-warn');
+  } else if(r.status===503){
+    verdict('v5','✗ <b>503</b> — BE không gọi được AI.','v-err');
+  }
+}
+
+async function run6(){
+  setSt('s6','…','info');
+  const r = await call('/api/alerts/'+$('alertId').value+'/prescription-feedback',
+    {method:'POST', body:{status:$('pfStatus').value}});
+  show('o6', r.data); setSt('s6', r.status, r.status===200?'ok':(r.status===409?'warn':'err'));
+  const msg = {
+    200:['✔ AI đã ghi nhận phản hồi. Vòng học khép kín.','v-ok'],
+    409:['Alert này chưa từng được kê đơn — chạy <b>mục 5</b> trước.','v-warn'],
+    410:['✗ <b>410</b> — AI không nhận ra id nó vừa cấp. Hai container AI đang dùng '+
+         '<b>store khác nhau</b>; kiểm volume <code>ai-prescription-history</code>.','v-err'],
+    503:['✗ <b>503</b> — không gọi được AI.','v-err']
+  }[r.status] || ['Mã lạ: '+r.status,'v-err'];
+  verdict('v6', msg[0], msg[1]);
+}
+
+async function run7(){
+  setSt('s7','…','info');
+  const r = await call('/api/v1/anomaly-classifications/'+$('clsId').value+'/feedback',
+    {method:'POST', body:{feedback:Number($('cfVal').value)}});
+  show('o7', r.data); setSt('s7', r.status, r.status===200?'ok':'err');
+  verdict('v7', r.status===200
+    ? '✔ BE đã lưu và chuyển tiếp sang AI.<br><span style="color:var(--muted)">'+
+      'BE gọi AI <b>sau</b> khi lưu và bỏ qua kết quả — nên 200 ở đây chứng minh phần LƯU. '+
+      'Muốn chắc AI nhận được, xem <code>prescription_metrics</code> hoặc chạy '+
+      '<code>tools/e2e-ai-integration.sh</code> (nó so bộ đếm trước/sau).</span>'
+    : '✗ Thất bại — xem response bên dưới.',
+    r.status===200?'v-ok':'v-err');
+}
+
+async function run8(){
+  setSt('s8','…','info');
+  if(!MGR){ setSt('s8','thiếu token Manager','err');
+    verdict('v8','Chưa đăng nhập được Manager — endpoint này chỉ cho role Manager.','v-err'); return; }
+  const r = await call('/api/admin/tickets/'+$('ticketId').value+'/re-verify',
+    {method:'POST', token:MGR});
+  show('o8', r.data); setSt('s8', r.status, r.status===200?'ok':(r.status===403?'err':'warn'));
+  const msg = {
+    200:['✔ AI đã chấm ticket. Kiểm DB: <code>ai_verify_status</code> phải rời <b>1</b> sang '+
+         '<b>2 (Legitimate)</b> hoặc <b>3 (Suspicious)</b>, kèm score và lý do tiếng Việt.','v-ok'],
+    400:['Ticket đã có verdict rồi (guard idempotent) hoặc không phải ticket khách tự tạo. '+
+         'Bấm <b>Tìm ticket đủ điều kiện</b>.','v-warn'],
+    403:['✗ <b>403</b> — token không phải Manager.','v-err'],
+    409:['Ticket đã đóng nên không sửa được — chọn ticket còn mở.','v-warn'],
+    404:['Không tìm thấy ticket.','v-warn']
+  }[r.status] || ['Mã lạ: '+r.status,'v-err'];
+  verdict('v8', msg[0], msg[1]);
+}
+
+async function runAll(){
+  $('btnAll').disabled = true;
+  verdict('vAll','Đang chạy…','v-warn');
+  // Thứ tự có ràng buộc: 5 phải trước 6 (alert cần AiPrescriptionId), 2 trước 7 (cần clsId).
+  await run1(); await run2(); await run3(); await run4();
+  await run5(); await run6(); await run7(); await run8();
+  const st = ['s1','s2','s3','s4','s5','s6','s7','s8'].map(id=>$(id).textContent.trim());
+  const ok = st.filter(s=>s==='200').length;
+  verdict('vAll', `Xong: <b>${ok}/8</b> trả 200. Mã ${st.join(' · ')}`+
+    '<br><span style="color:var(--muted)">Không phải mã nào khác 200 cũng là lỗi — '+
+    '409/400 thường là ràng buộc nghiệp vụ. Đọc kết luận trong từng thẻ.</span>',
+    ok>=6?'v-ok':'v-warn');
+  $('btnAll').disabled = false;
+}
+</script>
+</body>
+</html>

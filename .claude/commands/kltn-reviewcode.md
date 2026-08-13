@@ -8,7 +8,7 @@ Review code hiện tại trước khi ship.
 
 **Bước 2 — Lấy issue number từ branch**
 ```bash
-# Lấy issue number từ tên branch (vd: feature/GH-12-ten → TICKET_ID = GH-12)
+# Lấy issue number từ tên branch (vd: feat/GH-12-ten → TICKET_ID = GH-12)
 git branch --show-current | grep -oE 'GH-[0-9]+'
 ```
 Gọi kết quả là **TICKET_ID** (ví dụ: `GH-12`). Dùng TICKET_ID cho tất cả bước sau.
@@ -22,7 +22,7 @@ Dùng Edit tool cập nhật `logs/TICKET_ID/plan.md`:
 
 **Bước 4 — Lấy diff**
 ```bash
-git diff main...HEAD
+git diff dev...HEAD
 ```
 
 **Bước 5 — Chạy checklist theo role, xuất kết quả**

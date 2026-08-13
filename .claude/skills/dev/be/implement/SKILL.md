@@ -133,7 +133,7 @@ You are implementing GitHub Issue #$ISSUE_NUMBER for a Backend (ASP.NET Core / C
 
 Follow ALL coding conventions in .codex/skills/be/ (entity, CQRS commands/queries, controller, migration, custom IValidatable<T>).
 
-Branch to create: feature/GH-$ISSUE_NUMBER-$SLUG
+Branch to create: feat/GH-$ISSUE_NUMBER-$SLUG
 
 == IMPLEMENTATION PLAN ==
 [toàn bộ nội dung logs/GH-$ISSUE_NUMBER/plan.md được paste ở đây]
@@ -158,7 +158,7 @@ Rules:
 ### Bước 3 — Tạo branch
 ```bash
 # Slug: viết thường, chỉ a-z/0-9/gạch ngang, tối đa 5 từ
-# Ví dụ: "Add Battery CRUD API" → feature/GH-42-add-battery-crud-api
+# Ví dụ: "Add Battery CRUD API" → feat/GH-42-add-battery-crud-api
 SLUG=$(gh issue view $ISSUE_NUMBER --json title -q '.title' \
   | tr '[:upper:]' '[:lower:]' \
   | tr -cs 'a-z0-9' '-' \
@@ -166,7 +166,7 @@ SLUG=$(gh issue view $ISSUE_NUMBER --json title -q '.title' \
   | cut -d'-' -f1-5 \
   | sed 's/-$//')
 
-git checkout -b feature/GH-$ISSUE_NUMBER-$SLUG
+git checkout -b feat/GH-$ISSUE_NUMBER-$SLUG
 ```
 
 ### Bước 4 — Implement theo đúng layer (Clean Architecture + CQRS)

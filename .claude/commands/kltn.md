@@ -24,9 +24,9 @@ Hiển thị toàn bộ commands và hướng dẫn sử dụng hàng ngày củ
 | `/kltn-implement GH-XX` | Implement — **yêu cầu plan đã approved** |
 | `/kltn-reviewcode` | Review code trước khi ship — xuất PASS / FAIL |
 | `/kltn-test GH-XX` | Kiểm thử sau khi reviewcode PASS — xuất PASS / FAIL |
-| `/kltn-ship GH-XX` | Tạo PR + cập nhật label → reviewing |
-| `/kltn-reviewpr GH-XX` | Review PR của đồng đội — APPROVE hoặc REQUEST CHANGES (chỉ reviewer) |
-| `/kltn-complete GH-XX` | Sau khi PR APPROVE: handoff → push → merge → done (chỉ author) |
+| `/kltn-ship GH-XX` | Tạo PR + handoff file + cập nhật label → reviewing |
+| `/kltn-complete GH-XX` | Sau khi PR APPROVE trên GitHub: merge → done (chỉ author) |
+| `/kltn-debug GH-XX` | Fix bug từ issue log sheet — detect branch, đọc lỗi, fix, push |
 
 **Luồng chuẩn (bắt buộc với MỌI task):**
 ```
@@ -34,8 +34,8 @@ Hiển thị toàn bộ commands và hướng dẫn sử dụng hàng ngày củ
 [Author]   /kltn-plan GH-XX      → đọc issue → hỏi nếu chưa rõ → plan.md → approve
 [Author]   /kltn-implement GH-XX → implement từng bước trong plan
            → /kltn-reviewcode → /kltn-test GH-XX → /kltn-ship GH-XX
-[Reviewer] /kltn-reviewpr GH-XX  → APPROVE hoặc REQUEST CHANGES
-[Author]   /kltn-complete GH-XX  → handoff → merge → Done
+[Reviewer] review PR trực tiếp trên GitHub → APPROVE hoặc REQUEST CHANGES
+[Author]   /kltn-complete GH-XX  → merge → Done
 ```
 
 **Ví dụ thực tế (issue #42):**
@@ -43,7 +43,8 @@ Hiển thị toàn bộ commands và hướng dẫn sử dụng hàng ngày củ
 /kltn-task          ← tạo issue #42 (nếu chưa có)
 /kltn-plan 42       ← đọc issue, hỏi nếu scope/approach chưa rõ, tạo plan
 /kltn-implement 42  ← implement theo plan đã approve
-/kltn-ship 42       ← tạo PR, label → reviewing
+/kltn-ship 42       ← tạo PR + handoff file, label → reviewing
+                    ← reviewer xem PR trên GitHub và approve
 /kltn-complete 42   ← merge PR, label → done
 ```
 
@@ -137,11 +138,10 @@ claude
 /kltn-ship 12      ← Claude tạo PR + comment vào Issue
                    ← Label: implementing → reviewing
 
-# 7. Reviewer chạy
-/kltn-reviewpr 12  ← APPROVE hoặc REQUEST CHANGES
+# 7. Reviewer xem PR trên GitHub và approve (không cần dùng claude)
 
 # 8. Author chạy sau khi được APPROVE
-/kltn-complete 12  ← handoff → merge PR → label: done
+/kltn-complete 12  ← merge PR → label: done
 ```
 
 ---
@@ -161,15 +161,16 @@ dùng context7 tìm cách dùng useMutation trong TanStack Query v5
 Ticket được coi là **Done** khi **đủ cả 3**:
 1. `/kltn-reviewcode` → PASS
 2. `/kltn-test GH-XX` → PASS
-3. PR được ≥ 1 người approve và merged vào main
+3. PR được ≥ 1 người approve và merged vào dev
 
 ---
 
 ### Quy tắc bắt buộc
 
-- Không push thẳng lên `main` — luôn qua PR
+- Không push thẳng lên `dev` — luôn qua PR
 - Không merge PR của chính mình — cần ít nhất 1 người approve
-- 1 issue = 1 branch: `feature/GH-[number]-ten-ngan`
+- Branch theo type: `feat/GH-[number]-slug` (feature) · `fix/GH-[number]-slug` (bug fix) · `chore/[purpose]` · `docs/[purpose]` · `refactor/[purpose]` · `test/[purpose]`
+- 1 issue = 1 branch, merge chỉ qua PR vào `dev`
 - Commit format: `feat(#42): mô tả` / `fix(#42)` / `refactor(#42)` / `test(#42)`
 - PR body phải có `Closes #[number]` để GitHub tự close issue khi merge
 - Không commit `CLAUDE.local.md` — đã có trong `.gitignore`

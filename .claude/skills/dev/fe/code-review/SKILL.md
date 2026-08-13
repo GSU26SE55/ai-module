@@ -10,7 +10,7 @@
 **Đọc diff thực sự TRƯỚC khi viết bất cứ điều gì.**
 
 ```bash
-git diff main...HEAD
+git diff dev...HEAD
 # hoặc nếu đã stage: git diff --staged
 ```
 
@@ -33,7 +33,7 @@ Không nhận xét từ memory hay đọc lướt. Tool calls trước, text out
 
 ```bash
 git branch --show-current | grep -oE 'GH-[0-9]+'
-# feature/GH-34-login-page → TICKET_ID = GH-34
+# feat/GH-34-login-page → TICKET_ID = GH-34
 ```
 
 Nếu không xác định được → hỏi user trước khi tiếp tục.
@@ -136,7 +136,7 @@ _Vấn đề:_ Không check nội dung — có thể gọi API trực tiếp tro
 
 **ĐÚNG** — Đọc diff từng file, ghi lỗi cụ thể:
 ```
-git diff main...HEAD -- src/features/admin/pages/UserManagementPage.tsx
+git diff dev...HEAD -- src/features/admin/pages/UserManagementPage.tsx
 # → import { useTickets } from '../../manager/hooks/useTickets'  ← cross-feature import!
 # 🔴 Critical: src/features/admin/pages/UserManagementPage.tsx:3
 #    — admin import từ manager feature — vi phạm feature isolation

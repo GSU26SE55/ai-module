@@ -1,0 +1,77 @@
+# Dockerfile dùng `COPY . .`, nên mọi thứ không loại ở đây đều chui vào build
+# context và vào image.
+#
+# ⚠️ TUYỆT ĐỐI KHÔNG ignore models/weights/ và models/embeddings/ — image cần cả
+# hai: weights/ chứa model + scaler (kể cả bộ LFP), embeddings/ chứa vector store
+# ChromaDB cho RAG. Bỏ sót một trong hai thì container vẫn boot (load_lfp_models()
+# chỉ log warning) nhưng request chemistry="LFP" sẽ fail, còn prescribe enrich=true
+# thì mất hoàn toàn phần retrieval.
+
+# Môi trường ảo — thủ phạm lớn nhất: .venv chứa torch ~2GB
+.venv/
+venv/
+env/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Secrets — Docker Compose injects these at runtime. Never bake them into a layer.
+.env
+.env.*
+
+# CI, development and repository metadata are not runtime application files.
+.github/
+.codex/
+.agents/
+docs/
+tests/
+.mcp.json
+.pre-commit-config.yaml
+CLAUDE.md
+Jenkinsfile
+Makefile
+README.md
+ai-be-test-ui.html
+test*.py
+pyproject.toml
+pytest.ini
+requirements-dev.txt
+requirements.txt
+
+# Dữ liệu train/preprocess — chỉ cần lúc train, không cần lúc serve
+data/
+notebooks/
+
+# Log và kết quả chạy
+logs/
+TestResults/
+*.log
+
+# Mutable production state is mounted from /opt/solar-ai/data.
+models/prescription_history/
+models/classification_feedback/
+
+# Công cụ dev / IDE
+.vscode/
+.idea/
+.claude/
+.codegraph/
+.DS_Store
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose*.yml

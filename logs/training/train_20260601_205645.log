@@ -1,0 +1,22 @@
+2026-06-01 20:56:45  INFO     Log file: logs/training\train_20260601_205645.log
+2026-06-01 20:56:45  INFO     Loading data...
+2026-06-01 20:56:45  INFO       Train: 4812 | Val: 767 | Test: 329
+2026-06-01 20:56:46  INFO     MambaSOHPredictor — 66,497 trainable params
+2026-06-01 20:56:46  INFO     Config: lr=0.001, batch=32, epochs=5, patience=10
+2026-06-01 20:56:46  INFO     Starting training...
+2026-06-01 20:56:46  INFO      Epoch   TrainLoss     ValLoss   ValMAE%   ValRMSE%
+2026-06-01 20:56:46  INFO     -------------------------------------------------------
+2026-06-01 20:57:09  DEBUG         1    0.041945    0.010304    8.7098    10.1506
+2026-06-01 20:57:29  DEBUG         2    0.017403    0.007182    7.1867     8.4746
+2026-06-01 20:58:06  DEBUG         3    0.016657    0.006240    6.6429     7.8992
+2026-06-01 20:58:38  DEBUG         4    0.015955    0.010931    9.0441    10.4550
+2026-06-01 20:59:33  DEBUG         5    0.014965    0.003216    4.7158     5.6712
+2026-06-01 20:59:33  INFO     -------------------------------------------------------
+2026-06-01 20:59:33  INFO     Test MAE : 9.9232%  (target < 2.0%)
+2026-06-01 20:59:33  INFO     Test RMSE: 10.2680%  (target < 3.0%)
+2026-06-01 20:59:33  WARNING  MAE 9.9232% >= 2.0% target — consider more epochs or d_model=128
+2026-06-01 20:59:33  WARNING  RMSE 10.2680% >= 3.0% target — consider more epochs or d_model=128
+2026-06-01 20:59:33  INFO     Saved Mamba model -> D:\FPT\SEM9\GSU25SE55\ai-module\models\weights\soh_mamba_v1.0.pth
+2026-06-01 20:59:33  INFO     Training IsolationForest...
+2026-06-01 20:59:33  INFO     Saved IsolationForest -> D:\FPT\SEM9\GSU25SE55\ai-module\models\weights\isolation_forest_v1.0.pkl
+2026-06-01 20:59:33  INFO     Training complete.

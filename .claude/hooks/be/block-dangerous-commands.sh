@@ -24,8 +24,8 @@ fi
 
 if echo "$COMMAND" | grep -qE 'git\s+push\s+(--force\s+|--force-with-lease\s+)?origin\s+(main|master)(\s|$)'; then
   echo "BLOCKED: Không được push trực tiếp lên main/master." >&2
-  echo "  → Tạo branch: git checkout -b feature/KAN-XX-mo-ta" >&2
-  echo "  → Push branch: git push origin feature/KAN-XX-mo-ta" >&2
+  echo "  → Tạo branch: git checkout -b feat/GH-XX-mo-ta" >&2
+  echo "  → Push branch: git push origin feat/GH-XX-mo-ta" >&2
   echo "  → Mở PR trên GitHub để merge vào main." >&2
   exit 2
 fi

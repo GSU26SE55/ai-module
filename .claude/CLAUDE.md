@@ -13,7 +13,7 @@ Hệ thống agent hỗ trợ dự án Capstone **Solar Lithium-ion Battery Main
 **Hệ thống gồm 3 phần:**
 - Mobile App (React Native/Expo) — giám sát pin real-time, Customer dùng
 - Web App (ReactJS) — quản lý Admin/Manager/Staff + SLA ticket theo ITIL
-- AI Module (FastAPI + PyTorch) — phân loại trạng thái pin, dự đoán SOH bằng LSTM/CNN-LSTM
+- AI Module (FastAPI + PyTorch) — phân loại trạng thái pin, dự đoán SOH bằng **Mamba (SSM)** + Isolation Forest
 
 > Core business flow (4 role · 6 phase · ticket state machine · SLA): [docs/core-business-flow.md](docs/core-business-flow.md)
 > Chi tiết đầy đủ xem tại: [memory.md](memory.md)
@@ -105,7 +105,7 @@ Ngoài ra: `ESCALATED` (từ P1/P2 breach hoặc Staff request) · `CLOSED_REJEC
         │   ├── code-review/SKILL.md           ← /kltn-reviewcode
         │   ├── test/SKILL.md                  ← /kltn-test [issue-number]
         │   ├── ship/SKILL.md                  ← /kltn-ship [issue-number]
-        │   ├── review-pr/SKILL.md             ← /kltn-reviewpr [issue-number]
+        │   ├── debug/SKILL.md                 ← /kltn-debug [issue-number]
         │   ├── scaffold-entity/SKILL.md       ← /scaffold-entity Service Entity
         │   ├── scaffold-dto/SKILL.md          ← /scaffold-dto Service Entity
         │   ├── scaffold-cqrs-command/SKILL.md ← /scaffold-cqrs-command Service Entity Action
@@ -121,9 +121,9 @@ Ngoài ra: `ESCALATED` (từ P1/P2 breach hoặc Staff request) · `CLOSED_REJEC
         │   ├── code-review/SKILL.md ← /kltn-reviewcode
         │   ├── test/SKILL.md        ← /kltn-test [issue-number]
         │   ├── ship/SKILL.md        ← /kltn-ship [issue-number]
-        │   └── review-pr/SKILL.md   ← /kltn-reviewpr [issue-number]
+        │   └── debug/SKILL.md       ← /kltn-debug [issue-number]
         └── ai/            ← AI Dev dùng
-            ├── implement/SKILL.md, code-review/SKILL.md, test/SKILL.md, ship/SKILL.md, review-pr/SKILL.md
+            ├── implement/SKILL.md, code-review/SKILL.md, test/SKILL.md, ship/SKILL.md, debug/SKILL.md
             └── scaffold-fastapi-endpoint/SKILL.md ← /scaffold-fastapi-endpoint <name>
 ```
 
@@ -152,9 +152,8 @@ Role phụ:   FE, AI    ← có thể dùng skills/dev/fe/ và skills/dev/ai/
 | `/kltn-implement` | ✅ | ✅ | ✅ | Theo role của ticket |
 | `/kltn-reviewcode` | ✅ | ✅ | ✅ | Theo role của ticket |
 | `/kltn-test` | ✅ | ✅ | ✅ | Không dùng Playwright/screenshot |
-| `/kltn-ship` | ✅ | ✅ | ✅ | |
-| `/kltn-reviewpr` | ✅ | ✅ | ✅ | Reviewer chạy — chỉ approve/request-changes |
-| `/kltn-complete` | ✅ | ✅ | ✅ | Author chạy sau khi PR được approve |
+| `/kltn-ship` | ✅ | ✅ | ✅ | Tạo PR + handoff file |
+| `/kltn-complete` | ✅ | ✅ | ✅ | Author chạy sau khi PR được approve trên GitHub |
 | `/kltn-task` | ✅ | ✅ | ✅ | Tạo issue mới vào sub-repo của mình |
 | `/scaffold-crud` | ✅ | ✅ | 🔶 | FE dùng khi làm task BE phụ |
 | `/scaffold-entity` | ✅ | ✅ | 🔶 | |
@@ -201,12 +200,12 @@ Leader sync về sub-repo qua `bash push-config.sh` (push workflow-ai lên org, 
 ## Nguyên tắc hoạt động
 
 - **Rules** — quy tắc bất biến, không ai được bỏ qua khi code
-- **Dev workflow** — quy trình chuẩn: (tùy chọn: `/kltn-task` tạo task mới) → `/kltn-plan` → `/kltn-implement` → code → `/kltn-reviewcode` → `/kltn-test` → `/kltn-ship` → [reviewer] `/kltn-reviewpr` → [author] `/kltn-complete`
+- **Dev workflow** — quy trình chuẩn: (tùy chọn: `/kltn-task` tạo task mới) → `/kltn-plan` → `/kltn-implement` → code → `/kltn-reviewcode` → `/kltn-test` → `/kltn-ship` → [reviewer approve trên GitHub] → [author] `/kltn-complete`
 - **BE scaffold** — tạo boilerplate nhanh: `/scaffold-crud Service Entity` (full CRUD 1 lệnh)
 - **Leader skills** — tracking và planning, không can thiệp vào flow coding của dev
 - **Hooks** — tự động chạy sau mỗi edit .cs: build check, namespace validate, anti-pattern warning
 - **RTK** — global hook trong `~/.claude/settings.json` tự động wrap mọi lệnh Bash qua `rtk` trước khi chạy; giảm 60–90% token. Mọi thành viên phải chạy `rtk init -g --auto-patch` 1 lần sau khi cài RTK (xem `docs/setup.md`)
-- **Log files** — `/kltn-reviewcode` ghi `logs/GH-[number]/review.md`, `/kltn-test` ghi `logs/GH-[number]/test.md`; `/kltn-ship` commit cả folder `logs/GH-[number]/` lên branch trước khi tạo PR; `/kltn-complete` tạo `logs/GH-[number]/handoff.md` rồi push → merge
+- **Log files** — `/kltn-reviewcode` ghi `logs/GH-[number]/review.md`, `/kltn-test` ghi `logs/GH-[number]/test.md`; `/kltn-ship` commit logs + tạo `logs/GH-[number]/handoff.md` + push lên branch trước khi tạo PR; `/kltn-complete` cập nhật handoff → push → merge
 - Sprint plan và leader report (`/kltn-team`, `/kltn-member`) xuất trong conversation — không lưu file
 
 ### Lệnh kltn — tất cả role
@@ -218,9 +217,9 @@ Leader sync về sub-repo qua `bash push-config.sh` (push workflow-ai lên org, 
 | `/kltn-implement 123` | Dev | Implement — **yêu cầu plan đã approved** (chạy sau `/kltn-plan`) |
 | `/kltn-reviewcode` | Dev | Review diff — PASS / FAIL |
 | `/kltn-test 123` | Dev | Chạy test — PASS / FAIL |
-| `/kltn-ship 123` | Dev | Tạo PR + label → reviewing |
-| `/kltn-reviewpr 123` | Reviewer | Review PR → APPROVE / REQUEST CHANGES |
-| `/kltn-complete 123` | Author | Merge PR + label → done |
+| `/kltn-ship 123` | Dev | Tạo PR + handoff file + label → reviewing |
+| `/kltn-complete 123` | Author | Merge PR + label → done (sau khi approve trên GitHub) |
+| `/kltn-debug 123` | Dev | Fix bug từ issue log sheet — detect branch, phân tích lỗi, fix, push |
 | `/kltn-sprint` | **Leader** | Lên kế hoạch sprint — tạo issues + phân công |
 | `/kltn-team` | **Leader** | Báo cáo tiến độ toàn team |
 | `/kltn-member [tên]` | **Leader** | Check tiến độ từng người |
@@ -240,3 +239,26 @@ Thêm RabbitMQ consumer:
 Viết unit tests:
 4. /scaffold-unit-tests BatteryService Battery
 ```
+
+---
+
+## Quy tắc đặt tên Branch
+
+| Branch | Mục đích | Tạo bởi |
+|--------|----------|---------|
+| `main` | Production-ready; protected — merge chỉ qua approved PR | — |
+| `dev` | Integration — target cho mọi feature PR | — |
+| `staging` | Test gần production | — |
+| `feat/GH-[number]-slug` | Feature branch — 1 issue = 1 branch | `/kltn-implement` |
+| `fix/GH-[number]-slug` | Bug fix — issue label `type: fix` | `/kltn-debug` |
+| `chore/[purpose]` | Maintenance — deps, config, tooling | manual |
+| `docs/[purpose]` | Documentation | manual |
+| `refactor/[purpose]` | Refactor — không đổi behavior | manual |
+| `test/[purpose]` | Viết / cập nhật test cases | manual |
+
+**Quy tắc bắt buộc:**
+- 1 issue = 1 branch — không gộp nhiều issue vào 1 branch
+- `slug` là tên ngắn mô tả issue, dùng kebab-case (ví dụ: `feat/GH-42-add-battery-crud`)
+- Không merge thẳng vào `dev` — luôn qua PR có ít nhất 1 reviewer approve
+- Commit message: `type(#[number]): mô tả` (ví dụ: `feat(#42): add Battery CRUD`)
+- PR body **phải có** `Closes #[number]` để GitHub tự close issue khi merge

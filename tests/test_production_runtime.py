@@ -1,0 +1,49 @@
+"""Production lifecycle, manifest and standard gRPC health contracts."""
+
+from unittest.mock import Mock
+
+import grpc
+from fastapi.testclient import TestClient
+from grpc_health.v1 import health_pb2, health_pb2_grpc
+
+from src.core.artifact_manifest import verify_model_manifest
+
+
+def test_committed_model_manifest_verifies():
+    result = verify_model_manifest()
+    assert result["verified"] is True
+    assert result["artifacts"] >= 21
+
+
+def test_standard_grpc_health_is_serving():
+    from src.grpc_server import create_server
+
+    server = create_server(port=0, host="127.0.0.1")
+    port = server._ai_bound_port
+    server.start()
+    channel = grpc.insecure_channel(f"127.0.0.1:{port}")
+    response = health_pb2_grpc.HealthStub(channel).Check(
+        health_pb2.HealthCheckRequest(service="aimodule.v1.AiService"), timeout=5
+    )
+    assert response.status == health_pb2.HealthCheckResponse.SERVING
+    channel.close()
+    server.stop(grace=None)
+
+
+def test_fastapi_lifespan_starts_and_stops_grpc(monkeypatch):
+    import main
+
+    fake_server = Mock()
+    fake_server.stop.return_value.wait.return_value = None
+    monkeypatch.setenv("AI_ENABLE_GRPC", "true")
+    monkeypatch.setattr(main, "verify_model_manifest", Mock())
+    monkeypatch.setattr(main, "load_models", Mock())
+    monkeypatch.setattr(main, "create_server", Mock(return_value=fake_server))
+    monkeypatch.setattr(main, "mark_server_not_serving", Mock())
+
+    with TestClient(main.app) as client:
+        assert client.get("/live").status_code == 200
+
+    fake_server.start.assert_called_once_with()
+    main.mark_server_not_serving.assert_called_once_with(fake_server)
+    fake_server.stop.assert_called_once_with(grace=10)

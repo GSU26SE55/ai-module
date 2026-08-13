@@ -1,0 +1,39 @@
+{
+  "variant": "no_weighted_loss",
+  "commit": "f55d0266cd6e02ed3bf360d05abe3bf1a1683e1d",
+  "protocol": "OLD split 23/2/1 (B0047 in VAL), seed 42, L=4096",
+  "baseline_full_v22": {
+    "test_mae_pct": 1.5232,
+    "test_rmse_pct": 1.9708
+  },
+  "test_mae_pct": 1.3188,
+  "test_rmse_pct": 1.6939,
+  "checkpoint_meta": {
+    "version": "2.2",
+    "seq_len": "4096",
+    "pooling": "attention",
+    "input_features": "6",
+    "feat_dim": "57",
+    "d_model": "64",
+    "d_state": "32",
+    "patch_size": "16",
+    "patch_stride": "8",
+    "attention_heads": "1",
+    "patch_deg_enc": "True",
+    "film_depth": "2",
+    "loss": "smooth_l1_beta0.02",
+    "weighted_loss": "False",
+    "scheduler": "cosine_warmrestarts",
+    "cosine_t0": "80",
+    "scheduler_warmup": "cosine_warmrestarts",
+    "warmup_cosine_t0": "3",
+    "optimizer": "adamw",
+    "weight_decay": "0.0003",
+    "dropout": "0.3",
+    "jitter": "0.0075",
+    "swa": "False",
+    "final_weights": "best-val-checkpoint",
+    "test_mae": "1.3188",
+    "test_rmse": "1.6939"
+  }
+}
