@@ -75,15 +75,6 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(_HERE))  # repo root -> src.*
 sys.path.insert(0, _HERE)  # scripts/    -> preprocess_lfp
 
-from src.core.config import (  # noqa: E402
-    BASE_FEATURES,
-    LFP_FEATURE_SCALER_PATH,
-    LFP_MODEL_VERSION,
-    LFP_NOMINAL_CAPACITY_AH,
-    LFP_SCALER_PATH,
-    WINDOW_SIZE,
-    WINDOW_STRIDE,
-)
 import preprocess_lfp  # noqa: E402  (module handle — see --cycle-count-norm in main())
 from preprocess_lfp import (  # noqa: E402
     CYCLE_COUNT_NORM,
@@ -98,6 +89,16 @@ from preprocess_lfp import (  # noqa: E402
     _nonphysical_channel,
     cycles_to_windows,
     load_batch_file,
+)
+
+from src.core.config import (  # noqa: E402
+    BASE_FEATURES,
+    LFP_FEATURE_SCALER_PATH,
+    LFP_MODEL_VERSION,
+    LFP_NOMINAL_CAPACITY_AH,
+    LFP_SCALER_PATH,
+    WINDOW_SIZE,
+    WINDOW_STRIDE,
 )
 
 # Column names required in every cycle_data entry. Asserted rather than assumed:

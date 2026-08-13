@@ -3,8 +3,8 @@
 import pytest
 import torch
 
-from src.core.config import BASE_FEATURES, INPUT_FEATURES, WINDOW_SIZE
 from scripts.train import _balance_band_weights
+from src.core.config import BASE_FEATURES, INPUT_FEATURES, WINDOW_SIZE
 
 TEMP_IDX = BASE_FEATURES.index("temperature")
 

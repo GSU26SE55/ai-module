@@ -13,7 +13,6 @@ from src.core.config import (
     SPECTRAL_FEAT_DIM,
     WINDOW_SIZE,
 )
-
 from src.models.soh_predictor import MambaSOHPredictor
 
 BASE_N = len(BASE_FEATURES)  # GH-54: payload/scaler width (4)

@@ -28,14 +28,16 @@ from torch.utils.data import DataLoader, TensorDataset
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from scripts.preprocess import load_cycles, cycles_to_windows  # noqa: E402
+from scripts.preprocess import cycles_to_windows, load_cycles  # noqa: E402
 from scripts.preprocess_forecast import available_batteries, batteries_at_temp  # noqa: E402
 from scripts.train import setup_logger  # noqa: E402  (logs to logs/training/)
 from src.core.config import D_MODEL, D_STATE, SPECTRAL_FEAT_DIM  # noqa: E402
 from src.models.soh_predictor import MambaSOHPredictor  # noqa: E402
 
 SEED = 42
-random.seed(SEED); np.random.seed(SEED); torch.manual_seed(SEED)
+random.seed(SEED)
+np.random.seed(SEED)
+torch.manual_seed(SEED)
 
 
 def collect(data_dir, bids):
@@ -63,13 +65,16 @@ def window_per_battery(data_dir, bids):
         try:
             cyc = load_cycles(data_dir, bid)
         except Exception as e:
-            print(f"  {bid}: skipped ({e})"); continue
+            print(f"  {bid}: skipped ({e})")
+            continue
         if not cyc:
             continue
         raw = np.concatenate([c for c, _ in cyc], axis=0)
         mm = MinMaxScaler().fit(raw)
         X, F, y = cycles_to_windows(cyc, mm)
-        Xs.append(X); Fs.append(F); ys.append(y)
+        Xs.append(X)
+        Fs.append(F)
+        ys.append(y)
     return np.concatenate(Xs), np.concatenate(Fs), np.concatenate(ys)
 
 
@@ -78,31 +83,45 @@ def main():
     ap.add_argument("--data-dir", default="data/raw/nasa/cleaned_dataset")
     ap.add_argument("--epochs", type=int, default=80)
     ap.add_argument("--test-id", default="B0018")
-    ap.add_argument("--official-mamba", action="store_true",
-                    help="Use official CUDA mamba_ssm (Kaggle/Colab GPU only; same accuracy)")
-    ap.add_argument("--temp", type=float, default=None,
-                    help="restrict pool to batteries at this ambient temperature (e.g. 24) — same-condition, no domain shift")
-    ap.add_argument("--per-battery-norm", action="store_true",
-                    help="scale each battery by its own MinMax (fixes scaler distortion from extreme batteries)")
+    ap.add_argument(
+        "--official-mamba",
+        action="store_true",
+        help="Use official CUDA mamba_ssm (Kaggle/Colab GPU only; same accuracy)",
+    )
+    ap.add_argument(
+        "--temp",
+        type=float,
+        default=None,
+        help="restrict pool to batteries at this ambient temperature (e.g. 24) — same-condition, no domain shift",
+    )
+    ap.add_argument(
+        "--per-battery-norm",
+        action="store_true",
+        help="scale each battery by its own MinMax (fixes scaler distortion from extreme batteries)",
+    )
     args = ap.parse_args()
     logger = setup_logger("logs/training")
     logger.info("=== Multi-battery NOWCASTING experiment (GH-13 follow-up) ===")
 
     if args.temp is not None:
         all_ids = batteries_at_temp(args.data_dir, args.temp)
-        logger.info(f"Same-condition filter: ambient_temperature = {args.temp}°C -> {len(all_ids)} batteries")
+        logger.info(
+            f"Same-condition filter: ambient_temperature = {args.temp}°C -> {len(all_ids)} batteries"
+        )
     else:
         all_ids = available_batteries(args.data_dir)
     train_ids = [b for b in all_ids if b != args.test_id]
     logger.info(f"Train pool: {len(train_ids)} batteries (all except {args.test_id})")
 
-    logger.info(f"Normalization: {'per-battery MinMax' if args.per_battery_norm else 'global MinMax'}")
+    logger.info(
+        f"Normalization: {'per-battery MinMax' if args.per_battery_norm else 'global MinMax'}"
+    )
     if args.per_battery_norm:
         Xtr, Ftr_raw, ytr = window_per_battery(args.data_dir, train_ids)
         Xte, Fte_raw, yte = window_per_battery(args.data_dir, [args.test_id])
     else:
         train_cycles = collect(args.data_dir, train_ids)
-        test_cycles  = collect(args.data_dir, [args.test_id])
+        test_cycles = collect(args.data_dir, [args.test_id])
         Xtr, Ftr_raw, ytr = window_global(train_cycles)
         Xte, Fte_raw, yte = window_global(test_cycles)
     feat_scaler = StandardScaler().fit(Ftr_raw)
@@ -110,22 +129,33 @@ def main():
     Fte = feat_scaler.transform(Fte_raw).astype(np.float32)
     logger.info(f"Train windows: {len(Xtr)} | Test windows: {len(Xte)}")
 
-    Xtr = torch.tensor(Xtr); Ftr = torch.tensor(Ftr); ytr = torch.tensor(ytr)
-    Xte = torch.tensor(Xte); Fte = torch.tensor(Fte); yte = torch.tensor(yte)
+    Xtr = torch.tensor(Xtr)
+    Ftr = torch.tensor(Ftr)
+    ytr = torch.tensor(ytr)
+    Xte = torch.tensor(Xte)
+    Fte = torch.tensor(Fte)
+    yte = torch.tensor(yte)
 
     # Carve 15% val for early stopping
     rng = np.random.RandomState(SEED)
-    idx = rng.permutation(len(Xtr)); nv = int(len(Xtr) * 0.15)
+    idx = rng.permutation(len(Xtr))
+    nv = int(len(Xtr) * 0.15)
     vi, ti = idx[:nv], idx[nv:]
 
     loader = DataLoader(TensorDataset(Xtr[ti], Ftr[ti], ytr[ti]), batch_size=32, shuffle=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(SEED)
-    model = MambaSOHPredictor(input_features=Xtr.shape[-1], feat_dim=SPECTRAL_FEAT_DIM,
-                              d_model=D_MODEL, d_state=D_STATE,
-                              use_official_mamba=args.official_mamba).to(device)
+    model = MambaSOHPredictor(
+        input_features=Xtr.shape[-1],
+        feat_dim=SPECTRAL_FEAT_DIM,
+        d_model=D_MODEL,
+        d_state=D_STATE,
+        use_official_mamba=args.official_mamba,
+    ).to(device)
     # Log the ACTUAL backend (may have fallen back to pure-PyTorch if mamba_ssm absent)
-    logger.info(f"Mamba backend: {'official CUDA mamba_ssm' if model.use_official_mamba else 'pure-PyTorch'}")
+    logger.info(
+        f"Mamba backend: {'official CUDA mamba_ssm' if model.use_official_mamba else 'pure-PyTorch'}"
+    )
     opt = torch.optim.Adam(model.parameters(), lr=5e-4, weight_decay=1e-5)
     crit = nn.MSELoss()
 
@@ -133,7 +163,9 @@ def main():
         model.eval()
         with torch.no_grad():
             pred = model(X.to(device), F.to(device)).cpu() * 100.0
-        return float(torch.mean(torch.abs(pred - y))), float(torch.sqrt(torch.mean((pred - y) ** 2)))
+        return float(torch.mean(torch.abs(pred - y))), float(
+            torch.sqrt(torch.mean((pred - y) ** 2))
+        )
 
     logger.info(f"Device: {device} | model params: {sum(p.numel() for p in model.parameters()):,}")
     logger.info(f"{'Epoch':>6}  {'ValMAE%':>8}")
@@ -153,7 +185,8 @@ def main():
         else:
             pc += 1
         if pc >= 15:
-            logger.info(f"Early stop at epoch {ep}"); break
+            logger.info(f"Early stop at epoch {ep}")
+            break
 
     model.load_state_dict(best_state)
     mae, rmse = evaluate(Xte, Fte, yte)

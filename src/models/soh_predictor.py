@@ -7,8 +7,6 @@ import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint as _ckpt
 
 
-
-
 class MambaBlock(nn.Module):
     """
     Pure-PyTorch Mamba block.

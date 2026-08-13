@@ -8,13 +8,13 @@ Usage:
 """
 import os
 
+from src.core.runtime import data_path
+from src.services.prescription.embedding import get_encoder
+
 # Requires chromadb + sentence-transformers (pinned in requirements.txt).
 # Build the vector store once via: python scripts/ingest_rag.py
 
-EMBEDDINGS_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
-    "models", "embeddings",
-)
+EMBEDDINGS_DIR = str(data_path("AI_KB_DIR", "embeddings"))
 KNOWLEDGE_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
     "knowledge",
@@ -31,10 +31,8 @@ class RagRetriever:
         # Lazy import — only needed when RAG is active
         try:
             import chromadb
-            from sentence_transformers import SentenceTransformer
-
             self._client = chromadb.PersistentClient(path=EMBEDDINGS_DIR)
-            self._encoder = SentenceTransformer("all-MiniLM-L6-v2")
+            self._encoder = get_encoder()
             # cosine space → relevance_score = 1 - cosine_distance ∈ [0, 1] for similar docs.
             # NOTE: ChromaDB reconstructs its default ONNX embedder when reopening a persisted
             # collection; `import onnxruntime` can fail inside a worker thread on Windows. We
@@ -45,7 +43,7 @@ class RagRetriever:
             self._safety_col = self._client.get_or_create_collection(
                 "safety", metadata={"hnsw:space": "cosine"})
             self._ready = True
-        except ImportError:
+        except Exception:
             self._ready = False
 
     def retrieve_maintenance(self, query: str, top_k: int = 3) -> list[dict]:

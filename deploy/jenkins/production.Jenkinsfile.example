@@ -1,0 +1,191 @@
+// Review this file, then paste it into the centrally managed
+// `solar-ai-production` Pipeline job. Do not configure that job to load its
+// production pipeline script from an untrusted pull-request workspace.
+pipeline {
+    agent { label 'docker-linux' }
+
+    parameters {
+        string(name: 'GIT_SHA', defaultValue: '', description: 'Exact main commit to deploy')
+    }
+
+    options {
+        disableConcurrentBuilds()
+        timestamps()
+        timeout(time: 60, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '30', artifactNumToKeepStr: '15'))
+        skipDefaultCheckout(true)
+    }
+
+    environment {
+        REPOSITORY_URL = 'https://github.com/GSU26SE55/ai-module.git'
+        PIP_DISABLE_PIP_VERSION_CHECK = '1'
+        HF_HUB_OFFLINE = '1'
+        TRANSFORMERS_OFFLINE = '1'
+    }
+
+    stages {
+        stage('Validate immutable main revision') {
+            steps {
+                script {
+                    if (!(params.GIT_SHA ==~ /[0-9a-f]{40}/)) {
+                        error('GIT_SHA must contain exactly 40 lower-case hex characters')
+                    }
+                    env.RELEASE_SHA = params.GIT_SHA
+                }
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: 'refs/heads/main']],
+                    doGenerateSubmoduleConfigurations: false,
+                    extensions: [[$class: 'CloneOption', noTags: true, shallow: false]],
+                    userRemoteConfigs: [[
+                        url: env.REPOSITORY_URL,
+                        credentialsId: 'ai-github-read'
+                    ]]
+                ])
+                sh '''
+                    set -eu
+                    actual_sha="$(git rev-parse HEAD)"
+                    test "${actual_sha}" = "${RELEASE_SHA}" || {
+                      echo "Refusing stale release: main=${actual_sha}, requested=${RELEASE_SHA}" >&2
+                      exit 1
+                    }
+                    git diff --check
+                '''
+            }
+        }
+
+        stage('Rebuild and rescan trusted revision') {
+            steps {
+                withCredentials([
+                    string(credentialsId: 'ai-image-repository', variable: 'IMAGE_REPOSITORY')
+                ]) {
+                    sh '''
+                        set -eu
+                        image_tag="${IMAGE_REPOSITORY}:${RELEASE_SHA}"
+                        docker build \
+                          --pull \
+                          --build-arg BUILD_COMMIT="${RELEASE_SHA}" \
+                          --build-arg BUILD_VERSION="${RELEASE_SHA}" \
+                          --tag "${image_tag}" \
+                          .
+                        trivy image \
+                          --ignore-unfixed \
+                          --exit-code 1 \
+                          --severity HIGH,CRITICAL \
+                          --format json \
+                          --output trivy-production-image.json \
+                          "${image_tag}"
+                        syft "${image_tag}" -o cyclonedx-json=sbom-production.cdx.json
+                    '''
+                }
+            }
+            post {
+                always {
+                    archiveArtifacts allowEmptyArchive: true,
+                        artifacts: 'trivy-production-image.json,sbom-production.cdx.json'
+                }
+            }
+        }
+
+        stage('Push, resolve digest and sign') {
+            steps {
+                withCredentials([
+                    string(credentialsId: 'ai-registry-host', variable: 'REGISTRY_HOST'),
+                    string(credentialsId: 'ai-image-repository', variable: 'IMAGE_REPOSITORY'),
+                    usernamePassword(
+                        credentialsId: 'ai-registry-write',
+                        usernameVariable: 'REGISTRY_USERNAME',
+                        passwordVariable: 'REGISTRY_PASSWORD'
+                    ),
+                    file(credentialsId: 'ai-cosign-private-key', variable: 'COSIGN_PRIVATE_KEY'),
+                    file(credentialsId: 'ai-cosign-public-key', variable: 'COSIGN_PUBLIC_KEY'),
+                    string(credentialsId: 'ai-cosign-password', variable: 'COSIGN_PASSWORD')
+                ]) {
+                    sh '''
+                        set -eu
+                        image_tag="${IMAGE_REPOSITORY}:${RELEASE_SHA}"
+                        printf '%s' "${REGISTRY_PASSWORD}" \
+                          | docker login "${REGISTRY_HOST}" \
+                              --username "${REGISTRY_USERNAME}" --password-stdin
+                        docker push "${image_tag}"
+                        docker pull "${image_tag}"
+                        image_ref="$(
+                          docker image inspect "${image_tag}" \
+                            --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+                            | grep -E "^${IMAGE_REPOSITORY}@sha256:[0-9a-f]{64}$" \
+                            | head -n 1
+                        )"
+                        test -n "${image_ref}"
+                        printf '%s\n' "${image_ref}" > image-ref.txt
+                        COSIGN_PASSWORD="${COSIGN_PASSWORD}" \
+                          cosign sign --yes --key "${COSIGN_PRIVATE_KEY}" "${image_ref}"
+                        cosign verify --key "${COSIGN_PUBLIC_KEY}" "${image_ref}"
+                    '''
+                }
+                archiveArtifacts artifacts: 'image-ref.txt', fingerprint: true
+            }
+        }
+
+        stage('Deploy VPS2') {
+            steps {
+                lock(resource: 'solar-vps2-prod') {
+                    sshagent(credentials: ['ai-vps2-ssh']) {
+                        withCredentials([
+                            string(credentialsId: 'ai-vps2-target', variable: 'VPS_TARGET'),
+                            file(credentialsId: 'ai-vps2-known-hosts', variable: 'VPS_KNOWN_HOSTS')
+                        ]) {
+                            sh '''
+                                set -eu
+                                image_ref="$(cat image-ref.txt)"
+                                case "${image_ref}" in
+                                  *@sha256:????????????????????????????????????????????????????????????????) ;;
+                                  *) echo 'Invalid immutable image reference' >&2; exit 1 ;;
+                                esac
+
+                                payload="deployment-payload-${RELEASE_SHA}.tar.gz"
+                                remote_dir="/opt/solar-ai/incoming/${RELEASE_SHA}-${BUILD_NUMBER}"
+                                tar -czf "${payload}" docker-compose.prod.yml deploy
+                                ssh -o BatchMode=yes \
+                                  -o StrictHostKeyChecking=yes \
+                                  -o UserKnownHostsFile="${VPS_KNOWN_HOSTS}" \
+                                  "${VPS_TARGET}" "install -d -m 0750 '${remote_dir}'"
+                                scp -o BatchMode=yes \
+                                  -o StrictHostKeyChecking=yes \
+                                  -o UserKnownHostsFile="${VPS_KNOWN_HOSTS}" \
+                                  "${payload}" "${VPS_TARGET}:${remote_dir}/payload.tar.gz"
+                                ssh -o BatchMode=yes \
+                                  -o StrictHostKeyChecking=yes \
+                                  -o UserKnownHostsFile="${VPS_KNOWN_HOSTS}" \
+                                  "${VPS_TARGET}" \
+                                  "set -eu; tar -xzf '${remote_dir}/payload.tar.gz' -C '${remote_dir}'; chmod 0555 '${remote_dir}'/deploy/scripts/*.sh; '${remote_dir}/deploy/scripts/deploy.sh' '${RELEASE_SHA}' '${image_ref}'"
+                            '''
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Production deployment succeeded for ${env.RELEASE_SHA}"
+        }
+        failure {
+            echo 'Production deployment failed; the VPS deploy script attempted rollback'
+        }
+        always {
+            withCredentials([
+                string(credentialsId: 'ai-registry-host', variable: 'REGISTRY_HOST'),
+                string(credentialsId: 'ai-image-repository', variable: 'IMAGE_REPOSITORY')
+            ]) {
+                sh '''
+                    docker logout "${REGISTRY_HOST}" >/dev/null 2>&1 || true
+                    if [ -n "${RELEASE_SHA:-}" ]; then
+                      docker image rm "${IMAGE_REPOSITORY}:${RELEASE_SHA}" >/dev/null 2>&1 || true
+                    fi
+                '''
+            }
+            deleteDir()
+        }
+    }
+}

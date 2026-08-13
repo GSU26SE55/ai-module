@@ -93,7 +93,7 @@ def make_rul_windows(
     Xs, ys, last_idxs = [], [], []
     for start in range(0, n - lookback + 1, stride):
         last = start + lookback - 1
-        if last > eol:               # past End-of-Life — skip
+        if last > eol:  # past End-of-Life — skip
             continue
         Xs.append(feats[start : start + lookback])
         ys.append(float(eol - last))  # remaining cycles
@@ -115,15 +115,17 @@ def make_rul_windows(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data-dir",   default="data/raw/nasa/cleaned_dataset")
+    parser.add_argument("--data-dir", default="data/raw/nasa/cleaned_dataset")
     parser.add_argument("--output-dir", default="data/processed_rul")
-    parser.add_argument("--lookback",   type=int,   default=RUL_LOOKBACK)
-    parser.add_argument("--stride",     type=int,   default=RUL_STRIDE)
-    parser.add_argument("--eol-soh",    type=float, default=EOL_SOH)
+    parser.add_argument("--lookback", type=int, default=RUL_LOOKBACK)
+    parser.add_argument("--stride", type=int, default=RUL_STRIDE)
+    parser.add_argument("--eol-soh", type=float, default=EOL_SOH)
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
-    print(f"RUL lookback: {args.lookback} cycles | stride: {args.stride} | EOL: SOH<={args.eol_soh}%")
+    print(
+        f"RUL lookback: {args.lookback} cycles | stride: {args.stride} | EOL: SOH<={args.eol_soh}%"
+    )
 
     if not os.path.exists(SCALER_PATH):
         raise FileNotFoundError(
@@ -138,8 +140,11 @@ def main() -> None:
     for bid in TRAIN_IDS:
         feats, sohs = cycle_feature_series(args.data_dir, bid, scaler)
         X, y, _, eol = make_rul_windows(feats, sohs, args.lookback, args.stride, args.eol_soh)
-        print(f"  {bid}: {len(feats)} cycles | EOL@cycle {eol} (SOH {sohs[eol]:.1f}%) -> {len(X)} windows | RUL {y.min():.0f}..{y.max():.0f}")
-        Xtr.append(X); ytr.append(y)
+        print(
+            f"  {bid}: {len(feats)} cycles | EOL@cycle {eol} (SOH {sohs[eol]:.1f}%) -> {len(X)} windows | RUL {y.min():.0f}..{y.max():.0f}"
+        )
+        Xtr.append(X)
+        ytr.append(y)
     X_train = np.concatenate(Xtr, axis=0)
     y_train = np.concatenate(ytr, axis=0)
     if len(X_train) == 0:
@@ -152,9 +157,11 @@ def main() -> None:
     feats, sohs = cycle_feature_series(args.data_dir, VAL_IDS[0], scaler)
     X_b, y_b, last_b, eol = make_rul_windows(feats, sohs, args.lookback, args.stride, args.eol_soh)
     split = int(len(X_b) * 0.7)
-    X_val,  y_val  = X_b[:split], y_b[:split]   # earlier cycles (higher RUL)
-    X_test, y_test = X_b[split:], y_b[split:]   # later cycles (lower RUL, near EOL)
-    print(f"  B0018: {len(feats)} cycles | EOL@cycle {eol} (SOH {sohs[eol]:.1f}%) | {len(X_b)} valid windows")
+    X_val, y_val = X_b[:split], y_b[:split]  # earlier cycles (higher RUL)
+    X_test, y_test = X_b[split:], y_b[split:]  # later cycles (lower RUL, near EOL)
+    print(
+        f"  B0018: {len(feats)} cycles | EOL@cycle {eol} (SOH {sohs[eol]:.1f}%) | {len(X_b)} valid windows"
+    )
     print(f"  -> val {len(X_val)} windows | test {len(X_test)} windows")
 
     # --- Refit feature_scaler on TRAIN cycle-features only ---
@@ -182,14 +189,18 @@ def main() -> None:
     print(f"  Val  : {len(X_val):>4} windows")
     print(f"  Test : {len(X_test):>4} windows")
 
-    for name, X, y in [("train", X_train, y_train), ("val", X_val, y_val), ("test", X_test, y_test)]:
+    for name, X, y in [
+        ("train", X_train, y_train),
+        ("val", X_val, y_val),
+        ("test", X_test, y_test),
+    ]:
         path = os.path.join(args.output_dir, f"{name}.pt")
         torch.save(
             {
-                "X":                      torch.tensor(X, dtype=torch.float32),
-                "y":                      torch.tensor(y, dtype=torch.float32),
-                "lookback":               args.lookback,
-                "eol_soh":                args.eol_soh,
+                "X": torch.tensor(X, dtype=torch.float32),
+                "y": torch.tensor(y, dtype=torch.float32),
+                "lookback": args.lookback,
+                "eol_soh": args.eol_soh,
                 "feature_scaler_version": FEATURE_SCALER_VERSION_RUL,
             },
             path,
@@ -205,9 +216,9 @@ def main() -> None:
         feats, sohs = cycle_feature_series(args.data_dir, bid, scaler)
         Xb, yb, _, eolb = make_rul_windows(feats, sohs, args.lookback, args.stride, args.eol_soh)
         by_bat[bid] = {
-            "X":        torch.tensor(Xb, dtype=torch.float32),
-            "y":        torch.tensor(yb, dtype=torch.float32),
-            "eol":      int(eolb),
+            "X": torch.tensor(Xb, dtype=torch.float32),
+            "y": torch.tensor(yb, dtype=torch.float32),
+            "eol": int(eolb),
             "n_cycles": int(len(feats)),
         }
         rng_str = f"{yb.min():.0f}..{yb.max():.0f}" if len(yb) else "—"

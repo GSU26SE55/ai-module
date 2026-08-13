@@ -322,17 +322,17 @@ def load_batch_file(
                 for j in range(0, n_cycles, cycle_stride):
                     try:
                         V = np.hstack(f[cycles_grp["V"][j, 0]][()])
-                        I = np.hstack(f[cycles_grp["I"][j, 0]][()])
+                        current = np.hstack(f[cycles_grp["I"][j, 0]][()])
                         T = np.hstack(f[cycles_grp["T"][j, 0]][()])
                         t = np.hstack(f[cycles_grp["t"][j, 0]][()])
                     except Exception as exc:
                         print(f"    [{key}] cycle {j}: skipped (unreadable: {exc})")
                         continue
-                    n = min(len(V), len(I), len(T), len(t))
+                    n = min(len(V), len(current), len(T), len(t))
                     if n < WINDOW_SIZE:
                         continue
                     cycle_arr = np.stack(
-                        [V[:n], I[:n], T[:n], t[:n] * time_scale], axis=1
+                        [V[:n], current[:n], T[:n], t[:n] * time_scale], axis=1
                     ).astype(np.float32)
                     if not np.all(np.isfinite(cycle_arr)):
                         print(f"    [{key}] cycle {j}: skipped (NaN/Inf)")
@@ -395,20 +395,28 @@ def load_batch_file(
             f"{PHYSICAL_RANGES}) — these are what previously widened the scaler range"
         )
     if n_no_discharge[0]:
-        print(f"  {batch_label}: {n_no_discharge[0]} cycles dropped (no discharge run >= {WINDOW_SIZE})")
+        print(
+            f"  {batch_label}: {n_no_discharge[0]} cycles dropped (no discharge run >= {WINDOW_SIZE})"
+        )
     if n_soh_clipped[0]:
-        print(f"  {batch_label}: {n_soh_clipped[0]} cycles co SOH > {soh_clip}% -> clip ve {soh_clip}%")
+        print(
+            f"  {batch_label}: {n_soh_clipped[0]} cycles co SOH > {soh_clip}% -> clip ve {soh_clip}%"
+        )
     if n_too_long[0]:
-        print(f"  {batch_label}: {n_too_long[0]} cycles dropped (doan xa > {MAX_DISCHARGE_SECONDS:.0f}s "
-              f"= khong phai xa 4C binh thuong, se lam no dai MinMax cua `time`)")
+        print(
+            f"  {batch_label}: {n_too_long[0]} cycles dropped (doan xa > {MAX_DISCHARGE_SECONDS:.0f}s "
+            f"= khong phai xa 4C binh thuong, se lam no dai MinMax cua `time`)"
+        )
     if durations:
         med = float(np.median(durations))
         # Percentiles matter more than the median here: the whole point of
         # MAX_DISCHARGE_SECONDS is that a single long tail sample poisons the range.
-        print(f"  {batch_label}: discharge duration p50={med:.0f}s "
-              f"p95={float(np.percentile(durations, 95)):.0f}s "
-              f"p99={float(np.percentile(durations, 99)):.0f}s "
-              f"max={float(np.max(durations)):.0f}s")
+        print(
+            f"  {batch_label}: discharge duration p50={med:.0f}s "
+            f"p95={float(np.percentile(durations, 95)):.0f}s "
+            f"p99={float(np.percentile(durations, 99)):.0f}s "
+            f"max={float(np.max(durations)):.0f}s"
+        )
         # Decides a real question we cannot answer offline: compute_soc_percent()
         # divides `time` by 3600, i.e. it assumes SECONDS (NASA convention, and
         # what BE sends at inference). A 4C discharge lasts ~15 min, so a median
@@ -466,7 +474,8 @@ def cycles_to_windows(
             # true position; "window" mode recomputes per slice (see docstring).
             soc_cycle = (
                 compute_soc_percent(
-                    cycle_raw[:, 1], cycle_raw[:, 3],
+                    cycle_raw[:, 1],
+                    cycle_raw[:, 3],
                     nominal_capacity_ah=LFP_NOMINAL_CAPACITY_AH,
                 )
                 / 100.0
@@ -481,7 +490,8 @@ def cycles_to_windows(
                     raw_win = cycle_raw[i : i + WINDOW_SIZE]
                     soc_norm = (
                         compute_soc_percent(
-                            raw_win[:, 1], raw_win[:, 3],
+                            raw_win[:, 1],
+                            raw_win[:, 3],
                             nominal_capacity_ah=LFP_NOMINAL_CAPACITY_AH,
                         )
                         / 100.0
@@ -525,8 +535,12 @@ def main() -> None:
     parser.add_argument("--output-dir", default="data/processed_lfp")
     parser.add_argument("--val-frac", type=float, default=0.05)
     parser.add_argument("--test-frac", type=float, default=0.05)
-    parser.add_argument("--val-ids", default=None, help="Comma-separated cell keys, overrides --val-frac")
-    parser.add_argument("--test-ids", default=None, help="Comma-separated cell keys, overrides --test-frac")
+    parser.add_argument(
+        "--val-ids", default=None, help="Comma-separated cell keys, overrides --val-frac"
+    )
+    parser.add_argument(
+        "--test-ids", default=None, help="Comma-separated cell keys, overrides --test-frac"
+    )
     parser.add_argument(
         "--cycle-stride",
         type=int,
@@ -574,14 +588,15 @@ def main() -> None:
         parser.error(f"--cycle-stride must be >= 1, got {args.cycle_stride}")
 
     os.makedirs(args.output_dir, exist_ok=True)
-    print(f"Window size: {WINDOW_SIZE} | Stride: {WINDOW_STRIDE} | LFP nominal capacity: {LFP_NOMINAL_CAPACITY_AH} Ah")
+    print(
+        f"Window size: {WINDOW_SIZE} | Stride: {WINDOW_STRIDE} | LFP nominal capacity: {LFP_NOMINAL_CAPACITY_AH} Ah"
+    )
     print(f"Cycle stride: {args.cycle_stride} | cycle_count_norm divisor: {CYCLE_COUNT_NORM}")
     print(f"Phase filter: {args.phase} | time unit vao: {args.time_unit} -> quy ve GIAY")
     print(f"SOH clip: {args.soh_clip}% (drop neu > {MAX_SOH_KEEP}%) | soc_mode: {args.soc_mode}")
 
     mat_files = sorted(
-        f for f in os.listdir(args.data_dir)
-        if f.lower().endswith(".mat") and "batch" in f.lower()
+        f for f in os.listdir(args.data_dir) if f.lower().endswith(".mat") and "batch" in f.lower()
     )
     if not mat_files:
         raise FileNotFoundError(
@@ -632,7 +647,9 @@ def main() -> None:
         test_ids = shuffled[n_val : n_val + n_test]
         train_ids = shuffled[n_val + n_test :]
 
-    print(f"Train: {len(train_ids)} cells | Val: {len(val_ids)} cells {val_ids} | Test: {len(test_ids)} cells {test_ids}")
+    print(
+        f"Train: {len(train_ids)} cells | Val: {len(val_ids)} cells {val_ids} | Test: {len(test_ids)} cells {test_ids}"
+    )
 
     print("\nFitting MinMaxScaler on train cells...")
     train_raw = np.concatenate(
@@ -645,16 +662,20 @@ def main() -> None:
     # of [0,1]). Expect voltage ~[2, 3.7], temperature ~[25, 50] once the
     # PHYSICAL_RANGES filter is doing its job.
     for idx, name in enumerate(BASE_FEATURES):
-        print(f"  scaler range {name:<12}: [{scaler.data_min_[idx]:9.3f}, {scaler.data_max_[idx]:9.3f}]")
+        print(
+            f"  scaler range {name:<12}: [{scaler.data_min_[idx]:9.3f}, {scaler.data_max_[idx]:9.3f}]"
+        )
     # Loud warning if a wide range squashes the real signal — the failure mode
     # behind bug #6 (temperature [-270, 400]) and the run-6 regression
     # (time [0, 25551]). A normal 4C discharge is ~900 s, so a range far past
     # MAX_DISCHARGE_SECONDS means an outlier still slipped through.
     t_max = float(scaler.data_max_[BASE_FEATURES.index("time")])
     if t_max > MAX_DISCHARGE_SECONDS:
-        print(f"  !!! CANH BAO: time max = {t_max:.0f}s > {MAX_DISCHARGE_SECONDS:.0f}s. "
-              f"Mot window xa binh thuong (~900s) chi con chiem {900 / t_max * 100:.1f}% dai "
-              f"[0,1] -> kenh `time` bi bop, du doan se te di nhieu (xem lan 6).")
+        print(
+            f"  !!! CANH BAO: time max = {t_max:.0f}s > {MAX_DISCHARGE_SECONDS:.0f}s. "
+            f"Mot window xa binh thuong (~900s) chi con chiem {900 / t_max * 100:.1f}% dai "
+            f"[0,1] -> kenh `time` bi bop, du doan se te di nhieu (xem lan 6)."
+        )
     os.makedirs(os.path.dirname(LFP_SCALER_PATH), exist_ok=True)
     joblib.dump(
         {
@@ -694,8 +715,10 @@ def main() -> None:
     n_degenerate = int(degenerate.sum())
     if n_degenerate:
         worst = np.argsort(np.where(degenerate, feat_scaler.var_, np.inf))[:n_degenerate]
-        print(f"  {n_degenerate}/{len(degenerate)} feature suy bien (var < {FEATURE_VAR_FLOOR:g}) "
-              f"-> ep scale_=1.0 thay vi khuech dai nhieu:")
+        print(
+            f"  {n_degenerate}/{len(degenerate)} feature suy bien (var < {FEATURE_VAR_FLOOR:g}) "
+            f"-> ep scale_=1.0 thay vi khuech dai nhieu:"
+        )
         for i in worst:
             amp = 1.0 / feat_scaler.scale_[i] if feat_scaler.scale_[i] > 0 else 0.0
             print(f"     idx {i:>2}: var={feat_scaler.var_[i]:.3e}  (dang khuech dai {amp:,.0f}x)")
@@ -721,7 +744,7 @@ def main() -> None:
         test_ids, all_cells, scaler, feat_scaler, soc_mode=args.soc_mode
     )
 
-    print(f"\nSplit summary:")
+    print("\nSplit summary:")
     print(f"  Train: {len(X_train):>6} windows ({len(train_ids)} cells)")
     print(f"  Val  : {len(X_val):>6} windows ({len(val_ids)} cells: {val_ids})")
     print(f"  Test : {len(X_test):>6} windows ({len(test_ids)} cells: {test_ids})")
