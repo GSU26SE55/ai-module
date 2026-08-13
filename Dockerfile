@@ -66,6 +66,13 @@ COPY --chown=0:0 knowledge ./knowledge
 COPY --chown=0:0 deploy/scripts/verify-models.py deploy/scripts/smoke-test.py ./deploy/scripts/
 COPY --chmod=0555 deploy/scripts/container-entrypoint.sh /usr/local/bin/ai-entrypoint
 
+# Git checkout permissions inherit the CI agent umask. Jenkins deliberately
+# uses 0027, so COPY can otherwise preserve 0750 directories and then chown
+# them to root, preventing the non-root runtime UID from traversing /app.
+# `a+rX` grants read/traverse only; it does not make model data executable or
+# writable.
+RUN chmod -R a+rX /app
+
 USER 10001:10001
 
 EXPOSE 8000 50051
