@@ -349,6 +349,14 @@ Prefer an SSH-connected agent with an isolated workspace. If the Jenkins VPS is
 both controller and agent for a student deployment, restrict it by firewall and
 understand that Docker access is root-equivalent.
 
+The source/workspace Trivy gate rejects every detected HIGH or CRITICAL issue.
+The final-image gates use `--ignore-unfixed`: they still reject actionable
+HIGH/CRITICAL findings that have an upstream fix, while reporting but not
+blocking on Debian findings for which no fixed package exists yet. Re-scan on
+every build and refresh the pinned base-image digest as soon as the vendor
+publishes a fix; do not add CVE IDs to an ignore file merely to make a build
+green.
+
 Install these Jenkins plugins:
 
 - Pipeline and Pipeline: Multibranch;

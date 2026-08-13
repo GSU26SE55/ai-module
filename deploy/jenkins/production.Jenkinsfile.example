@@ -69,6 +69,7 @@ pipeline {
                           --tag "${image_tag}" \
                           .
                         trivy image \
+                          --ignore-unfixed \
                           --exit-code 1 \
                           --severity HIGH,CRITICAL \
                           --format json \

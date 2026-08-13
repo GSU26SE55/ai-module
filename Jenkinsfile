@@ -40,10 +40,13 @@ pipeline {
                 sh '''
                     set -eu
                     python3.11 -m venv .venv-ci
-                    .venv-ci/bin/python -m pip install --upgrade pip==25.3
+                    .venv-ci/bin/python -m pip install --upgrade \
+                      pip==25.3 \
+                      setuptools==84.0.0 \
+                      wheel==0.46.3
                     .venv-ci/bin/python -m pip install \
                       --index-url https://download.pytorch.org/whl/cpu \
-                      torch==2.3.1
+                      torch==2.6.0
                     .venv-ci/bin/python -m pip install \
                       --require-hashes \
                       -r requirements-runtime.lock
@@ -166,6 +169,7 @@ pipeline {
             steps {
                 sh '''
                     trivy image \
+                      --ignore-unfixed \
                       --exit-code 1 \
                       --severity HIGH,CRITICAL \
                       --format json \

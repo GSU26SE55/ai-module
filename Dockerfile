@@ -13,8 +13,11 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 WORKDIR /build
 COPY requirements-runtime.lock ./
-RUN python -m pip install --upgrade pip==25.3 \
-    && python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.3.1 \
+RUN python -m pip install --upgrade \
+      pip==25.3 \
+      setuptools==84.0.0 \
+      wheel==0.46.3 \
+    && python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.6.0 \
     && python -m pip install --require-hashes -r requirements-runtime.lock \
     && python -m pip check
 
@@ -41,6 +44,14 @@ ENV PATH="/opt/venv/bin:$PATH" \
     HF_HOME=/opt/huggingface \
     AI_EMBEDDING_MODEL_PATH=/opt/embedding-model \
     AI_VERIFY_MODEL_MANIFEST=true
+
+# The upstream Python image ships build tooling in its global site-packages.
+# Keep its vendored metadata patched as the final image is scanned as well as
+# the application venv copied from the builder.
+RUN python -m pip install --no-cache-dir --upgrade \
+      pip==25.3 \
+      setuptools==84.0.0 \
+      wheel==0.46.3
 
 RUN groupadd --gid 10001 ai \
     && useradd --uid 10001 --gid ai --no-create-home --home-dir /nonexistent ai
