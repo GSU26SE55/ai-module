@@ -166,8 +166,15 @@ services:
     image: grafana/alloy:v1.10.2@sha256:bcf27f18c4402869af112fb39e35e1db3804a404686f4caa20bdf77814219223
     container_name: solar-ai-alloy
     restart: unless-stopped
+    # Alloy's image owns /var/lib/alloy with UID 473. Keep the persistent
+    # storage in the shared ai-runtime group and add the host Docker socket
+    # group separately so discovery works without running the process as root.
+    user: "473:10001"
+    group_add:
+      - "${AI_DOCKER_SOCKET_GID:?AI_DOCKER_SOCKET_GID must match the Docker socket group}"
     command:
       - run
+      - --server.http.listen-addr=127.0.0.1:12345
       - --storage.path=/var/lib/alloy/data
       - /etc/alloy/config.alloy
     environment:
@@ -180,6 +187,19 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    healthcheck:
+      test:
+        - CMD
+        - /bin/bash
+        - -ec
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/12345;
+          printf 'GET /-/ready HTTP/1.0\r\nHost: localhost\r\n\r\n' >&3;
+          grep -qE '^HTTP/1\.[01] 200' <&3
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     pids_limit: 256
     mem_limit: 384m
     cpus: 0.25

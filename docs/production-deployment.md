@@ -185,9 +185,23 @@ AI_DNS_ZONE=solars.io.vn
 AI_PUBLIC_IPV4=168.144.48.16
 ACME_EMAIL=YOUR_MONITORED_EMAIL
 AI_MONITORING_BIND_IP=10.20.0.2
+AI_DOCKER_SOCKET_GID=988
 AI_SECRETS_FILE=/opt/solar-ai/secrets/ai.env
 LOKI_PUSH_URL=http://10.20.0.1:3100/loki/api/v1/push
 ```
+
+`AI_DOCKER_SOCKET_GID` must be the numeric group ID of the Docker socket on
+VPS2. Do not assume that it is always `988`; obtain the value on that host and
+put the exact result in `host.env`:
+
+```bash
+stat -c '%g' /var/run/docker.sock
+```
+
+The production preflight rejects the deployment when this value is missing or
+does not match the socket. Alloy runs as UID `473`, uses the shared
+`ai-runtime` GID `10001` for persistent storage, and receives this Docker group
+only as a supplemental group for container discovery.
 
 Create `/opt/solar-ai/secrets/ai.env` from `deploy/ai.env.example`. At least one
 of `DEEPSEEK_API_KEY`, `GEMINI_API_KEY` or `ANTHROPIC_API_KEY` must be non-empty.

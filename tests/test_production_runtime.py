@@ -1,12 +1,28 @@
 """Production lifecycle, manifest and standard gRPC health contracts."""
 
+from pathlib import Path
 from unittest.mock import Mock
 
 import grpc
+import yaml
 from fastapi.testclient import TestClient
 from grpc_health.v1 import health_pb2, health_pb2_grpc
 
 from src.core.artifact_manifest import verify_model_manifest
+
+
+def test_alloy_runtime_has_storage_socket_permissions_and_readiness_probe():
+    compose = yaml.safe_load(Path("docker-compose.prod.yml").read_text())
+    alloy = compose["services"]["alloy"]
+
+    assert alloy["user"] == "473:10001"
+    assert alloy["group_add"] == [
+        "${AI_DOCKER_SOCKET_GID:?AI_DOCKER_SOCKET_GID must match the Docker socket group}"
+    ]
+    assert "--server.http.listen-addr=127.0.0.1:12345" in alloy["command"]
+    assert "--storage.path=/var/lib/alloy/data" in alloy["command"]
+    assert alloy["healthcheck"]["test"][:3] == ["CMD", "/bin/bash", "-ec"]
+    assert "/-/ready" in alloy["healthcheck"]["test"][3]
 
 
 def test_committed_model_manifest_verifies():
