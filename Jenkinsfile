@@ -155,6 +155,10 @@ pipeline {
                     attempts=0
                     until docker exec "${container}" python /app/deploy/scripts/smoke-test.py; do
                       attempts=$((attempts + 1))
+                      if [ "$(docker inspect --format '{{.State.Running}}' "${container}")" != "true" ]; then
+                        docker logs "${container}"
+                        exit 1
+                      fi
                       if [ "${attempts}" -ge 24 ]; then
                         docker logs "${container}"
                         exit 1
