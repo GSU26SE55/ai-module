@@ -96,7 +96,7 @@ Cùng một pipeline (`run_inference()` / `run_prescription()`), **không nhân 
 
 ### 4.1 Yêu cầu môi trường
 
-- **Python 3.11** + `torch==2.3.1` (ghim cứng). torch 2.3.1 **không hỗ trợ Python 3.12+/3.14** → phải dùng venv 3.11 hoặc Docker `python:3.11`.
+- **Python 3.11** + `torch==2.6.0` (ghim cứng). Production và CI dùng Python 3.11 để giữ cùng một runtime đã được kiểm thử; dùng venv 3.11 hoặc Docker `python:3.11`.
 - Artifacts `models/weights/soh_mamba_v1.6.pth`, `scaler.pkl`, `feature_scaler.pkl`, `isolation_forest_v1.6.pkl` — **đã có sẵn trong repo**, không cần train lại.
 
 ### 4.2 Chạy bằng venv (local)
@@ -122,7 +122,7 @@ docker run --rm -p 50051:50051 -v "$PWD":/app -w /app python:3.11-slim bash -c '
 ```
 
 > Chỉ test core Predict/Health (không cần LLM) thì cài gọn:
-> `pip install torch==2.3.1 numpy==1.26.4 scikit-learn==1.6.1 scipy==1.13.1 pydantic==2.13.4 joblib==1.4.2 grpcio==1.81.1 protobuf==6.33.6`
+> `pip install torch==2.6.0 numpy==1.26.4 scikit-learn==1.6.1 scipy==1.13.1 pydantic==2.13.4 joblib==1.4.2 grpcio==1.81.1 protobuf==6.33.6`
 
 ### 4.4 Kiểm tra sống
 
