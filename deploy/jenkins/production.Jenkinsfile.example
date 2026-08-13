@@ -68,14 +68,26 @@ pipeline {
                           --build-arg BUILD_VERSION="${RELEASE_SHA}" \
                           --tag "${image_tag}" \
                           .
-                        trivy image \
+                        if ! trivy image \
                           --ignore-unfixed \
                           --exit-code 1 \
                           --severity HIGH,CRITICAL \
                           --format json \
                           --output trivy-production-image.json \
-                          "${image_tag}"
-                        syft "${image_tag}" -o cyclonedx-json=sbom-production.cdx.json
+                          "${image_tag}"; then
+                          trivy convert \
+                            --format table \
+                            --severity HIGH,CRITICAL \
+                            trivy-production-image.json
+                          exit 1
+                        fi
+                        SYFT_FILE_METADATA_SELECTION=none \
+                          syft "${image_tag}" \
+                            --override-default-catalogers \
+                              dpkg-db-cataloger,python-installed-package-cataloger,safetensors-cataloger \
+                            --select-catalogers=-file \
+                            --parallelism 2 \
+                            -o cyclonedx-json=sbom-production.cdx.json
                     '''
                 }
             }

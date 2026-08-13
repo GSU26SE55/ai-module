@@ -7,7 +7,7 @@ pandas==2.2.2
 scikit-learn==1.6.1
 scipy==1.13.1
 pydantic==2.13.4
-fastapi==0.111.1
+fastapi==0.141.1
 uvicorn[standard]==0.30.1
 python-multipart==0.0.30
 joblib==1.4.2
@@ -20,7 +20,10 @@ chromadb==0.5.3
 # API. PostHog 6+ removed that signature and produces an error on every Chroma
 # startup even when anonymized telemetry is disabled.
 posthog==5.4.0
-sentence-transformers==3.0.1
+sentence-transformers==5.7.0
+# Pin explicitly instead of leaving this transitive: releases before 5.5.0
+# contain HIGH-severity remote-code-execution vulnerabilities detected by Trivy.
+transformers==5.15.0
 anthropic==0.34.2
 
 # LLM provider chain (GH-79) — DeepSeek chính + Gemini backup, Anthropic optional

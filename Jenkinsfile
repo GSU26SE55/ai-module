@@ -172,14 +172,27 @@ pipeline {
         stage('Image security and SBOM') {
             steps {
                 sh '''
-                    trivy image \
+                    set -eu
+                    if ! trivy image \
                       --ignore-unfixed \
                       --exit-code 1 \
                       --severity HIGH,CRITICAL \
                       --format json \
                       --output trivy-image.json \
-                      "${IMAGE_TAG}"
-                    syft "${IMAGE_TAG}" -o cyclonedx-json=sbom.cdx.json
+                      "${IMAGE_TAG}"; then
+                      trivy convert \
+                        --format table \
+                        --severity HIGH,CRITICAL \
+                        trivy-image.json
+                      exit 1
+                    fi
+                    SYFT_FILE_METADATA_SELECTION=none \
+                      syft "${IMAGE_TAG}" \
+                        --override-default-catalogers \
+                          dpkg-db-cataloger,python-installed-package-cataloger,safetensors-cataloger \
+                        --select-catalogers=-file \
+                        --parallelism 2 \
+                        -o cyclonedx-json=sbom.cdx.json
                 '''
             }
             post {
