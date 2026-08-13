@@ -83,11 +83,15 @@ def verify_model_manifest(path: str | Path | None = None) -> dict:
             ) from exc
         if not directory.is_dir():
             raise RuntimeError(f"Complete artifact directory not found: {relative_directory}")
+        # as_posix(), not str(): on Windows str() yields "models\embeddings\x" while
+        # `seen` holds the manifest's forward-slash paths, so nothing ever matched and
+        # every committed file was reported untracked. The check could not pass on a
+        # Windows checkout at all.
         untracked = sorted(
-            str(candidate.relative_to(PROJECT_ROOT))
+            candidate.relative_to(PROJECT_ROOT).as_posix()
             for candidate in directory.rglob("*")
             if candidate.is_file()
-            and str(candidate.relative_to(PROJECT_ROOT)) not in seen
+            and candidate.relative_to(PROJECT_ROOT).as_posix() not in seen
         )
         if untracked:
             raise RuntimeError(
