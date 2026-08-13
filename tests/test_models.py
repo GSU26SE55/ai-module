@@ -573,7 +573,7 @@ class TestTemperatureDomainClusters:
         assert temperature_domain_distance(temps, LFP_TEMPERATURE_TRAIN_CLUSTERS) == 0.0
 
     def test_lfp_35c_closer_than_nasa_clusters(self):
-        """35 °C: v2.1-lfp có hẳn cell SNL ở 35 °C ⇒ lệch 0; cụm NASA lệch 9 °C."""
+        """35 °C: bộ LFP có hẳn cell SNL ở 35 °C ⇒ lệch 0; cụm NASA lệch 9 °C."""
         from src.core.config import LFP_TEMPERATURE_TRAIN_CLUSTERS
         from src.models.anomaly_detector import temperature_domain_distance
 
@@ -620,7 +620,7 @@ class TestTemperatureDomainClusters:
         """Khi LFP thật sự ngoài miền, thông điệp phải in cụm của bộ LFP — in
         nhầm cụm NASA làm người đọc log kết luận sai nguyên nhân.
 
-        50 °C mới là ngoài miền với v2.1-lfp: cụm cao nhất là 40 °C nên 45 °C chỉ
+        50 °C mới là ngoài miền với bộ LFP hiện tại: cụm cao nhất 40 °C nên 45 °C chỉ
         cách 5.0, vừa đúng ngưỡng và KHÔNG cảnh báo nữa (v2.0 chỉ có cụm 30 °C)."""
         from src.models.anomaly_detector import generate_warnings
 
