@@ -5,7 +5,12 @@ pipeline {
         disableConcurrentBuilds()
         timestamps()
         timeout(time: 120, unit: 'MINUTES')
-        buildDiscarder(logRotator(numToKeepStr: '30', artifactNumToKeepStr: '15'))
+        buildDiscarder(
+            logRotator(
+                numToKeepStr: '30',
+                artifactNumToKeepStr: '15'
+            )
+        )
         skipDefaultCheckout(true)
     }
 
@@ -19,12 +24,15 @@ pipeline {
 
     stages {
         stage('CI and security gates') {
-            agent { label 'docker-linux' }
+            agent {
+                label 'docker-linux'
+            }
 
             stages {
                 stage('Checkout') {
                     steps {
                         checkout scm
+
                         script {
                             env.GIT_SHA = sh(
                                 script: 'git rev-parse HEAD',
@@ -32,10 +40,13 @@ pipeline {
                             ).trim()
 
                             if (!(env.GIT_SHA ==~ /[0-9a-f]{40}/)) {
-                                error('Unable to resolve a full immutable Git SHA')
+                                error(
+                                    'Unable to resolve a full immutable Git SHA'
+                                )
                             }
 
-                            env.IMAGE_TAG = "solar-ai-ci:${env.GIT_SHA}"
+                            env.IMAGE_TAG =
+                                "solar-ai-ci:${env.GIT_SHA}"
                         }
 
                         sh 'git diff --check'
@@ -222,11 +233,7 @@ pipeline {
                             do
                               attempts=$((attempts + 1))
 
-                              if [
-                                "$(docker inspect \
-                                  --format '{{.State.Running}}' \
-                                  "${container}")" != "true"
-                              ]; then
+                              if [ "$(docker inspect --format '{{.State.Running}}' "${container}")" != "true" ]; then
                                 docker logs "${container}"
                                 exit 1
                               fi
@@ -277,7 +284,8 @@ pipeline {
                         always {
                             archiveArtifacts(
                                 allowEmptyArchive: true,
-                                artifacts: 'trivy-image.json,sbom.cdx.json'
+                                artifacts:
+                                    'trivy-image.json,sbom.cdx.json'
                             )
                         }
                     }
@@ -298,10 +306,17 @@ pipeline {
             }
         }
 
+        /*
+         * Stage này không giữ executor docker-linux.
+         *
+         * Sau khi CI and security gates kết thúc, executor được giải phóng.
+         * solar-ai-production có thể nhận chính executor đó và bắt đầu deploy.
+         */
         stage('Request trusted production release') {
             when {
                 allOf {
                     branch 'main'
+
                     expression {
                         env.CHANGE_ID == null
                     }
@@ -330,11 +345,17 @@ pipeline {
         }
 
         failure {
-            echo 'AI pipeline failed; production was not changed or was rolled back'
+            echo(
+                'AI pipeline failed; production was not changed ' +
+                'or was rolled back'
+            )
         }
 
         aborted {
-            echo 'AI pipeline was aborted; verify the production job before retrying'
+            echo(
+                'AI pipeline was aborted; verify the production ' +
+                'job before retrying'
+            )
         }
     }
 }
