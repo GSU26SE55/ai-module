@@ -54,6 +54,7 @@ dns_zone="$(env_value AI_DNS_ZONE)"
 public_ipv4="$(env_value AI_PUBLIC_IPV4)"
 acme_email="$(env_value ACME_EMAIL)"
 monitoring_bind_ip="$(env_value AI_MONITORING_BIND_IP)"
+docker_socket_gid="$(env_value AI_DOCKER_SOCKET_GID)"
 
 if ! [[ "${public_domain}" =~ ^[a-z0-9][a-z0-9.-]*[a-z0-9]$ \
   && "${public_domain}" == *.* ]]; then
@@ -69,6 +70,13 @@ fi
   || fail "ACME_EMAIL is missing or malformed"
 test -n "${monitoring_bind_ip}" \
   || fail "AI_MONITORING_BIND_IP is missing from ${host_env}"
+[[ "${docker_socket_gid}" =~ ^[0-9]+$ ]] \
+  || fail "AI_DOCKER_SOCKET_GID is missing or is not numeric"
+test -S /var/run/docker.sock \
+  || fail "Docker socket /var/run/docker.sock does not exist"
+actual_docker_socket_gid="$(stat -c '%g' /var/run/docker.sock)"
+[[ "${docker_socket_gid}" = "${actual_docker_socket_gid}" ]] \
+  || fail "AI_DOCKER_SOCKET_GID ${docker_socket_gid} does not match Docker socket GID ${actual_docker_socket_gid}"
 
 "${release_dir}/deploy/scripts/verify-public-ip.sh" "${public_ipv4}" \
   || fail "AI_PUBLIC_IPV4 ${public_ipv4} is neither a local address nor the active DigitalOcean Reserved IPv4"
