@@ -55,12 +55,14 @@ public_ipv4="$(env_value AI_PUBLIC_IPV4)"
 acme_email="$(env_value ACME_EMAIL)"
 monitoring_bind_ip="$(env_value AI_MONITORING_BIND_IP)"
 
-[[ "${public_domain}" =~ ^[a-z0-9][a-z0-9.-]*[a-z0-9]$ ]] \
-  && [[ "${public_domain}" == *.* ]] \
-  || fail "AI_PUBLIC_DOMAIN must be a lower-case fully-qualified domain name"
-[[ "${dns_zone}" =~ ^[a-z0-9][a-z0-9.-]*[a-z0-9]$ ]] \
-  && [[ "${public_domain}" == *."${dns_zone}" ]] \
-  || fail "AI_DNS_ZONE must be the authoritative parent zone of AI_PUBLIC_DOMAIN"
+if ! [[ "${public_domain}" =~ ^[a-z0-9][a-z0-9.-]*[a-z0-9]$ \
+  && "${public_domain}" == *.* ]]; then
+  fail "AI_PUBLIC_DOMAIN must be a lower-case fully-qualified domain name"
+fi
+if ! [[ "${dns_zone}" =~ ^[a-z0-9][a-z0-9.-]*[a-z0-9]$ \
+  && "${public_domain}" == *."${dns_zone}" ]]; then
+  fail "AI_DNS_ZONE must be the authoritative parent zone of AI_PUBLIC_DOMAIN"
+fi
 [[ "${public_ipv4}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] \
   || fail "AI_PUBLIC_IPV4 is missing or malformed"
 [[ "${acme_email}" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] \
@@ -85,9 +87,10 @@ for nameserver in "${nameservers[@]}"; do
       | awk '/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/' \
       | sort -u
   )
-  (( ${#authoritative_ipv4[@]} == 1 )) \
-    && [ "${authoritative_ipv4[0]}" = "${public_ipv4}" ] \
-    || fail "${nameserver} does not resolve ${public_domain} exclusively to ${public_ipv4}"
+  if (( ${#authoritative_ipv4[@]} != 1 )) \
+    || [[ "${authoritative_ipv4[0]:-}" != "${public_ipv4}" ]]; then
+    fail "${nameserver} does not resolve ${public_domain} exclusively to ${public_ipv4}"
+  fi
 done
 
 mapfile -t public_ipv6 < <(dig +short AAAA "${public_domain}" | awk '/:/')
