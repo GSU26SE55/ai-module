@@ -2,10 +2,15 @@
 
 Why this exists: a single aggregate `test_mae` hides the failure mode that matters
 here. Measured on v2.1-lfp, holding one discharge window fixed and only changing
-ambient temperature moved SOH by 7.6 points (10 °C -> 95.05%, 40 °C -> 87.47%) and
+ambient temperature moved SOH by 8.3 points (10 °C -> 95.05%, 40 °C -> 87.47%) and
 flipped the label Normal -> Degrading at 35 °C — a temperature that is well inside
 the training distribution. An aggregate number cannot show that, because the test
 split is dominated by one temperature group.
+
+This tool is what found it: ranking per-cell error on the v2.1 train split put
+b2c15/b2c7/b2c16/b2c8/b2c9 at the top (MAE 4.1-9.4% vs a ~1.2% median), i.e. the
+Severson batch1->batch2 continuation cells. Dropping them (v2.2-lfp) took test MAE
+1.5421 -> 1.2697 and halved the temperature swing to 4.5 points.
 
 Reads the provenance columns written by scripts/preprocess_snl.py (cell_idx /
 temp_mean_c / cycle_idx) and cuts MAE/RMSE by (temperature bin x SOH band) and by
@@ -30,6 +35,7 @@ import torch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from scripts.train import evaluate  # noqa: E402
+from src.core.config import LFP_MAMBA_PATH  # noqa: E402
 from src.models.soh_predictor import MambaSOHPredictor  # noqa: E402
 
 SOH_BANDS = [
@@ -87,7 +93,7 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--data-dir", default="data/processed_lfp")
     p.add_argument("--split", default="test", choices=["train", "val", "test"])
-    p.add_argument("--weights", default="models/weights/soh_mamba_v2.1-lfp.pth")
+    p.add_argument("--weights", default=LFP_MAMBA_PATH)
     p.add_argument("--temp-bin", type=float, default=5.0, help="Width of a temperature bin, °C")
     p.add_argument("--min-count", type=int, default=100,
                    help="Below this many windows a bin is flagged as too thin to conclude from")

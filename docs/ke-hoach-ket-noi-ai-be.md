@@ -270,7 +270,7 @@ Ngoài ra bản BE còn thiếu **toàn bộ khối comment 20 dòng về ngữ 
 | → `model_version` | `"1.6"` |
 | → `scaler_loaded` / `mamba_loaded` / `isolation_forest_loaded` | `true` / `true` / `true` |
 | → `lfp_loaded` | **`true`** ✅ |
-| → `lfp_model_version` | `"2.1-lfp"` ✅ |
+| → `lfp_model_version` | `"2.2-lfp"` ✅ |
 | → `prescription_metrics` | có đủ 7 counter ✅ |
 | gRPC `Health` @ `ai-module-grpc:50051` | OK · `lfp_loaded=True` |
 | gRPC `Predict` (30×4) | OK · `soh=26.31` |
@@ -627,7 +627,7 @@ docker ps --format "{{.Names}}\t{{.Status}}" | grep -E "batteryservice|ticketser
 # [1] Health đầy đủ
 curl -s localhost:4015/health | python3 -m json.tool
 ```
-Phải có **đủ**: `lfp_loaded: true`, `lfp_model_version: "2.1-lfp"`, `prescription_metrics: {...}`
+Phải có **đủ**: `lfp_loaded: true`, `lfp_model_version: "2.2-lfp"`, `prescription_metrics: {...}`
 ❌ `lfp_loaded: false` → artifact LFP không vào image. Kiểm tra `.dockerignore` có lỡ loại `models/weights/` không.
 
 ```bash
@@ -672,7 +672,7 @@ Phải trả JSON có `verdict`, **không** phải `404`.
 ```bash
 # [6] LFP đi đúng model — kiểm tra âm tính
 #     Tạm đổi tên artifact LFP rồi restart:
-#       mv models/weights/soh_mamba_v2.1-lfp.pth models/weights/_tam.pth
+#       mv models/weights/soh_mamba_v2.2-lfp.pth models/weights/_tam.pth
 #     Request chemistry="LFP" PHẢI trả 500/UNKNOWN với thông điệp
 #       "refusing to score LFP data with the NASA/NMC model"
 #     Nếu vẫn trả 200 → code LFP chưa vào image.

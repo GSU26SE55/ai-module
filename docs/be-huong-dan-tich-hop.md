@@ -103,13 +103,13 @@ Mỗi field làm một việc **khác nhau**, không thay thế nhau được:
 Cùng một payload pack LFP 8S, chỉ khác `chemistry`:
 
 ```
-khong co chemistry   -> model 1.6      SOH = 34.94%  Failed
-chemistry = "LFP"    -> model 2.1-lfp  SOH = 93.65%  Normal
+khong co chemistry   -> model 1.6      SOH = 35.87%  Failed
+chemistry = "LFP"    -> model 2.2-lfp  SOH = 91.45%  Normal
 ```
 
-(đo lại 2026-08-11 trên bộ v2.1-lfp; payload: pack 8S 30Ah xả 0.5C ở 30 °C, `cycle_count=900`)
+(đo lại 2026-08-13 trên bộ v2.2-lfp; payload: pack 8S 30Ah xả 0.5C ở 30 °C, `cycle_count=900`)
 
-Lệch **gần 59 điểm SOH** và khác hẳn kết luận — một quả pin bình thường bị báo `Failed`. Gửi thiếu
+Lệch **gần 56 điểm SOH** và khác hẳn kết luận — một quả pin bình thường bị báo `Failed`. Gửi thiếu
 `chemistry` không báo lỗi — nó chỉ **âm thầm trả kết quả của model sai**. Đây là lỗi tốn kém nhất
 có thể mắc khi tích hợp.
 
@@ -224,7 +224,7 @@ ra ngoài**.
 ```csharp
 var h = await client.HealthAsync(new HealthRequest());
 // status="ok"  model_version="1.6"        <- bo NASA/NMC
-// lfp_loaded=true  lfp_model_version="2.1-lfp"   <- bo LFP
+// lfp_loaded=true  lfp_model_version="2.2-lfp"   <- bo LFP
 ```
 
 **Nếu `lfp_loaded = false` mà bạn định gửi `chemistry="LFP"` → mọi request sẽ lỗi.** Bộ LFP là
@@ -270,7 +270,7 @@ call vừa rồi dùng bộ NASA hay LFP. Chỉ `Predict` mới có `metadata.mo
 Nếu cần audit, tạm thời đối chiếu bằng `Health` (`lfp_loaded`) + chính `pack_config` mình gửi.
 
 **e) `cycle_count` lớn trên đường NASA sẽ bị kẹp.** Bộ NASA chuẩn hoá theo mốc 200 chu kỳ, bộ LFP
-theo **4600** (v2.1-lfp; bộ v2.0-lfp cũ là 2300). Gửi `cycle_count=900` mà không có
+theo **4600** (v2.1-lfp trở đi; bộ v2.0-lfp cũ là 2300). Gửi `cycle_count=900` mà không có
 `chemistry="LFP"` sẽ thấy log cảnh báo và giá trị bị kẹp về 1.0 — thêm một lý do nữa để luôn gửi
 `chemistry`.
 
