@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 root="${SOLAR_AI_ROOT:-/opt/solar-ai}"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 target="${1:-}"
 if [ -z "${target}" ]; then
   target="$(readlink -f "${root}/previous")"
@@ -29,7 +30,9 @@ image_ref="$(sed -n 's/^AI_IMAGE=//p' "${target}/deploy.env" | tail -n 1)"
 }
 export AI_IMAGE="${image_ref}"
 
-"${target}/deploy/scripts/preflight.sh" "${target}"
+# Run the hardened preflight that ships with this rollback implementation,
+# while validating and deploying the immutable target release payload.
+"${script_dir}/preflight.sh" "${target}"
 
 host_env="${root}/config/host.env"
 docker compose \
