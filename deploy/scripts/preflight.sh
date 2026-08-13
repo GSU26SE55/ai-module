@@ -3,17 +3,23 @@ set -Eeuo pipefail
 
 release_dir="${1:?release directory is required}"
 root="${SOLAR_AI_ROOT:-/opt/solar-ai}"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 host_env="${root}/config/host.env"
 secret_env="${root}/secrets/ai.env"
 deploy_env="${release_dir}/deploy.env"
 compose_file="${release_dir}/docker-compose.prod.yml"
+
+# The computed path is fixed relative to this signed deployment payload. The
+# helper is also passed to ShellCheck independently by the Jenkins wildcard.
+# shellcheck disable=SC1091
+source "${script_dir}/network-functions.sh"
 
 fail() {
   printf 'PRECHECK FAILED: %s\n' "$*" >&2
   exit 1
 }
 
-for command in docker awk cosign curl dig grep sed sort stat df ip tr tail; do
+for command in docker awk cosign curl dig grep sed sort stat df ip sleep tr tail; do
   command -v "${command}" >/dev/null 2>&1 || fail "missing command: ${command}"
 done
 docker info >/dev/null 2>&1 || fail "Docker daemon is unavailable"
@@ -70,6 +76,8 @@ fi
   || fail "ACME_EMAIL is missing or malformed"
 test -n "${monitoring_bind_ip}" \
   || fail "AI_MONITORING_BIND_IP is missing from ${host_env}"
+[[ "${monitoring_bind_ip}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] \
+  || fail "AI_MONITORING_BIND_IP is malformed"
 [[ "${docker_socket_gid}" =~ ^[0-9]+$ ]] \
   || fail "AI_DOCKER_SOCKET_GID is missing or is not numeric"
 test -S /var/run/docker.sock \
@@ -80,26 +88,23 @@ actual_docker_socket_gid="$(stat -c '%g' /var/run/docker.sock)"
 
 "${release_dir}/deploy/scripts/verify-public-ip.sh" "${public_ipv4}" \
   || fail "AI_PUBLIC_IPV4 ${public_ipv4} is neither a local address nor the active DigitalOcean Reserved IPv4"
-ip address show | grep -Fq "${monitoring_bind_ip}" \
+local_ipv4_is_configured "${monitoring_bind_ip}" \
   || fail "AI_MONITORING_BIND_IP ${monitoring_bind_ip} is not configured on this VPS"
 
 # Check the authoritative servers, not only a potentially stale recursive DNS
 # cache. Every authoritative answer must point to this VPS, otherwise clients
 # can intermittently reach the wrong host and ACME issuance is unsafe to start.
-mapfile -t nameservers < <(dig +short NS "${dns_zone}" | sed 's/\.$//' | sort -u)
-(( ${#nameservers[@]} > 0 )) \
-  || fail "no authoritative nameserver was found for ${dns_zone}"
-for nameserver in "${nameservers[@]}"; do
-  mapfile -t authoritative_ipv4 < <(
-    dig +short "@${nameserver}" A "${public_domain}" \
-      | awk '/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/' \
-      | sort -u
-  )
-  if (( ${#authoritative_ipv4[@]} != 1 )) \
-    || [[ "${authoritative_ipv4[0]:-}" != "${public_ipv4}" ]]; then
-    fail "${nameserver} does not resolve ${public_domain} exclusively to ${public_ipv4}"
+dns_nameservers_for_zone "${dns_zone}" \
+  || fail "no authoritative nameserver was found for ${dns_zone} after 5 attempts"
+while IFS= read -r nameserver; do
+  if ! authoritative_ipv4_matches \
+    "${nameserver}" \
+    "${public_domain}" \
+    "${public_ipv4}"; then
+    last_answers="${AUTHORITATIVE_IPV4_LAST_ANSWERS:-none}"
+    fail "${nameserver} does not resolve ${public_domain} exclusively to ${public_ipv4} after 5 attempts (last answers: ${last_answers})"
   fi
-done
+done <<<"${DNS_NAMESERVER_LAST_ANSWERS}"
 
 mapfile -t public_ipv6 < <(dig +short AAAA "${public_domain}" | awk '/:/')
 (( ${#public_ipv6[@]} == 0 )) \

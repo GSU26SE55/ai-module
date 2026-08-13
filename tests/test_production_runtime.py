@@ -25,6 +25,24 @@ def test_alloy_runtime_has_storage_socket_permissions_and_readiness_probe():
     assert "/-/ready" in alloy["healthcheck"]["test"][3]
 
 
+def test_deploy_arms_rollback_only_before_runtime_mutation():
+    script = Path("deploy/scripts/deploy.sh").read_text()
+
+    preflight_position = script.index('"${release_dir}/deploy/scripts/preflight.sh"')
+    pull_position = script.index("compose pull")
+    trap_position = script.index("trap rollback_on_failure EXIT")
+    up_position = script.index("compose up -d --remove-orphans --wait")
+
+    assert preflight_position < pull_position < trap_position < up_position
+    assert (
+        '"${release_dir}/deploy/scripts/rollback.sh" "${previous_release}"'
+        in script
+    )
+
+    rollback_script = Path("deploy/scripts/rollback.sh").read_text()
+    assert '"${script_dir}/preflight.sh" "${target}"' in rollback_script
+
+
 def test_committed_model_manifest_verifies():
     result = verify_model_manifest()
     assert result["verified"] is True

@@ -58,16 +58,22 @@ rollback_on_failure() {
   fi
   printf 'Deployment failed; attempting rollback to %s\n' "${previous_release:-none}" >&2
   if [ -n "${previous_release}" ] && [ -d "${previous_release}" ]; then
-    "${previous_release}/deploy/scripts/rollback.sh" "${previous_release}" || true
+    # Use the rollback implementation shipped with the candidate release so
+    # fixes to rollback/preflight logic also protect the immediately previous
+    # release. The target Compose payload and image remain immutable.
+    "${release_dir}/deploy/scripts/rollback.sh" "${previous_release}" || true
   else
     compose down --remove-orphans || true
   fi
   exit "${status}"
 }
-trap rollback_on_failure EXIT
 
+# Neither preflight nor image pulling mutates the running Compose project. Arm
+# rollback only immediately before `compose up`, where production state can
+# actually begin to change.
 "${release_dir}/deploy/scripts/preflight.sh" "${release_dir}"
 compose pull
+trap rollback_on_failure EXIT
 compose up -d --remove-orphans --wait --wait-timeout 240
 docker exec solar-ai-module python /app/deploy/scripts/verify-models.py
 docker exec solar-ai-module python /app/deploy/scripts/smoke-test.py

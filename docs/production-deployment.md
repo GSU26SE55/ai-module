@@ -242,11 +242,15 @@ is persistent in `/opt/solar-ai/data/caddy`; include it in backups.
 
 Deployment succeeds only after all of the following pass:
 
-1. all model/RAG artifact checksums;
-2. direct `/live`, `/ready` and real REST inference;
-3. direct standard/custom gRPC health plus NASA and LFP inference;
-4. the same REST and gRPC tests through Caddy with the real certificate name;
-5. Compose health for all containers.
+1. the monitoring bind IPv4 is assigned to a local interface;
+2. every authoritative DNS server returns only the configured Reserved IPv4;
+   transient authoritative DNS failures are retried five times before the
+   deployment is rejected;
+3. all model/RAG artifact checksums;
+4. direct `/live`, `/ready` and real REST inference;
+5. direct standard/custom gRPC health plus NASA and LFP inference;
+6. the same REST and gRPC tests through Caddy with the real certificate name;
+7. Compose health for all containers.
 
 The TLS smoke runs inside the Docker network using the production FQDN as a
 network alias. It therefore validates certificate hostname, TLS trust, HTTP/2

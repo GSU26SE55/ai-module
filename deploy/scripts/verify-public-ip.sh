@@ -3,10 +3,14 @@ set -Eeuo pipefail
 
 expected_ipv4="${1:?expected public IPv4 is required}"
 metadata_base="http://169.254.169.254/metadata/v1"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
-if ip -4 -o address show \
-  | awk '{split($4, address, "/"); print address[1]}' \
-  | grep -Fxq "${expected_ipv4}"; then
+# The computed path is fixed relative to this signed deployment payload. The
+# helper is also passed to ShellCheck independently by the Jenkins wildcard.
+# shellcheck disable=SC1091
+source "${script_dir}/network-functions.sh"
+
+if local_ipv4_is_configured "${expected_ipv4}"; then
   printf 'Verified local public IPv4: %s\n' "${expected_ipv4}"
   exit 0
 fi
