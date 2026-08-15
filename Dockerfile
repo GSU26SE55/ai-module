@@ -73,6 +73,18 @@ COPY --chmod=0555 deploy/scripts/container-entrypoint.sh /usr/local/bin/ai-entry
 # writable.
 RUN chmod -R a+rX /app
 
+# Entrypoint mkdir dưới $AI_DATA_DIR khi đã hạ xuống UID 10001. Tạo sẵn các thư mục đó
+# với owner 10001 ngay trong image vì hai lý do:
+#   1. Không mount gì: /data đã ghi được, container chạy như thường.
+#   2. Có mount named volume rỗng: Docker khởi tạo volume bằng cách copy nội dung VÀ owner
+#      của mountpoint trong image — nên volume cũng thuộc 10001, không cần chown lúc chạy.
+# Bind-mount host thì quyền do host quyết định (xem docker-compose.prod.yml).
+RUN install -d -o 10001 -g 10001 \
+      /data \
+      /data/kb \
+      /data/prescription-history \
+      /data/classification-feedback
+
 USER 10001:10001
 
 EXPOSE 8000 50051

@@ -44,13 +44,13 @@ def _sensor_supports_anomaly(snap: TicketSensorSnapshot) -> tuple[bool, str]:
     """Sensor có thực sự bất thường không → củng cố tính hợp lệ của ticket."""
     reasons = []
     if snap.has_active_alert:
-        reasons.append("pin đang có cảnh báo active")
+        reasons.append("battery has an active alert")
     if snap.soh_percent and snap.soh_percent < 80:
-        reasons.append(f"SOH {snap.soh_percent:.0f}% dưới ngưỡng EOL 80%")
+        reasons.append(f"SOH {snap.soh_percent:.0f}% below the 80% EOL threshold")
     if snap.temperature and snap.temperature > 45:
-        reasons.append(f"nhiệt độ {snap.temperature:.0f}°C cao")
+        reasons.append(f"temperature {snap.temperature:.0f}°C is high")
     if snap.soc_percent and snap.soc_percent < 15:
-        reasons.append(f"SOC {snap.soc_percent:.0f}% rất thấp")
+        reasons.append(f"SOC {snap.soc_percent:.0f}% is very low")
     return (len(reasons) > 0, ", ".join(reasons))
 
 
@@ -68,9 +68,9 @@ def _detect_duplicate(
         if adjusted > best_score:
             best_score = adjusted
             best_id = c.ticket_id
-            cat_note = " + cùng loại (category)" if same_cat else ""
+            cat_note = " + same category" if same_cat else ""
             best_reason = (
-                f"Mô tả tương đồng {sim * 100:.0f}% với ticket đang mở{cat_note}"
+                f"Description is {sim * 100:.0f}% similar to an open ticket{cat_note}"
             )
     if best_score >= DUPLICATE_THRESHOLD:
         return best_id, round(best_score, 3), best_reason
@@ -88,43 +88,43 @@ def run_verify(req: VerifyTicketRequest) -> VerifyTicketResponse:
     # 1. Độ dài mô tả — quá ngắn → nghi rác.
     if len(desc_norm) < MIN_DESCRIPTION_LEN:
         score -= 0.3
-        reasons.append("mô tả quá ngắn/sơ sài")
+        reasons.append("description is too short or vague")
     else:
         score += 0.15
 
     # 2. Tiêu đề rỗng / trùng mô tả y hệt → nghi.
     if not title_norm:
         score -= 0.1
-        reasons.append("thiếu tiêu đề")
+        reasons.append("missing title")
 
     # 3. Từ khóa bất thường → tăng độ hợp lệ.
     text = title_norm + " " + desc_norm
     if any(kw in text for kw in _ANOMALY_KEYWORDS):
         score += 0.2
-        reasons.append("mô tả nêu triệu chứng bất thường cụ thể")
+        reasons.append("description reports specific abnormal symptoms")
 
     # 4. Spam đơn giản: cùng 1 ký tự lặp nhiều / toàn số.
     if re.fullmatch(r"(.)\1{5,}", desc_norm.replace(" ", "")) or re.fullmatch(
         r"[0-9\s]+", desc_norm
     ):
         score -= 0.4
-        reasons.append("mô tả có dấu hiệu spam")
+        reasons.append("description looks like spam")
 
     # 5. Đối chiếu sensor thật — bất thường thật → củng cố hợp lệ mạnh.
     if req.sensor_snapshot is not None:
         supported, sensor_reason = _sensor_supports_anomaly(req.sensor_snapshot)
         if supported:
             score += 0.3
-            reasons.append(f"khớp dữ liệu sensor thật ({sensor_reason})")
+            reasons.append(f"matches live sensor data ({sensor_reason})")
         else:
             score -= 0.1
-            reasons.append("sensor pin tại thời điểm này không thấy bất thường rõ")
+            reasons.append("battery sensors show no clear anomaly at this time")
 
     score = max(0.0, min(1.0, round(score, 3)))
     verdict = "legitimate" if score >= LEGITIMATE_THRESHOLD else "suspicious"
 
-    prefix = "Hợp lệ" if verdict == "legitimate" else "Nghi ngờ"
-    reason = f"{prefix}: " + ("; ".join(reasons) if reasons else "không có tín hiệu bất thường")
+    prefix = "Legitimate" if verdict == "legitimate" else "Suspicious"
+    reason = f"{prefix}: " + ("; ".join(reasons) if reasons else "no abnormal signals")
 
     dup_id, dup_score, dup_reason = _detect_duplicate(req)
 

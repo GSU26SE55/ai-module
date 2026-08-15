@@ -66,38 +66,38 @@ def _score_candidate(
 
     if req.category and c.category == req.category:
         score += _W_CATEGORY
-        reasons.append("đúng loại lỗi")
+        reasons.append("same fault category")
 
     # Tags — KbSuggestionService của BE bỏ qua trường này dù nó chính xác hơn quét toàn văn.
     tag_hits = [t for t in c.tags if t and norm_code(t) and tokens(t) & query_tokens]
     if tag_hits:
         pts = min(len(tag_hits) * _W_TAGS_PER_HIT, _W_TAGS_MAX)
         score += pts
-        reasons.append(f"khớp thẻ {', '.join(sorted(tag_hits)[:3])}")
+        reasons.append(f"matches tag {', '.join(sorted(tag_hits)[:3])}")
 
     title_sim = jaccard(tokens(c.title), query_tokens)
     if title_sim > 0:
         score += title_sim * _W_TITLE
         if title_sim >= 0.15:
-            reasons.append("tiêu đề sát nội dung sự cố")
+            reasons.append("title closely matches the incident")
 
     if max_helpful > 0 and c.helpful_count > 0:
         score += (c.helpful_count / max_helpful) * _W_HELPFUL
         if c.helpful_count >= max_helpful:
-            reasons.append(f"được đánh giá hữu ích nhiều nhất ({c.helpful_count})")
+            reasons.append(f"rated most helpful ({c.helpful_count})")
 
     if ai_tokens and tokens(c.title) & ai_tokens:
         score += _W_AI_REF_BONUS
-        reasons.append("AI đã tham chiếu tài liệu này khi phân tích")
+        reasons.append("the AI cited this document during analysis")
 
-    return score, "; ".join(reasons) if reasons else "liên quan chung tới loại lỗi"
+    return score, "; ".join(reasons) if reasons else "generally related to this fault type"
 
 
 def run_suggest_kb(req: SuggestKbRequest) -> SuggestKbResponse:
     """Xếp hạng bài viết KB; trả top N kèm lý do."""
     if not req.candidates:
         return SuggestKbResponse(
-            suggestions=[], note="Chưa có bài viết nào được xuất bản cho loại lỗi này."
+            suggestions=[], note="No published article exists for this fault type yet."
         )
 
     # Nguồn từ khoá, ưu tiên dữ liệu AI đã sinh cho chính ticket này (chính xác hơn hẳn
@@ -132,6 +132,6 @@ def run_suggest_kb(req: SuggestKbRequest) -> SuggestKbResponse:
 
     note = ""
     if not query_tokens:
-        note = "Ticket không có mô tả để so khớp — danh sách xếp theo mức độ hữu ích."
+        note = "The ticket has no description to match against — the list is ranked by helpfulness."
 
     return SuggestKbResponse(suggestions=suggestions, note=note)

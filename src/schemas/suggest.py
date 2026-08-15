@@ -40,7 +40,7 @@ class StaffSuggestion(BaseModel):
     staff_id: str
     full_name: str = ""
     score: float  # [0..1]
-    reason: str  # tiếng Việt, cho Manager đọc
+    reason: str  # English — surfaced verbatim on web and mobile
     tier_ok: bool = True
 
 

@@ -29,7 +29,7 @@ def test_same_category_scores_higher():
     )
     res = run_suggest_kb(req)
     assert res.suggestions[0].kb_id == "match"
-    assert "đúng loại lỗi" in res.suggestions[0].reason
+    assert "same fault category" in res.suggestions[0].reason
 
 
 def test_other_category_still_included():
@@ -55,7 +55,7 @@ def test_tag_match_boosts_score():
     )
     res = run_suggest_kb(req)
     assert res.suggestions[0].kb_id == "tagged"
-    assert "thẻ" in res.suggestions[0].reason
+    assert "matches tag" in res.suggestions[0].reason
 
 
 def test_title_similarity_matters():
@@ -95,7 +95,7 @@ def test_ai_sop_reference_bonus_dominates():
     )
     res = run_suggest_kb(req)
     assert res.suggestions[0].kb_id == "ai_ref"
-    assert "AI đã tham chiếu" in res.suggestions[0].reason
+    assert "the AI cited this document" in res.suggestions[0].reason
 
 
 def test_ai_action_steps_used_as_keywords():
