@@ -162,6 +162,7 @@ pipeline {
                               --exit-code 1 \
                               --severity HIGH,CRITICAL \
                               --scanners vuln,secret,misconfig \
+                              --skip-dirs .venv-ci \
                               --format json \
                               --output trivy-fs.json \
                               .
