@@ -149,6 +149,13 @@ VPC address. On `wg0`, accept TCP `443`, `9100`, `8082` and `12345` only from
 containing the fail-closed preflight until the peer and the Backend Loki bridge
 are active.
 
+The Jenkins SSH account intentionally has no `CAP_NET_ADMIN` and must not be
+granted `sudo` merely to run `wg show`. Production preflight instead verifies
+that the Backend peer address is routed through `wg0`, then performs a bounded
+HTTP readiness request to Loki at `10.20.0.1:3100`. Because only the peer `/32`
+is routed through `wg0`, a successful response proves the encrypted data path
+is usable and refreshes an idle WireGuard handshake.
+
 ## 5. One-time VPS2 provisioning
 
 Create a dedicated SSH account. Its key must be key-only and used only by
