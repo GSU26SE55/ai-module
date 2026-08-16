@@ -1,4 +1,21 @@
+# Binary artifacts — Git must never rewrite bytes inside these.
 models/embeddings/** -text
-models/weights/** -text
-*.pkl -text
-*.pth -text
+models/weights/**    -text
+*.pkl                -text
+*.pth                -text
+
+# Everything below is consumed on Linux — inside the container, by Jenkins, or
+# by docker compose --env-file — and MUST keep LF in the working tree.
+#
+# Docker builds from the working tree, not from the committed blob. With
+# core.autocrlf=true on a Windows dev machine these get checked out as CRLF and
+# baked into the image. A CRLF shebang makes the kernel look for an interpreter
+# literally named "/bin/sh\r", which surfaces as:
+#     exec /usr/local/bin/ai-entrypoint: no such file or directory
+# The message names the entrypoint, but the missing file is the interpreter.
+# A CRLF env file is quieter still: every value silently gains a trailing \r.
+deploy/**            text eol=lf
+Jenkinsfile          text eol=lf
+Dockerfile           text eol=lf
+*.sh                 text eol=lf
+*.env.example        text eol=lf
