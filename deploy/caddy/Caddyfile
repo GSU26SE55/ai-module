@@ -13,12 +13,26 @@
 		}
 	}
 
+	# Metrics contain process/runtime details and must never be Internet-facing.
+	# Prometheus preserves this public hostname for TLS/SNI but resolves it to the
+	# AI WireGuard address, so its source at Caddy is the platform VPN peer.
+	@metrics path /metrics /metrics/*
+	handle @metrics {
+		@platform remote_ip {$PLATFORM_WIREGUARD_IPV4}
+		handle @platform {
+			reverse_proxy ai-module:8000
+		}
+		respond "Forbidden" 403
+	}
+
 	# gRPC and REST intentionally share the same public origin. Caddy detects
 	# application/grpc over HTTP/2 and forwards it to the h2c gRPC listener;
 	# every other request goes to FastAPI.
-	@grpc protocol grpc
-	reverse_proxy @grpc h2c://ai-module:50051
-	reverse_proxy ai-module:8000
+	handle {
+		@grpc protocol grpc
+		reverse_proxy @grpc h2c://ai-module:50051
+		reverse_proxy ai-module:8000
+	}
 
 	log {
 		output stdout

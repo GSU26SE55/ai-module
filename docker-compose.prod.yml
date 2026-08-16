@@ -74,6 +74,7 @@ services:
     environment:
       AI_PUBLIC_DOMAIN: ${AI_PUBLIC_DOMAIN:?AI_PUBLIC_DOMAIN is required}
       ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL is required}
+      PLATFORM_WIREGUARD_IPV4: ${PLATFORM_WIREGUARD_IPV4:?PLATFORM_WIREGUARD_IPV4 is required}
       HOME: /tmp
       XDG_DATA_HOME: /data
       XDG_CONFIG_HOME: /config
@@ -174,11 +175,13 @@ services:
       - "${AI_DOCKER_SOCKET_GID:?AI_DOCKER_SOCKET_GID must match the Docker socket group}"
     command:
       - run
-      - --server.http.listen-addr=127.0.0.1:12345
+      - --server.http.listen-addr=0.0.0.0:12345
       - --storage.path=/var/lib/alloy/data
       - /etc/alloy/config.alloy
     environment:
       LOKI_PUSH_URL: ${LOKI_PUSH_URL:-http://10.20.0.1:3100/loki/api/v1/push}
+    ports:
+      - "${AI_MONITORING_BIND_IP}:12345:12345"
     volumes:
       - ./deploy/alloy/config.alloy:/etc/alloy/config.alloy:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro

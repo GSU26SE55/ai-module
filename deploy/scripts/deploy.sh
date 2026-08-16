@@ -95,6 +95,9 @@ until docker exec \
   sleep 5
 done
 
+"${release_dir}/deploy/scripts/verify-observability.sh" \
+  "${host_env}" "${release_sha:0:12}"
+
 if [ -n "${previous_release}" ] && [ "${previous_release}" != "${release_dir}" ]; then
   ln -sfn "${previous_release}" "${root}/previous"
 fi

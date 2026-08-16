@@ -19,10 +19,21 @@ def test_alloy_runtime_has_storage_socket_permissions_and_readiness_probe():
     assert alloy["group_add"] == [
         "${AI_DOCKER_SOCKET_GID:?AI_DOCKER_SOCKET_GID must match the Docker socket group}"
     ]
-    assert "--server.http.listen-addr=127.0.0.1:12345" in alloy["command"]
+    assert "--server.http.listen-addr=0.0.0.0:12345" in alloy["command"]
+    assert alloy["ports"] == ["${AI_MONITORING_BIND_IP}:12345:12345"]
     assert "--storage.path=/var/lib/alloy/data" in alloy["command"]
     assert alloy["healthcheck"]["test"][:3] == ["CMD", "/bin/bash", "-ec"]
     assert "/-/ready" in alloy["healthcheck"]["test"][3]
+
+
+def test_caddy_exposes_application_metrics_only_to_wireguard_peer():
+    compose = yaml.safe_load(Path("docker-compose.prod.yml").read_text())
+    caddyfile = Path("deploy/caddy/Caddyfile").read_text()
+
+    assert compose["services"]["caddy"]["environment"]["PLATFORM_WIREGUARD_IPV4"]
+    assert "@metrics path /metrics /metrics/*" in caddyfile
+    assert "remote_ip {$PLATFORM_WIREGUARD_IPV4}" in caddyfile
+    assert 'respond "Forbidden" 403' in caddyfile
 
 
 def test_deploy_arms_rollback_only_before_runtime_mutation():
@@ -41,6 +52,8 @@ def test_deploy_arms_rollback_only_before_runtime_mutation():
 
     rollback_script = Path("deploy/scripts/rollback.sh").read_text()
     assert '"${script_dir}/preflight.sh" "${target}"' in rollback_script
+    assert "require_alloy_metrics=false" in rollback_script
+    assert '"${script_dir}/verify-observability.sh"' in rollback_script
 
 
 def test_committed_model_manifest_verifies():
