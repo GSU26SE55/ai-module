@@ -67,6 +67,16 @@ until docker exec \
   sleep 5
 done
 
+# The immediately previous immutable release may predate Alloy's private
+# metrics port. Do not make emergency rollback impossible for that one legacy
+# revision; still verify node/cAdvisor plus the end-to-end Loki marker.
+require_alloy_metrics=true
+if ! grep -Fq ':12345:12345' "${target}/docker-compose.prod.yml"; then
+  require_alloy_metrics=false
+fi
+"${script_dir}/verify-observability.sh" \
+  "${host_env}" "rollback-$(basename "${target}")" "${require_alloy_metrics}"
+
 old_current=""
 if [ -L "${root}/current" ]; then
   old_current="$(readlink -f "${root}/current")"
