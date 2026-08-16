@@ -15,7 +15,7 @@ VPS2 runs five containers in the `solar-ai` Compose project:
 | `solar-ai-module` | FastAPI, gRPC, NASA/LFP models, embedded ChromaDB/RAG | Docker network only: `8000`, `50051` |
 | `solar-ai-node-exporter` | VPS CPU/RAM/disk metrics | WireGuard only: `9100` |
 | `solar-ai-cadvisor` | Container metrics | WireGuard only: `8082` |
-| `solar-ai-alloy` | Docker log shipping | outbound to Loki on VPS1 |
+| `solar-ai-alloy` | Docker log shipping and self-metrics | outbound to Loki; WireGuard-only `12345` |
 
 Both backend transports use the same origin:
 
@@ -117,16 +117,37 @@ port 80, while application port 443 can remain source-allowlisted. The backend
 and AI Droplets should use stable/reserved public IPs; update the firewall before
 changing either one.
 
-For central Prometheus/Loki, configure WireGuard as `10.20.0.1/24` on VPS1 and
-`10.20.0.2/24` on VPS2. Allow VPS1 to scrape only:
+For central Prometheus/Loki, configure WireGuard as `10.20.0.1/32` on VPS1 and
+`10.20.0.2/32` on VPS2. Only the two peer addresses are routed. Allow VPS1 to
+scrape only:
 
-- `https://ai.solars.io.vn/metrics` for application HTTP/gRPC metrics;
+- `https://ai.solars.io.vn/metrics/` for application HTTP/gRPC metrics;
 - `10.20.0.2:9100/metrics` for node-exporter;
-- `10.20.0.2:8082/metrics` for cAdvisor.
+- `10.20.0.2:8082/metrics` for cAdvisor;
+- `10.20.0.2:12345/metrics` for Alloy health/self-metrics.
 
-Alloy pushes logs to `http://10.20.0.1:3100/loki/api/v1/push`. If WireGuard is
-not ready, bind monitoring to `127.0.0.1` temporarily, but Prometheus on VPS1
-will not have complete host/container monitoring; that is not production-ready.
+The Caddy route returns `403` for `/metrics` unless the remote address is the
+Backend WireGuard peer. `/live` and `/ready` remain available through normal
+HTTPS. Alloy pushes logs to `http://10.20.0.1:3100/loki/api/v1/push`.
+
+The current DigitalOcean VPC addresses are Backend `10.104.0.4` and AI
+`10.104.0.3`. Verify `ip route get 10.104.0.4` on AI, then bootstrap the peer
+without ever copying its private key:
+
+```bash
+sudo apt-get install -y wireguard
+sudo deploy/scripts/configure-ai-wireguard.sh init 10.20.0.2
+
+# After exchanging only the two public keys:
+sudo deploy/scripts/configure-ai-wireguard.sh configure \
+  10.20.0.2 "$BACKEND_WG_PUBLIC_KEY" 10.104.0.4:51820
+```
+
+DigitalOcean Cloud Firewall and UFW must accept UDP `51820` only from Backend's
+VPC address. On `wg0`, accept TCP `443`, `9100`, `8082` and `12345` only from
+`10.20.0.1`. VPS1 accepts `3100` only from `10.20.0.2`. Do not merge a release
+containing the fail-closed preflight until the peer and the Backend Loki bridge
+are active.
 
 ## 5. One-time VPS2 provisioning
 
@@ -185,6 +206,7 @@ AI_DNS_ZONE=solars.io.vn
 AI_PUBLIC_IPV4=168.144.48.16
 ACME_EMAIL=YOUR_MONITORED_EMAIL
 AI_MONITORING_BIND_IP=10.20.0.2
+PLATFORM_WIREGUARD_IPV4=10.20.0.1
 AI_DOCKER_SOCKET_GID=988
 AI_SECRETS_FILE=/opt/solar-ai/secrets/ai.env
 LOKI_PUSH_URL=http://10.20.0.1:3100/loki/api/v1/push
@@ -478,6 +500,17 @@ prediction, verify an HTTP fallback with gRPC deliberately blocked in a planned
 maintenance test, check all Prometheus targets, and confirm Caddy/AI logs arrive
 in Loki.
 
+The deploy and rollback scripts repeat the network checks. This helper also
+creates a unique Caddy log marker and queries it back from Backend Loki:
+
+```bash
+/opt/solar-ai/current/deploy/scripts/verify-observability.sh
+```
+
+From an Internet client, `https://ai.solars.io.vn/metrics/` must return `403`.
+From VPS1 with `--resolve ai.solars.io.vn:443:10.20.0.2`, it must return
+Prometheus text with a valid certificate for `ai.solars.io.vn`.
+
 Manual rollback uses the previous immutable release:
 
 ```bash
@@ -494,6 +527,10 @@ plus TLS ingress smoke tests before moving `current`.
 - Alert on `/ready`, restart loops, model/RAG errors, TLS expiry, p95 inference,
   HTTP/gRPC error rate, memory pressure, disk below 15%, and missing Prometheus
   or Loki targets.
+- Add OpenTelemetry trace export to Backend Tempo and propagate W3C
+  `traceparent` over both gRPC and HTTPS before treating distributed tracing as
+  complete. Metrics and logs are centralized by this release; tracing is a
+  separate hardening milestone.
 - Keep at least current and previous releases/images. Prune older data only in a
   reviewed maintenance job outside deployments.
 - Never commit `.env`, provider keys, registry tokens, SSH keys or the Cosign
