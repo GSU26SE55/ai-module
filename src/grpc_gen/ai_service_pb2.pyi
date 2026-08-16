@@ -336,20 +336,28 @@ class HealthResponse(_message.Message):
     def __init__(self, status: _Optional[str] = ..., model_version: _Optional[str] = ..., scaler_loaded: _Optional[bool] = ..., mamba_loaded: _Optional[bool] = ..., isolation_forest_loaded: _Optional[bool] = ..., lfp_loaded: _Optional[bool] = ..., lfp_model_version: _Optional[str] = ..., soc_mode: _Optional[str] = ..., lfp_soc_mode: _Optional[str] = ..., long_loaded: _Optional[bool] = ..., long_model_version: _Optional[str] = ...) -> None: ...
 
 class TicketSensorSnapshot(_message.Message):
-    __slots__ = ("soh_percent", "voltage", "current", "temperature", "soc_percent", "has_active_alert")
+    __slots__ = ("soh_percent", "voltage", "current", "temperature", "soc_percent", "has_active_alert", "temperature_max", "temperature_min", "soc_warning_threshold", "soh_warning_threshold")
     SOH_PERCENT_FIELD_NUMBER: _ClassVar[int]
     VOLTAGE_FIELD_NUMBER: _ClassVar[int]
     CURRENT_FIELD_NUMBER: _ClassVar[int]
     TEMPERATURE_FIELD_NUMBER: _ClassVar[int]
     SOC_PERCENT_FIELD_NUMBER: _ClassVar[int]
     HAS_ACTIVE_ALERT_FIELD_NUMBER: _ClassVar[int]
+    TEMPERATURE_MAX_FIELD_NUMBER: _ClassVar[int]
+    TEMPERATURE_MIN_FIELD_NUMBER: _ClassVar[int]
+    SOC_WARNING_THRESHOLD_FIELD_NUMBER: _ClassVar[int]
+    SOH_WARNING_THRESHOLD_FIELD_NUMBER: _ClassVar[int]
     soh_percent: float
     voltage: float
     current: float
     temperature: float
     soc_percent: float
     has_active_alert: bool
-    def __init__(self, soh_percent: _Optional[float] = ..., voltage: _Optional[float] = ..., current: _Optional[float] = ..., temperature: _Optional[float] = ..., soc_percent: _Optional[float] = ..., has_active_alert: _Optional[bool] = ...) -> None: ...
+    temperature_max: float
+    temperature_min: float
+    soc_warning_threshold: float
+    soh_warning_threshold: float
+    def __init__(self, soh_percent: _Optional[float] = ..., voltage: _Optional[float] = ..., current: _Optional[float] = ..., temperature: _Optional[float] = ..., soc_percent: _Optional[float] = ..., has_active_alert: _Optional[bool] = ..., temperature_max: _Optional[float] = ..., temperature_min: _Optional[float] = ..., soc_warning_threshold: _Optional[float] = ..., soh_warning_threshold: _Optional[float] = ...) -> None: ...
 
 class DuplicateCandidate(_message.Message):
     __slots__ = ("ticket_id", "description", "category")

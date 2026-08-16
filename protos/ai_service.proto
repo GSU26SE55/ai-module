@@ -355,6 +355,16 @@ message TicketSensorSnapshot {
   double temperature = 4;
   double soc_percent = 5;
   bool has_active_alert = 6;   // pin có alert đang mở tại thời điểm đó
+
+  // Ngưỡng THẬT của loại pin (`threshold_configs` — chính hàng `AnomalyRules` đọc để nổ alert).
+  // Không có thì AI phải hardcode, và nó sẽ bất đồng với backend về thế nào là lỗi: LFP 24V có
+  // trần thật 60°C, nhưng AI cũ so với 45°C nên pin ở 50°C — backend KHÔNG coi là lỗi — vẫn
+  // được cộng điểm "khớp sensor thật", tức xác nhận một sự cố không tồn tại.
+  // 0 = không biết ngưỡng ⇒ AI bỏ qua luật đó thay vì đoán.
+  double temperature_max = 7;
+  double temperature_min = 8;
+  double soc_warning_threshold = 9;
+  double soh_warning_threshold = 10;
 }
 
 // 1 ticket ứng viên để so trùng (đang mở, cùng pin).

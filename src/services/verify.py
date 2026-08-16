@@ -23,12 +23,23 @@ DUPLICATE_THRESHOLD = 0.45
 # Mô tả quá ngắn → nghi rác.
 MIN_DESCRIPTION_LEN = 15
 
-# Từ khóa bất thường thật (mô tả có → hợp lệ hơn). Không dấu để match cả có/không dấu.
+# Fault wording that makes a report credible. Stored accent-free because `_norm` strips
+# accents, so one entry matches both "nóng" and "nong".
+#
+# Vietnamese entries stay: the reporter is the Customer, and they write in their own words —
+# dropping them would penalise every Vietnamese-language report. What is standardised is the
+# text the AI *emits* (reasons shown to the Manager), not the text it *reads*.
 _ANOMALY_KEYWORDS = {
+    # Vietnamese — as typed by customers
     "nong", "nhiet", "khoi", "chay", "phong", "phinh", "ro ri", "chay xe",
     "sut ap", "yeu", "chai", "sac", "khong len", "mat dien", "tut", "giam",
     "bao dong", "canh bao", "loi", "hong", "bat thuong", "khac thuong",
+    "lanh", "dong bang", "khong sac", "het pin", "chap", "no",
+    # English
     "overheat", "voltage", "soh", "degrad", "swell", "leak", "smoke", "fire",
+    "hot", "cold", "freez", "burn", "spark", "bulge", "drain", "dead",
+    "not charging", "won't charge", "wont charge", "no power", "shut down",
+    "shutdown", "fault", "error", "alarm", "abnormal", "damage",
 }
 
 
@@ -41,16 +52,36 @@ _jaccard = jaccard
 
 
 def _sensor_supports_anomaly(snap: TicketSensorSnapshot) -> tuple[bool, str]:
-    """Sensor có thực sự bất thường không → củng cố tính hợp lệ của ticket."""
+    """Does the sensor data actually show a fault? → strengthens the ticket's legitimacy.
+
+    Every limit is read from the battery type's own `threshold_configs` — the same row
+    `AnomalyRules` uses to raise alerts. Hardcoding them here (it used to be 45°C / SOC 15%)
+    makes the AI disagree with the backend about what counts as a fault: an LFP 24V pack has
+    a real limit of 60°C, so a 50°C reading the backend ignores was being scored as "matches
+    real sensor data", confirming a fault that never existed. A threshold of 0 means the
+    caller didn't supply it — skip that rule rather than guess.
+    """
     reasons = []
     if snap.has_active_alert:
-        reasons.append("pin đang có cảnh báo active")
-    if snap.soh_percent and snap.soh_percent < 80:
-        reasons.append(f"SOH {snap.soh_percent:.0f}% dưới ngưỡng EOL 80%")
-    if snap.temperature and snap.temperature > 45:
-        reasons.append(f"nhiệt độ {snap.temperature:.0f}°C cao")
-    if snap.soc_percent and snap.soc_percent < 15:
-        reasons.append(f"SOC {snap.soc_percent:.0f}% rất thấp")
+        reasons.append("battery had an active alert")
+    if snap.soh_warning_threshold and snap.soh_percent and snap.soh_percent < snap.soh_warning_threshold:
+        reasons.append(
+            f"SOH {snap.soh_percent:.0f}% below the {snap.soh_warning_threshold:.0f}% threshold"
+        )
+    if snap.temperature_max and snap.temperature and snap.temperature > snap.temperature_max:
+        reasons.append(
+            f"temperature {snap.temperature:.0f}°C above the {snap.temperature_max:.0f}°C limit"
+        )
+    # Undertemp was missing entirely: a customer reporting a battery frozen at −18°C got
+    # "no anomaly seen" and lost points for a perfectly accurate report.
+    if snap.temperature_min and snap.temperature and snap.temperature < snap.temperature_min:
+        reasons.append(
+            f"temperature {snap.temperature:.0f}°C below the {snap.temperature_min:.0f}°C limit"
+        )
+    if snap.soc_warning_threshold and snap.soc_percent and snap.soc_percent < snap.soc_warning_threshold:
+        reasons.append(
+            f"SOC {snap.soc_percent:.0f}% below the {snap.soc_warning_threshold:.0f}% threshold"
+        )
     return (len(reasons) > 0, ", ".join(reasons))
 
 
@@ -68,9 +99,9 @@ def _detect_duplicate(
         if adjusted > best_score:
             best_score = adjusted
             best_id = c.ticket_id
-            cat_note = " + cùng loại (category)" if same_cat else ""
+            cat_note = " + same category" if same_cat else ""
             best_reason = (
-                f"Mô tả tương đồng {sim * 100:.0f}% với ticket đang mở{cat_note}"
+                f"{sim * 100:.0f}% description overlap with an open ticket{cat_note}"
             )
     if best_score >= DUPLICATE_THRESHOLD:
         return best_id, round(best_score, 3), best_reason
@@ -82,49 +113,49 @@ def run_verify(req: VerifyTicketRequest) -> VerifyTicketResponse:
     desc_norm = _norm(req.description)
     title_norm = _norm(req.title)
 
-    score = 0.5  # trung tính
+    score = 0.5  # neutral starting point
     reasons: list[str] = []
 
-    # 1. Độ dài mô tả — quá ngắn → nghi rác.
+    # 1. Description length — too short reads as junk.
     if len(desc_norm) < MIN_DESCRIPTION_LEN:
         score -= 0.3
-        reasons.append("mô tả quá ngắn/sơ sài")
+        reasons.append("description is too short")
     else:
         score += 0.15
 
-    # 2. Tiêu đề rỗng / trùng mô tả y hệt → nghi.
+    # 2. Missing title.
     if not title_norm:
         score -= 0.1
-        reasons.append("thiếu tiêu đề")
+        reasons.append("no title")
 
-    # 3. Từ khóa bất thường → tăng độ hợp lệ.
+    # 3. Concrete fault wording raises confidence.
     text = title_norm + " " + desc_norm
     if any(kw in text for kw in _ANOMALY_KEYWORDS):
         score += 0.2
-        reasons.append("mô tả nêu triệu chứng bất thường cụ thể")
+        reasons.append("describes a specific fault symptom")
 
-    # 4. Spam đơn giản: cùng 1 ký tự lặp nhiều / toàn số.
+    # 4. Crude spam: one character repeated, or digits only.
     if re.fullmatch(r"(.)\1{5,}", desc_norm.replace(" ", "")) or re.fullmatch(
         r"[0-9\s]+", desc_norm
     ):
         score -= 0.4
-        reasons.append("mô tả có dấu hiệu spam")
+        reasons.append("description looks like spam")
 
-    # 5. Đối chiếu sensor thật — bất thường thật → củng cố hợp lệ mạnh.
+    # 5. Cross-check against real sensor data — the strongest signal either way.
     if req.sensor_snapshot is not None:
         supported, sensor_reason = _sensor_supports_anomaly(req.sensor_snapshot)
         if supported:
             score += 0.3
-            reasons.append(f"khớp dữ liệu sensor thật ({sensor_reason})")
+            reasons.append(f"matches sensor data ({sensor_reason})")
         else:
             score -= 0.1
-            reasons.append("sensor pin tại thời điểm này không thấy bất thường rõ")
+            reasons.append("sensor data shows no clear anomaly at that time")
 
     score = max(0.0, min(1.0, round(score, 3)))
     verdict = "legitimate" if score >= LEGITIMATE_THRESHOLD else "suspicious"
 
-    prefix = "Hợp lệ" if verdict == "legitimate" else "Nghi ngờ"
-    reason = f"{prefix}: " + ("; ".join(reasons) if reasons else "không có tín hiệu bất thường")
+    prefix = "Legitimate" if verdict == "legitimate" else "Suspicious"
+    reason = f"{prefix}: " + ("; ".join(reasons) if reasons else "no notable signal")
 
     dup_id, dup_score, dup_reason = _detect_duplicate(req)
 
