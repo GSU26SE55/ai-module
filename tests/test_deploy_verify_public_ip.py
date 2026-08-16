@@ -4,8 +4,18 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
 SCRIPT = Path(__file__).parents[1] / "deploy" / "scripts" / "verify-public-ip.sh"
 EXPECTED_IP = "168.144.48.16"
+
+# _run_check() builds POSIX shims — chmod +x and a ':'-separated PATH — so this
+# module can only run on a POSIX host. It is exercised on the ubuntu-latest CI
+# runner; on Windows dev machines `bash` resolves to WSL and the shims are inert.
+pytestmark = pytest.mark.skipif(
+    os.name != "posix",
+    reason="requires a POSIX shell environment (runs on the Linux CI runner)",
+)
 
 
 def _write_executable(path: Path, content: str) -> None:

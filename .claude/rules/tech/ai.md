@@ -234,8 +234,8 @@ ai-module/models/weights/
 ├── [bộ LFP — chemistry="LFP", Severson + SNL]
 │   ├── scaler_lfp.pkl
 │   ├── feature_scaler_lfp.pkl
-│   ├── soh_mamba_v2.1-lfp.pth         # LFP_MODEL_VERSION
-│   └── isolation_forest_v2.1-lfp.pkl
+│   ├── soh_mamba_v2.2-lfp.pth         # LFP_MODEL_VERSION
+│   └── isolation_forest_v2.2-lfp.pkl
 └── [long-seq / RUL — không phải đường production]
     ├── soh_mamba_long_v2.2.pth · scaler_long.pkl · feature_scaler_long.pkl
     └── soh_mamba_rul_v1.0.pth · feature_scaler_rul.pkl

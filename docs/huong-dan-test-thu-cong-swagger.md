@@ -72,13 +72,13 @@ Vẫn payload trên, thêm:
 "pack_config": { "n_series": 4, "chemistry": "LFP", "capacity_ah": 100 }
 ```
 
-→ **200** · `soh_percent ≈ 98.29` · `health_stage: "Healthy"` · `model_version: "2.1-lfp"`
+→ **200** · `soh_percent ≈ 98.29` · `health_stage: "Healthy"` · `model_version: "2.2-lfp"`
 
 | | Lần 2 (thiếu chemistry) | Lần 3 (đúng) |
 |---|---|---|
 | SOH | **38.25%** | **98.29%** |
 | Kết luận | End Of Life | Healthy |
-| Model | 1.6 (NASA) | 2.1-lfp |
+| Model | 1.6 (NASA) | 2.2-lfp |
 
 **Lệch 60 điểm SOH. Một bên bảo pin sắp chết, bên kia bảo pin khoẻ — và KHÔNG có lỗi nào báo ra.**
 Đó là lý do `chemistry` là trường bắt buộc trên thực tế dù schema cho phép bỏ trống.
@@ -189,7 +189,7 @@ pageNumber = 1 · pageSize = 5
 Kiểm đủ 12 field: `healthStage` `stageConfidence` `isBorderline` `sohStd` `rulCyclesEstimate`
 `aiPriority` `riskLevel` `actionCode` `sohTrend` `degradationRatePerCycle` `cyclesToMaintenance` `isTemperatureOod`
 
-Pin này là LiFePO4 nên `modelVersion` phải là **`2.1-lfp`**.
+Pin này là LiFePO4 nên `modelVersion` phải là **`2.2-lfp`**.
 
 ---
 
@@ -360,7 +360,7 @@ WHERE origin=1 AND ai_verify_status IN (1,4) AND status NOT IN (10,11,12) AND NO
 ## 9. Ba câu SQL kiểm nhanh sau khi test
 
 ```bash
-# (a) Đúng model cho đúng chemistry — PHẢI thấy CẢ 1.6 LẪN 2.1-lfp
+# (a) Đúng model cho đúng chemistry — PHẢI thấy CẢ 1.6 LẪN 2.2-lfp
 docker exec solar-postgres psql -U postgres -d battery_db -c \
  "SELECT model_version, count(*) FROM soh_predictions WHERE health_stage IS NOT NULL GROUP BY model_version;"
 

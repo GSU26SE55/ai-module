@@ -330,8 +330,8 @@ def main() -> None:
              f"files (default {LFP_MODEL_VERSION} from config). train.py's "
              "--feature-scaler-version MUST be given the same string or load_split() "
              "rejects the tensors. This is a CLI arg and not just the config constant "
-             "because LFP_MODEL_VERSION cannot be bumped to 2.1-lfp until the 2.1 "
-             "weights exist — bumping it earlier breaks loading the live 2.0 artifacts.",
+             "because LFP_MODEL_VERSION cannot be bumped to the NEXT version until "
+             "those weights exist — bumping it earlier breaks loading the live ones.",
     )
     parser.add_argument(
         "--cycle-count-norm", type=float, default=None,

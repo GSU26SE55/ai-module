@@ -1,0 +1,4 @@
+models/embeddings/** -text
+models/weights/** -text
+*.pkl -text
+*.pth -text

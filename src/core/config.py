@@ -164,7 +164,9 @@ SEED = 42
 # architecture as the default NASA/NMC model. Selected at inference time when
 # pack_config.chemistry == "LFP" — chemistry-aware artifact selection in
 # model_loader.py/inference.py is a separate follow-up step, NOT part of this.
-LFP_MODEL_VERSION = "2.1-lfp"  # v2.1: +18 cell SNL đa nhiệt độ (15/25/35 °C) vào train
+LFP_MODEL_VERSION = "2.2-lfp"  # v2.2: bỏ 5 cell tiếp nối batch1→batch2 của Severson
+# (b2c7/8/9/15/16 — cycle_count đếm lại từ 1 nên mâu thuẫn với nhãn SOH) + lọc cảm biến
+# phi vật lý. MAE 1.5421 → 1.2697 %. v2.1: +18 cell SNL đa nhiệt độ (15/25/35 °C).
 LFP_NOMINAL_CAPACITY_AH = 1.1  # A123 APR18650M1A (Severson et al. 2019) — vs NASA's 2.0 Ah
 # GH-67: dung lượng cell danh định dùng để quy dòng pack về C-rate lúc INFERENCE.
 # Trước đây LFP_NOMINAL_CAPACITY_AH chỉ được dùng lúc train (preprocess_lfp.py),

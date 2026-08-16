@@ -44,7 +44,7 @@ x_feat (B,57) → Linear(57→57) → SiLU → Linear(57→128) → chunk → γ
 | chemistry | model | scaler | iforest |
 |-----------|-------|--------|---------|
 | mặc định (NASA/NMC) | `soh_mamba_v1.6.pth` | `scaler.pkl` + `feature_scaler.pkl` | `isolation_forest_v1.6.pkl` |
-| `"LFP"` | `soh_mamba_v2.1-lfp.pth` | `scaler_lfp.pkl` + `feature_scaler_lfp.pkl` | `isolation_forest_v2.1-lfp.pkl` |
+| `"LFP"` | `soh_mamba_v2.2-lfp.pth` | `scaler_lfp.pkl` + `feature_scaler_lfp.pkl` | `isolation_forest_v2.2-lfp.pkl` |
 
 **IsolationForest:** `contamination=0.1, n_estimators=100, random_state=42` — fit trên **vector 57 chiều**, không phải chuỗi thô.
 

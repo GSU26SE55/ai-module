@@ -880,7 +880,7 @@ class TestSocModeGuard:
         return inference._Artifacts(
             scaler=None, feature_scaler=None, soh_model=_M(), iso_model=None,
             cycle_count_norm=4600.0, artifact_set="LFP",
-            model_version="2.1-lfp", soc_mode=soc_mode,
+            model_version="2.2-lfp", soc_mode=soc_mode,
         )
 
     def _payload(self, n_cols):
