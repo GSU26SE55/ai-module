@@ -56,6 +56,19 @@ def test_deploy_arms_rollback_only_before_runtime_mutation():
     assert '"${script_dir}/verify-observability.sh"' in rollback_script
 
 
+def test_preflight_proves_wireguard_without_privileged_handshake_query():
+    script = Path("deploy/scripts/preflight.sh").read_text()
+
+    route_check = 'ip -4 route get "${platform_wireguard_ipv4}"'
+    loki_probe = '"http://${platform_wireguard_ipv4}:3100/ready"'
+
+    assert "latest-handshakes" not in script
+    assert route_check in script
+    assert loki_probe in script
+    assert "--connect-timeout 5 --max-time 10" in script
+    assert script.index(route_check) < script.index(loki_probe)
+
+
 def test_committed_model_manifest_verifies():
     result = verify_model_manifest()
     assert result["verified"] is True
