@@ -19,7 +19,7 @@ fail() {
   exit 1
 }
 
-for command in docker awk cosign curl dig grep sed sort stat df ip sleep tr tail wg date jq; do
+for command in docker awk cosign curl dig grep sed sort stat df ip sleep tr tail jq; do
   command -v "${command}" >/dev/null 2>&1 || fail "missing command: ${command}"
 done
 docker info >/dev/null 2>&1 || fail "Docker daemon is unavailable"
@@ -103,15 +103,12 @@ ip -4 route get "${platform_wireguard_ipv4}" |
   grep -Eq '(^|[[:space:]])dev wg0([[:space:]]|$)' \
   || fail "platform WireGuard address is not routed through wg0"
 
-latest_handshake="$({ wg show wg0 latest-handshakes || true; } |
-  awk 'BEGIN { latest = 0 } $2 > latest { latest = $2 } END { print latest }')"
-[[ "${latest_handshake}" =~ ^[0-9]+$ && "${latest_handshake}" -gt 0 ]] \
-  || fail "wg0 has no completed peer handshake"
-handshake_age="$(( $(date +%s) - latest_handshake ))"
-(( handshake_age >= 0 && handshake_age <= 180 )) \
-  || fail "wg0 peer handshake is stale: ${handshake_age}s old (maximum 180s)"
-
-curl --fail --silent --show-error \
+# The deploy account intentionally has no CAP_NET_ADMIN, so it cannot query
+# handshake timestamps with `wg show`. The /32 route above plus this bounded
+# application-layer probe proves that the configured peer and encrypted data
+# path are usable now; the request itself also initiates a fresh handshake when
+# an otherwise healthy tunnel has been idle.
+curl --fail --silent --show-error --connect-timeout 5 --max-time 10 \
   "http://${platform_wireguard_ipv4}:3100/ready" >/dev/null \
   || fail "Loki is not reachable through the platform WireGuard bridge"
 
