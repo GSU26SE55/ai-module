@@ -360,17 +360,21 @@ class TicketSensorSnapshot(_message.Message):
     def __init__(self, soh_percent: _Optional[float] = ..., voltage: _Optional[float] = ..., current: _Optional[float] = ..., temperature: _Optional[float] = ..., soc_percent: _Optional[float] = ..., has_active_alert: _Optional[bool] = ..., temperature_max: _Optional[float] = ..., temperature_min: _Optional[float] = ..., soc_warning_threshold: _Optional[float] = ..., soh_warning_threshold: _Optional[float] = ...) -> None: ...
 
 class DuplicateCandidate(_message.Message):
-    __slots__ = ("ticket_id", "description", "category")
+    __slots__ = ("ticket_id", "description", "category", "detected_at", "is_machine_written")
     TICKET_ID_FIELD_NUMBER: _ClassVar[int]
     DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
     CATEGORY_FIELD_NUMBER: _ClassVar[int]
+    DETECTED_AT_FIELD_NUMBER: _ClassVar[int]
+    IS_MACHINE_WRITTEN_FIELD_NUMBER: _ClassVar[int]
     ticket_id: str
     description: str
     category: int
-    def __init__(self, ticket_id: _Optional[str] = ..., description: _Optional[str] = ..., category: _Optional[int] = ...) -> None: ...
+    detected_at: str
+    is_machine_written: bool
+    def __init__(self, ticket_id: _Optional[str] = ..., description: _Optional[str] = ..., category: _Optional[int] = ..., detected_at: _Optional[str] = ..., is_machine_written: _Optional[bool] = ...) -> None: ...
 
 class VerifyTicketRequest(_message.Message):
-    __slots__ = ("title", "description", "detected_at", "category", "sensor_snapshot", "has_sensor_snapshot", "candidates")
+    __slots__ = ("title", "description", "detected_at", "category", "sensor_snapshot", "has_sensor_snapshot", "candidates", "is_machine_written")
     TITLE_FIELD_NUMBER: _ClassVar[int]
     DESCRIPTION_FIELD_NUMBER: _ClassVar[int]
     DETECTED_AT_FIELD_NUMBER: _ClassVar[int]
@@ -378,6 +382,7 @@ class VerifyTicketRequest(_message.Message):
     SENSOR_SNAPSHOT_FIELD_NUMBER: _ClassVar[int]
     HAS_SENSOR_SNAPSHOT_FIELD_NUMBER: _ClassVar[int]
     CANDIDATES_FIELD_NUMBER: _ClassVar[int]
+    IS_MACHINE_WRITTEN_FIELD_NUMBER: _ClassVar[int]
     title: str
     description: str
     detected_at: str
@@ -385,7 +390,8 @@ class VerifyTicketRequest(_message.Message):
     sensor_snapshot: TicketSensorSnapshot
     has_sensor_snapshot: bool
     candidates: _containers.RepeatedCompositeFieldContainer[DuplicateCandidate]
-    def __init__(self, title: _Optional[str] = ..., description: _Optional[str] = ..., detected_at: _Optional[str] = ..., category: _Optional[int] = ..., sensor_snapshot: _Optional[_Union[TicketSensorSnapshot, _Mapping]] = ..., has_sensor_snapshot: _Optional[bool] = ..., candidates: _Optional[_Iterable[_Union[DuplicateCandidate, _Mapping]]] = ...) -> None: ...
+    is_machine_written: bool
+    def __init__(self, title: _Optional[str] = ..., description: _Optional[str] = ..., detected_at: _Optional[str] = ..., category: _Optional[int] = ..., sensor_snapshot: _Optional[_Union[TicketSensorSnapshot, _Mapping]] = ..., has_sensor_snapshot: _Optional[bool] = ..., candidates: _Optional[_Iterable[_Union[DuplicateCandidate, _Mapping]]] = ..., is_machine_written: _Optional[bool] = ...) -> None: ...
 
 class VerifyTicketResponse(_message.Message):
     __slots__ = ("verdict", "score", "reason", "duplicate_of_ticket_id", "duplicate_score", "duplicate_reason")

@@ -36,6 +36,8 @@ class DuplicateCandidate(BaseModel):
     ticket_id: str
     description: str = ""
     category: int = 0  # TicketCategoryEnum (khớp BE)
+    detected_at: str = ""  # ISO UTC, "" nếu không có
+    is_machine_written: bool = False
 
 
 class VerifyTicketRequest(BaseModel):
@@ -45,6 +47,7 @@ class VerifyTicketRequest(BaseModel):
     category: int = 0  # TicketCategoryEnum ticket mới
     sensor_snapshot: TicketSensorSnapshot | None = None
     candidates: list[DuplicateCandidate] = Field(default_factory=list)
+    is_machine_written: bool = False
 
 
 class VerifyTicketResponse(BaseModel):

@@ -413,10 +413,10 @@ All artifacts (`scaler.pkl`, `feature_scaler.pkl`, `soh_mamba_vX.Y.pth`, `isolat
 | Layer | Choice | Version |
 |-------|--------|---------|
 | Language | Python | 3.11 |
-| ML | PyTorch | 2.3.1 |
-| Anomaly | scikit-learn | 1.5.0 |
+| ML | PyTorch | 2.6.0 |
+| Anomaly | scikit-learn | 1.6.1 |
 | Signal processing | scipy | 1.13.1 |
-| API | FastAPI | 0.111.1 |
+| API | FastAPI | 0.141.1 |
 | Server | uvicorn | 0.30.1 |
 | Data | numpy, pandas | 1.26.4 / 2.2.2 |
 
