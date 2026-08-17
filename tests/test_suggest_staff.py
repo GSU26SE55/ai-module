@@ -80,7 +80,7 @@ def test_all_full_returns_load_note():
     )
     res = run_suggest_staff(req)
     assert res.suggestions == []
-    assert "đầy tải" in res.note
+    assert "full capacity" in res.note
 
 
 def test_no_priority_skips_tier_filter():
@@ -174,4 +174,4 @@ def test_note_when_nobody_has_specialised_skill():
     )
     res = run_suggest_staff(req)
     assert res.suggestions
-    assert "kỹ năng chuyên" in res.note
+    assert "specialized skill" in res.note
