@@ -90,11 +90,11 @@ ai-module/
 ### `requirements.txt`
 
 ```
-torch==2.3.0
-scikit-learn==1.4.2
-fastapi==0.111.0
+torch==2.6.0
+scikit-learn==1.6.1
+fastapi==0.141.1
 uvicorn[standard]==0.30.1
-pydantic==2.7.1
+pydantic==2.13.4
 numpy==1.26.4
 pandas==2.2.2
 joblib==1.4.2

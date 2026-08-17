@@ -73,6 +73,12 @@ COPY --chmod=0555 deploy/scripts/container-entrypoint.sh /usr/local/bin/ai-entry
 # writable.
 RUN chmod -R a+rX /app
 
+# Entrypoint ghi kb/releases + history store dưới AI_DATA_DIR (compose trỏ /app/data).
+# Thư mục phải tồn tại SẴN trong image và thuộc UID runtime: khi mount một named volume
+# rỗng, Docker chỉ sao chép owner/mode từ thư mục đích có trong image — đích không tồn tại
+# thì volume ra root:root và UID 10001 không mkdir được.
+RUN mkdir -p /app/data && chown 10001:10001 /app/data
+
 USER 10001:10001
 
 EXPOSE 8000 50051

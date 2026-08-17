@@ -779,7 +779,7 @@ Cần benchmark trên **môi trường deploy thật** (Linux server), không l�
 | Bẫy | Chi tiết |
 |---|---|
 | **Thêm vào `.gitignore` thay vì `git rm`** | Không có tác dụng — file đã tracked, và Compose vẫn nạp từ đĩa. §B1 |
-| **Python 3.11 bắt buộc** | `torch 2.3.1` không hỗ trợ 3.12+. `python3` mặc định trên máy là **3.14.5** (sẽ hỏng). Nhưng `python3.11` **CÓ sẵn** tại `/Users/alex/.local/bin/python3.11` → không cần cài. Nếu không trong `PATH`: `make setup-dev PY311=/Users/alex/.local/bin/python3.11` |
+| **Python 3.11 bắt buộc** | Bản pin trong `requirements.txt` (`torch 2.6.0`, `numpy 1.26.4`) build cho 3.11. `python3` mặc định trên máy là **3.14.5** (sẽ hỏng). Nhưng `python3.11` **CÓ sẵn** tại `/Users/alex/.local/bin/python3.11` → không cần cài. Nếu không trong `PATH`: `make setup-dev PY311=/Users/alex/.local/bin/python3.11` |
 | **`grpcio` và `grpcio-tools` phải cùng version** | Đang pin `1.81.1` cả hai (`requirements.txt:31-32`), có comment: *"protobuf runtime phải khớp version codegen của grpcio-tools"* |
 | **Build context trỏ ra ngoài repo** | `context: ../ai-module` — phải chạy `docker compose build` từ thư mục `backend/` |
 | **Xung đột port với stack IoT** | Đang có `iot-rabbitmq`, `iot-redis`, `tempo-redis` chạy song song. Nếu `solar-*` không lên được, kiểm tra port trước tiên |

@@ -28,7 +28,7 @@ Current AI tasks:
 
 ```text
 Language: Python 3.11
-ML Framework: PyTorch 2.3.1
+ML Framework: PyTorch 2.6.0
 Serving: FastAPI
 SOH model: MambaSOHPredictor
 Anomaly detection: IsolationForest

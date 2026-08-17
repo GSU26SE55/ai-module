@@ -355,6 +355,16 @@ message TicketSensorSnapshot {
   double temperature = 4;
   double soc_percent = 5;
   bool has_active_alert = 6;   // pin có alert đang mở tại thời điểm đó
+
+  // Ngưỡng THẬT của loại pin (`threshold_configs` — chính hàng `AnomalyRules` đọc để nổ alert).
+  // Không có thì AI phải hardcode, và nó sẽ bất đồng với backend về thế nào là lỗi: LFP 24V có
+  // trần thật 60°C, nhưng AI cũ so với 45°C nên pin ở 50°C — backend KHÔNG coi là lỗi — vẫn
+  // được cộng điểm "khớp sensor thật", tức xác nhận một sự cố không tồn tại.
+  // 0 = không biết ngưỡng ⇒ AI bỏ qua luật đó thay vì đoán.
+  double temperature_max = 7;
+  double temperature_min = 8;
+  double soc_warning_threshold = 9;
+  double soh_warning_threshold = 10;
 }
 
 // 1 ticket ứng viên để so trùng (đang mở, cùng pin).
@@ -362,6 +372,9 @@ message DuplicateCandidate {
   string ticket_id = 1;
   string description = 2;
   int32 category = 3;          // TicketCategoryEnum (khớp BE) — cùng category → nghi trùng cao hơn
+  string detected_at = 4;      // ISO UTC, "" nếu không có — dùng để so KHOẢNG CÁCH THỜI GIAN
+  // true = mô tả do máy sinh từ template cố định (Origin=AutoFromAlert/System).
+  bool is_machine_written = 5;
 }
 
 message VerifyTicketRequest {
@@ -372,6 +385,17 @@ message VerifyTicketRequest {
   TicketSensorSnapshot sensor_snapshot = 5;      // optional
   bool has_sensor_snapshot = 6;                  // false → bỏ qua đối chiếu sensor
   repeated DuplicateCandidate candidates = 7;    // ticket đang mở cùng pin để so trùng
+  // true = mô tả ticket NÀY do máy sinh (Origin=AutoFromAlert/System).
+  //
+  // Quyết định thuật toán dò trùng, vì hai loại mô tả hỏng theo hai kiểu ngược nhau — đo trên
+  // dữ liệu thật của dự án:
+  //   · máy↔máy: cùng template, khác mỗi con số ⇒ Jaccard 0.73 giữa Overheat 67°C và
+  //     Undertemp −18°C, hai lỗi NGƯỢC nhau. Phải lọc thêm theo category.
+  //   · người↔máy: cùng sự cố, khác hẳn cách diễn đạt ⇒ Jaccard 0.06, dưới ngưỡng 0.45 rất xa,
+  //     nên ticket khách hàng khai về đúng sự cố mà máy đã bắt lại KHÔNG được gắn nghi trùng.
+  //     Với cặp này phải chấm theo cấu trúc (cùng pin + cùng category + gần nhau về thời gian)
+  //     thay vì đếm từ chung.
+  bool is_machine_written = 8;
 }
 
 message VerifyTicketResponse {
