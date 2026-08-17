@@ -451,6 +451,13 @@ class AiServiceServicer(ai_service_pb2_grpc.AiServiceServicer):
                 "temperature": request.sensor_snapshot.temperature,
                 "soc_percent": request.sensor_snapshot.soc_percent,
                 "has_active_alert": request.sensor_snapshot.has_active_alert,
+                # Ngưỡng thật của loại pin — bỏ sót ở đây thì schema nhận mặc định 0 và
+                # `_sensor_supports_anomaly` im lặng bỏ qua mọi luật, tức mất hẳn tín hiệu
+                # sensor mà vẫn trả verdict như thường.
+                "temperature_max": request.sensor_snapshot.temperature_max,
+                "temperature_min": request.sensor_snapshot.temperature_min,
+                "soc_warning_threshold": request.sensor_snapshot.soc_warning_threshold,
+                "soh_warning_threshold": request.sensor_snapshot.soh_warning_threshold,
             }
             if request.has_sensor_snapshot
             else None,

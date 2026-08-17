@@ -1,7 +1,10 @@
 # AI Module — GSU26SE55 · Makefile
 # Gói các lệnh hay dùng. Chạy `make` hoặc `make help` để xem danh sách.
 #
-# Yêu cầu: Python 3.11 (torch 2.3.1 không hỗ trợ 3.12+). Nếu chưa có: brew install python@3.11
+# Yêu cầu: Python 3.11 — bản pin trong requirements.txt (torch 2.6.0, numpy 1.26.4) build cho
+# 3.11. Nếu chưa có: brew install python@3.11
+# Lưu ý: `make setup` chỉ chạy lại khi requirements.txt mới hơn .venv/.installed. Đổi phiên bản
+# trong requirements mà venv không đổi theo thì xoá .venv/.installed (hoặc `make clean`) rồi setup lại.
 # Lần đầu:  make setup   → tạo .venv + cài deps
 # Chạy:     make serve  (REST :8000 + gRPC :50051 trong cùng lifecycle)
 
