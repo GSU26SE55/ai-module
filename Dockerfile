@@ -87,4 +87,7 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=120s --retries=8 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)"
 
 ENTRYPOINT ["/usr/local/bin/ai-entrypoint"]
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-access-log"]
+# Keep access logging enabled. Alloy ships this container's stdout to the
+# platform Loki, and the deploy gate uses a unique /ready marker to prove the
+# complete host-Caddy -> AI -> Alloy -> Loki path.
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

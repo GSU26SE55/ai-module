@@ -1,47 +1,36 @@
-{
-	email {$ACME_EMAIL}
-	admin off
-	servers {
-		protocols h1 h2
-	}
-}
-
-{$AI_PUBLIC_DOMAIN} {
+# Canonical AI virtual host for the shared host-level Caddy on R3.
+#
+# Merge this site block into /etc/caddy/Caddyfile alongside the Jenkins site.
+# The AI Compose project must never publish ports 80/443 itself.
+ai.solars.io.vn {
 	tls {
 		issuer acme {
 			disable_tlsalpn_challenge
 		}
 	}
 
-	# Metrics contain process/runtime details and must never be Internet-facing.
-	# Prometheus preserves this public hostname for TLS/SNI but resolves it to the
-	# AI WireGuard address, so its source at Caddy is the platform VPN peer.
+	# Metrics contain process/runtime details and are reachable only from the
+	# platform WireGuard peer. Prometheus keeps this hostname for TLS/SNI while
+	# resolving it to the AI WireGuard address.
 	@metrics path /metrics /metrics/*
 	handle @metrics {
-		@platform remote_ip {$PLATFORM_WIREGUARD_IPV4}
+		@platform remote_ip 10.20.0.1
 		handle @platform {
-			reverse_proxy ai-module:8000
+			reverse_proxy 127.0.0.1:18000
 		}
 		respond "Forbidden" 403
 	}
 
-	# gRPC and REST intentionally share the same public origin. Caddy detects
-	# application/grpc over HTTP/2 and forwards it to the h2c gRPC listener;
-	# every other request goes to FastAPI.
+	# gRPC and REST intentionally share the same public origin. The raw h2c and
+	# FastAPI listeners are loopback-only and cannot be reached from the network.
 	handle {
 		@grpc protocol grpc
-		reverse_proxy @grpc h2c://ai-module:50051
-		reverse_proxy ai-module:8000
+		reverse_proxy @grpc h2c://127.0.0.1:15051
+		reverse_proxy 127.0.0.1:18000
 	}
 
 	log {
 		output stdout
 		format json
 	}
-}
-
-# This listener is container-internal and exists only for Compose healthchecks.
-# It does not assert that ACME issuance succeeded; the deploy TLS smoke does.
-http://127.0.0.1:8081 {
-	respond /caddy-health 200
 }

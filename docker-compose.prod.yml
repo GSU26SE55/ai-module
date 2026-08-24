@@ -29,11 +29,17 @@ services:
       OMP_NUM_THREADS: "2"
       MKL_NUM_THREADS: "2"
       OPENBLAS_NUM_THREADS: "2"
-    # Application ports are deliberately internal-only. Caddy is the single
-    # production ingress and multiplexes HTTPS REST + HTTP/2 gRPC on TCP 443.
-    expose:
-      - "8000"
-      - "50051"
+    # Host Caddy is shared with Jenkins on R3. Publish the application only on
+    # loopback so Caddy can multiplex public HTTPS/gRPC without exposing the
+    # raw FastAPI or h2c listeners to the network.
+    ports:
+      - "127.0.0.1:18000:8000"
+      - "127.0.0.1:15051:50051"
+    # Production TLS smoke runs inside this container. Resolve the public
+    # certificate name to the Docker host so the request exercises host Caddy
+    # without depending on public hairpin routing.
+    extra_hosts:
+      - "${AI_PUBLIC_DOMAIN:?AI_PUBLIC_DOMAIN is required}:host-gateway"
     volumes:
       - /opt/solar-ai/data/kb:/data/kb
       - /opt/solar-ai/data/prescription-history:/data/prescription-history
@@ -65,66 +71,9 @@ services:
         max-size: 20m
         max-file: "5"
 
-  caddy:
-    image: caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
-    container_name: solar-ai-caddy
-    restart: unless-stopped
-    init: true
-    user: "10001:10001"
-    environment:
-      AI_PUBLIC_DOMAIN: ${AI_PUBLIC_DOMAIN:?AI_PUBLIC_DOMAIN is required}
-      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL is required}
-      PLATFORM_WIREGUARD_IPV4: ${PLATFORM_WIREGUARD_IPV4:?PLATFORM_WIREGUARD_IPV4 is required}
-      HOME: /tmp
-      XDG_DATA_HOME: /data
-      XDG_CONFIG_HOME: /config
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - /opt/solar-ai/data/caddy/data:/data
-      - /opt/solar-ai/data/caddy/config:/config
-    read_only: true
-    tmpfs:
-      - /tmp:size=32m,mode=1777,uid=10001,gid=10001
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    cap_add:
-      - NET_BIND_SERVICE
-    pids_limit: 128
-    mem_limit: 128m
-    cpus: 0.15
-    stop_grace_period: 20s
-    depends_on:
-      ai-module:
-        condition: service_healthy
-    healthcheck:
-      test:
-        - CMD
-        - wget
-        - --quiet
-        - --spider
-        - http://127.0.0.1:8081/caddy-health
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-    logging:
-      driver: json-file
-      options:
-        max-size: 20m
-        max-file: "5"
-    networks:
-      default:
-        aliases:
-          # Lets the AI container exercise the real TLS ingress without a
-          # public-network hairpin during the post-deploy smoke test.
-          - ${AI_PUBLIC_DOMAIN}
-
   node-exporter:
+    profiles:
+      - central-observability
     image: prom/node-exporter:v1.9.1@sha256:d00a542e409ee618a4edc67da14dd48c5da66726bbd5537ab2af9c1dfc442c8a
     container_name: solar-ai-node-exporter
     restart: unless-stopped
@@ -132,7 +81,7 @@ services:
       - --path.rootfs=/host
       - --web.listen-address=:9100
     ports:
-      - "${AI_MONITORING_BIND_IP:?AI_MONITORING_BIND_IP must be the WireGuard address}:9100:9100"
+      - "${AI_MONITORING_BIND_IP:-127.0.0.1}:9100:9100"
     volumes:
       - /:/host:ro,rslave
     read_only: true
@@ -145,6 +94,8 @@ services:
     cpus: 0.1
 
   cadvisor:
+    profiles:
+      - central-observability
     image: gcr.io/cadvisor/cadvisor:v0.52.1@sha256:f40e65878e25c2e78ea037f73a449527a0fb994e303dc3e34cb6b187b4b91435
     container_name: solar-ai-cadvisor
     restart: unless-stopped
@@ -152,7 +103,7 @@ services:
     devices:
       - /dev/kmsg:/dev/kmsg
     ports:
-      - "${AI_MONITORING_BIND_IP}:8082:8080"
+      - "${AI_MONITORING_BIND_IP:-127.0.0.1}:8082:8080"
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
@@ -164,6 +115,8 @@ services:
     cpus: 0.25
 
   alloy:
+    profiles:
+      - central-observability
     image: grafana/alloy:v1.10.2@sha256:bcf27f18c4402869af112fb39e35e1db3804a404686f4caa20bdf77814219223
     container_name: solar-ai-alloy
     restart: unless-stopped
@@ -172,16 +125,16 @@ services:
     # group separately so discovery works without running the process as root.
     user: "473:10001"
     group_add:
-      - "${AI_DOCKER_SOCKET_GID:?AI_DOCKER_SOCKET_GID must match the Docker socket group}"
+      - "${AI_DOCKER_SOCKET_GID:-0}"
     command:
       - run
       - --server.http.listen-addr=0.0.0.0:12345
       - --storage.path=/var/lib/alloy/data
       - /etc/alloy/config.alloy
     environment:
-      LOKI_PUSH_URL: ${LOKI_PUSH_URL:-http://10.20.0.1:3100/loki/api/v1/push}
+      LOKI_PUSH_URL: ${LOKI_PUSH_URL:-http://127.0.0.1:3100/loki/api/v1/push}
     ports:
-      - "${AI_MONITORING_BIND_IP}:12345:12345"
+      - "${AI_MONITORING_BIND_IP:-127.0.0.1}:12345:12345"
     volumes:
       - ./deploy/alloy/config.alloy:/etc/alloy/config.alloy:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro

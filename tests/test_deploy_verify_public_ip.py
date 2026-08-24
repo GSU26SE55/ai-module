@@ -7,7 +7,9 @@ from pathlib import Path
 import pytest
 
 SCRIPT = Path(__file__).parents[1] / "deploy" / "scripts" / "verify-public-ip.sh"
-EXPECTED_IP = "168.144.48.16"
+# Keep infrastructure-neutral examples in tests. The real production address
+# is supplied by deploy/host.env and is validated by the same code path.
+EXPECTED_IP = "203.0.113.16"
 
 # _run_check() builds POSIX shims — chmod +x and a ':'-separated PATH — so this
 # module can only run on a POSIX host. It is exercised on the ubuntu-latest CI

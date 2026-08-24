@@ -64,12 +64,12 @@ _W_TIER_ONE_ABOVE = 8
 _W_LOAD_MAX = 10
 
 _CATEGORY_LABELS = {
-    _CAT_CHARGING: "lỗi sạc",
-    _CAT_OVERHEAT: "quá nhiệt",
-    _CAT_NO_POWER: "mất nguồn",
-    _CAT_PERFORMANCE: "hiệu năng kém",
-    _CAT_OTHER: "khác",
-    _CAT_REPAIR: "sửa chữa",
+    _CAT_CHARGING: "charging issue",
+    _CAT_OVERHEAT: "overheat",
+    _CAT_NO_POWER: "no power",
+    _CAT_PERFORMANCE: "poor performance",
+    _CAT_OTHER: "other",
+    _CAT_REPAIR: "repair",
 }
 
 _TIER_LABELS = {
@@ -91,16 +91,16 @@ def _score_skill(candidate: StaffCandidate, category: int) -> tuple[int, str]:
 
     matched_primary = owned & primary
     if matched_primary:
-        return _W_SKILL_PRIMARY, f"khớp kỹ năng chính '{sorted(matched_primary)[0]}'"
+        return _W_SKILL_PRIMARY, f"primary skill match '{sorted(matched_primary)[0]}'"
 
     matched_secondary = owned & (secondary - {"general"})
     if matched_secondary:
-        return _W_SKILL_SECONDARY, f"có kỹ năng liên quan '{sorted(matched_secondary)[0]}'"
+        return _W_SKILL_SECONDARY, f"related skill '{sorted(matched_secondary)[0]}'"
 
     if "general" in owned:
-        return _W_SKILL_GENERAL_ONLY, "kỹ năng tổng quát"
+        return _W_SKILL_GENERAL_ONLY, "general skill only"
 
-    return 0, "không có kỹ năng khớp loại lỗi này"
+    return 0, "no skill match for this category"
 
 
 def _score_tier(candidate: StaffCandidate, priority: int) -> tuple[int, str]:
@@ -117,22 +117,22 @@ def _score_tier(candidate: StaffCandidate, priority: int) -> tuple[int, str]:
     gap = candidate.skill_tier - min_tier
     prio_label = _PRIORITY_LABELS.get(priority, f"P{priority}")
     if gap == 0:
-        return _W_TIER_EXACT, f"{tier_label} đúng yêu cầu {prio_label}"
+        return _W_TIER_EXACT, f"{tier_label} matches {prio_label} requirement"
     if gap == 1:
-        return _W_TIER_ONE_ABOVE, f"{tier_label} cao hơn yêu cầu {prio_label}"
-    return 0, f"{tier_label} vượt xa yêu cầu {prio_label}"
+        return _W_TIER_ONE_ABOVE, f"{tier_label} above {prio_label} requirement"
+    return 0, f"{tier_label} far above {prio_label} requirement"
 
 
 def _score_load(candidate: StaffCandidate) -> tuple[float, str]:
     """Điểm theo mức rảnh. max_concurrent = 0 ⇒ coi như không giới hạn."""
     if candidate.max_concurrent <= 0:
-        return float(_W_LOAD_MAX), "chưa đặt giới hạn ticket"
+        return float(_W_LOAD_MAX), "no ticket limit set"
 
     free_ratio = 1.0 - (candidate.active_tickets / candidate.max_concurrent)
     free_ratio = max(0.0, min(1.0, free_ratio))
     return (
         free_ratio * _W_LOAD_MAX,
-        f"đang xử lý {candidate.active_tickets}/{candidate.max_concurrent} ticket",
+        f"handling {candidate.active_tickets}/{candidate.max_concurrent} tickets",
     )
 
 
@@ -153,7 +153,7 @@ def run_suggest_staff(req: SuggestStaffRequest) -> SuggestStaffResponse:
     """Xếp hạng ứng viên; trả top N kèm lý do."""
     if not req.candidates:
         return SuggestStaffResponse(
-            suggestions=[], note="Không có nhân viên nào sẵn sàng nhận ticket."
+            suggestions=[], note="No staff available to take this ticket."
         )
 
     # 1. Lọc cứng — PHẢI khớp đúng điều kiện TicketAssignCommandHandler validate, nếu không
@@ -165,13 +165,13 @@ def run_suggest_staff(req: SuggestStaffRequest) -> SuggestStaffResponse:
         blocked_by_load = sum(1 for c in req.candidates if not _has_capacity(c))
         prio_label = _PRIORITY_LABELS.get(req.priority, "")
         if blocked_by_tier and not blocked_by_load:
-            note = f"Không có nhân viên nào đủ tier cho ticket {prio_label}."
+            note = f"No staff meets the required tier for this {prio_label} ticket."
         elif blocked_by_load and not blocked_by_tier:
-            note = "Tất cả nhân viên phù hợp đều đã đầy tải."
+            note = "All eligible staff are already at full capacity."
         else:
             note = (
-                f"Không có ứng viên phù hợp: {blocked_by_tier} người không đủ tier, "
-                f"{blocked_by_load} người đã đầy tải."
+                f"No eligible candidates: {blocked_by_tier} below required tier, "
+                f"{blocked_by_load} at full capacity."
             )
         return SuggestStaffResponse(suggestions=[], note=note)
 
@@ -206,10 +206,10 @@ def run_suggest_staff(req: SuggestStaffRequest) -> SuggestStaffResponse:
 
     # Cảnh báo khi KHÔNG AI có kỹ năng chuyên — xét trực tiếp điểm kỹ năng thay vì suy ra
     # từ tổng điểm (tổng còn cộng tier + tải nên không phản ánh đúng phần kỹ năng).
-    cat_label = _CATEGORY_LABELS.get(req.category, "loại lỗi này")
+    cat_label = _CATEGORY_LABELS.get(req.category, "this category")
     note = ""
     best_skill_pts = max(_score_skill(c, req.category)[0] for c in eligible)
     if best_skill_pts <= _W_SKILL_GENERAL_ONLY:
-        note = f"Không ai có kỹ năng chuyên cho {cat_label} — cân nhắc phân công kèm hỗ trợ."
+        note = f"No one has a specialized skill for {cat_label} — consider assigning with a supporter."
 
     return SuggestStaffResponse(suggestions=suggestions, note=note)
