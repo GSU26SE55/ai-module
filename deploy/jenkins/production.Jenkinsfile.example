@@ -221,17 +221,17 @@ pipeline {
             }
         }
 
-        stage('Deploy VPS2') {
+        stage('Deploy AI on shared R3') {
             steps {
-                lock(resource: 'solar-vps2-prod') {
-                    sshagent(credentials: ['ai-vps2-ssh']) {
+                lock(resource: 'solar-r3-ai-prod') {
+                    sshagent(credentials: ['ai-r3-deploy-ssh']) {
                         withCredentials([
                             string(
-                                credentialsId: 'ai-vps2-target',
+                                credentialsId: 'ai-r3-target',
                                 variable: 'VPS_TARGET'
                             ),
                             file(
-                                credentialsId: 'ai-vps2-known-hosts',
+                                credentialsId: 'ai-r3-known-hosts',
                                 variable: 'VPS_KNOWN_HOSTS'
                             )
                         ]) {

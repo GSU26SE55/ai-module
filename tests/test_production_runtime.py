@@ -26,14 +26,58 @@ def test_alloy_runtime_has_storage_socket_permissions_and_readiness_probe():
     assert "/-/ready" in alloy["healthcheck"]["test"][3]
 
 
-def test_caddy_exposes_application_metrics_only_to_wireguard_peer():
+def test_shared_host_caddy_uses_loopback_upstreams_and_private_metrics():
     compose = yaml.safe_load(Path("docker-compose.prod.yml").read_text())
     caddyfile = Path("deploy/caddy/Caddyfile").read_text()
+    ai_module = compose["services"]["ai-module"]
 
-    assert compose["services"]["caddy"]["environment"]["PLATFORM_WIREGUARD_IPV4"]
+    assert "caddy" not in compose["services"]
+    assert ai_module["ports"] == [
+        "127.0.0.1:18000:8000",
+        "127.0.0.1:15051:50051",
+    ]
+    assert ai_module["extra_hosts"] == [
+        "${AI_PUBLIC_DOMAIN:?AI_PUBLIC_DOMAIN is required}:host-gateway"
+    ]
+    assert "ai.solars.io.vn {" in caddyfile
     assert "@metrics path /metrics /metrics/*" in caddyfile
-    assert "remote_ip {$PLATFORM_WIREGUARD_IPV4}" in caddyfile
+    assert "remote_ip 10.20.0.1" in caddyfile
+    assert "reverse_proxy 127.0.0.1:18000" in caddyfile
+    assert "reverse_proxy @grpc h2c://127.0.0.1:15051" in caddyfile
     assert 'respond "Forbidden" 403' in caddyfile
+
+
+def test_shared_host_runtime_keeps_access_logs_for_alloy_loki_gate():
+    dockerfile = Path("Dockerfile").read_text()
+    observability_script = Path("deploy/scripts/verify-observability.sh").read_text()
+
+    assert "--no-access-log" not in dockerfile
+    assert 'container=\\"solar-ai-module\\"' in observability_script
+    assert 'https://${public_domain}/ready?marker=${observability_marker}' in (
+        observability_script
+    )
+
+
+def test_preflight_requires_the_installed_shared_host_caddy_contract():
+    script = Path("deploy/scripts/preflight.sh").read_text()
+
+    assert 'host_caddyfile="/etc/caddy/Caddyfile"' in script
+    assert "systemctl is-active --quiet caddy" in script
+    assert 'reverse_proxy 127.0.0.1:18000' in script
+    assert 'reverse_proxy @grpc h2c://127.0.0.1:15051' in script
+    assert '--resolve "${public_domain}:443:127.0.0.1"' in script
+    assert '"${root}/data/caddy/data"' not in script
+
+
+def test_trusted_production_job_targets_the_shared_r3_lock_and_credentials():
+    pipeline = Path("deploy/jenkins/production.Jenkinsfile.example").read_text()
+
+    assert "Deploy AI on shared R3" in pipeline
+    assert "solar-r3-ai-prod" in pipeline
+    assert "ai-r3-target" in pipeline
+    assert "ai-r3-deploy-ssh" in pipeline
+    assert "ai-r3-known-hosts" in pipeline
+    assert "solar-vps2-prod" not in pipeline
 
 
 def test_deploy_arms_rollback_only_before_runtime_mutation():

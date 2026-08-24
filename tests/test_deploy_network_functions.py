@@ -89,7 +89,7 @@ def test_authoritative_dns_retries_transient_empty_answers(tmp_path: Path) -> No
         tmp_path,
         (
             "authoritative_ipv4_matches "
-            "ns1.example.test ai.example.test 168.144.48.16 3 0"
+            "ns1.example.test ai.example.test 203.0.113.16 3 0"
         ),
         dig_script="""#!/usr/bin/env bash
 set -eu
@@ -100,7 +100,7 @@ fi
 attempt="$((attempt + 1))"
 printf '%s' "${attempt}" >"${DIG_COUNTER}"
 if test "${attempt}" -ge 3; then
-  printf '168.144.48.16\\n'
+  printf '203.0.113.16\\n'
 else
   exit 9
 fi
@@ -118,7 +118,7 @@ def test_authoritative_dns_rejects_persistent_wrong_answer(tmp_path: Path) -> No
         tmp_path,
         (
             "authoritative_ipv4_matches "
-            "ns1.example.test ai.example.test 168.144.48.16 3 0"
+            "ns1.example.test ai.example.test 203.0.113.16 3 0"
         ),
         dig_script="""#!/usr/bin/env bash
 set -eu

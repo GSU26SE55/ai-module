@@ -60,7 +60,9 @@ until docker exec \
   solar-ai-module python /app/deploy/scripts/smoke-test.py; do
   tls_smoke_attempts=$((tls_smoke_attempts + 1))
   if (( tls_smoke_attempts >= 24 )); then
-    docker logs --tail 200 solar-ai-caddy >&2 || true
+    docker logs --tail 200 solar-ai-module >&2 || true
+    systemctl status caddy --no-pager --full >&2 || true
+    journalctl -u caddy --since '-10 minutes' --no-pager -n 200 >&2 || true
     printf 'TLS ingress smoke failed after %d attempts\n' "${tls_smoke_attempts}" >&2
     exit 1
   fi

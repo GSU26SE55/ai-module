@@ -19,7 +19,7 @@ fail() {
   exit 1
 }
 
-for command in docker awk cosign curl dig grep sed sort stat df ip sleep tr tail jq; do
+for command in docker awk caddy cosign curl dig grep sed sort stat df ip sleep systemctl tr tail jq; do
   command -v "${command}" >/dev/null 2>&1 || fail "missing command: ${command}"
 done
 docker info >/dev/null 2>&1 || fail "Docker daemon is unavailable"
@@ -58,7 +58,6 @@ env_value() {
 public_domain="$(env_value AI_PUBLIC_DOMAIN)"
 dns_zone="$(env_value AI_DNS_ZONE)"
 public_ipv4="$(env_value AI_PUBLIC_IPV4)"
-acme_email="$(env_value ACME_EMAIL)"
 monitoring_bind_ip="$(env_value AI_MONITORING_BIND_IP)"
 platform_wireguard_ipv4="$(env_value PLATFORM_WIREGUARD_IPV4)"
 loki_push_url="$(env_value LOKI_PUSH_URL)"
@@ -74,8 +73,6 @@ if ! [[ "${dns_zone}" =~ ^[a-z0-9][a-z0-9.-]*[a-z0-9]$ \
 fi
 [[ "${public_ipv4}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] \
   || fail "AI_PUBLIC_IPV4 is missing or malformed"
-[[ "${acme_email}" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] \
-  || fail "ACME_EMAIL is missing or malformed"
 test -n "${monitoring_bind_ip}" \
   || fail "AI_MONITORING_BIND_IP is missing from ${host_env}"
 [[ "${monitoring_bind_ip}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] \
@@ -93,6 +90,37 @@ test -S /var/run/docker.sock \
 actual_docker_socket_gid="$(stat -c '%g' /var/run/docker.sock)"
 [[ "${docker_socket_gid}" = "${actual_docker_socket_gid}" ]] \
   || fail "AI_DOCKER_SOCKET_GID ${docker_socket_gid} does not match Docker socket GID ${actual_docker_socket_gid}"
+
+# R3 runs one host-level Caddy for both Jenkins and AI. The Compose project is
+# deliberately not allowed to own 80/443. Verify the installed site contract
+# before pulling an image or mutating the running release.
+host_caddyfile="/etc/caddy/Caddyfile"
+test -r "${host_caddyfile}" || fail "host Caddyfile is not readable: ${host_caddyfile}"
+systemctl is-active --quiet caddy || fail "host Caddy service is not active"
+caddy validate --config "${host_caddyfile}" --adapter caddyfile >/dev/null \
+  || fail "host Caddy configuration is invalid"
+for expected_caddy_contract in \
+  "${public_domain} {" \
+  "remote_ip ${platform_wireguard_ipv4}" \
+  'reverse_proxy 127.0.0.1:18000' \
+  'reverse_proxy @grpc h2c://127.0.0.1:15051'; do
+  grep -Fq "${expected_caddy_contract}" "${host_caddyfile}" \
+    || fail "host Caddy is missing AI contract: ${expected_caddy_contract}"
+done
+
+# A 502/503 is valid before the first AI container starts; it still proves
+# local TLS, certificate trust, SNI and the correct host virtual route.
+caddy_probe_code="$(
+  curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+    --noproxy '*' \
+    --connect-timeout 5 --max-time 10 \
+    --resolve "${public_domain}:443:127.0.0.1" \
+    "https://${public_domain}/ready"
+)" || fail "host Caddy TLS/SNI probe failed for ${public_domain}"
+case "${caddy_probe_code}" in
+  200|502|503) ;;
+  *) fail "host Caddy returned unexpected HTTP ${caddy_probe_code} for the AI route" ;;
+esac
 
 "${release_dir}/deploy/scripts/verify-public-ip.sh" "${public_ipv4}" \
   || fail "AI_PUBLIC_IPV4 ${public_ipv4} is neither a local address nor the active DigitalOcean Reserved IPv4"
@@ -113,8 +141,8 @@ curl --fail --silent --show-error --connect-timeout 5 --max-time 10 \
   || fail "Loki is not reachable through the platform WireGuard bridge"
 
 # Check the authoritative servers, not only a potentially stale recursive DNS
-# cache. Every authoritative answer must point to this VPS, otherwise clients
-# can intermittently reach the wrong host and ACME issuance is unsafe to start.
+# cache. Every authoritative answer must point to this R3 host, otherwise
+# clients can intermittently reach the wrong Jenkins/AI ingress.
 dns_nameservers_for_zone "${dns_zone}" \
   || fail "no authoritative nameserver was found for ${dns_zone} after 5 attempts"
 while IFS= read -r nameserver; do
@@ -141,9 +169,7 @@ for path in \
   "${root}/data/kb" \
   "${root}/data/prescription-history" \
   "${root}/data/classification-feedback" \
-  "${root}/data/alloy" \
-  "${root}/data/caddy/data" \
-  "${root}/data/caddy/config"; do
+  "${root}/data/alloy"; do
   test -d "${path}" || fail "missing persistent directory ${path}"
   test -w "${path}" || fail "persistent directory is not writable: ${path}"
 done

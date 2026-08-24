@@ -1,18 +1,18 @@
 # AI Module production deployment
 
-This is the source of truth for deploying `GSU26SE55/ai-module` to the dedicated
-Ubuntu DigitalOcean VPS. Backend and IoT run on VPS1; AI runs on VPS2 with
-Docker Compose. A successful, non-PR Jenkins build of `main` is the only event
-that may request a production deployment.
+This is the source of truth for deploying `GSU26SE55/ai-module` to R3. R3 runs
+Jenkins and AI together; R4 runs Backend, IoT and central observability. AI runs
+with Docker Compose, while one host-level Caddy serves both
+`jenkins.solars.io.vn` and `ai.solars.io.vn`. A successful, non-PR Jenkins build
+of `main` is the only event that may request a production deployment.
 
 ## 1. Production contract
 
-VPS2 runs five containers in the `solar-ai` Compose project:
+R3 runs four containers in the `solar-ai` Compose project:
 
 | Container | Purpose | Exposure |
 |---|---|---|
-| `solar-ai-caddy` | ACME certificate, TLS termination, gRPC/REST routing | public TCP `80`, TCP `443` |
-| `solar-ai-module` | FastAPI, gRPC, NASA/LFP models, embedded ChromaDB/RAG | Docker network only: `8000`, `50051` |
+| `solar-ai-module` | FastAPI, gRPC, NASA/LFP models, embedded ChromaDB/RAG | loopback `127.0.0.1:18000`, `127.0.0.1:15051` |
 | `solar-ai-node-exporter` | VPS CPU/RAM/disk metrics | WireGuard only: `9100` |
 | `solar-ai-cadvisor` | Container metrics | WireGuard only: `8082` |
 | `solar-ai-alloy` | Docker log shipping and self-metrics | outbound to Loki; WireGuard-only `12345` |
@@ -21,34 +21,32 @@ Both backend transports use the same origin:
 
 - primary gRPC: `https://ai.solars.io.vn:443` over HTTP/2;
 - fallback REST: `https://ai.solars.io.vn`;
-- Caddy routes gRPC to `ai-module:50051` using h2c and all other HTTPS traffic
-  to FastAPI on `ai-module:8000`.
+- host Caddy routes gRPC to `h2c://127.0.0.1:15051` and all other AI traffic to
+  FastAPI on `127.0.0.1:18000`.
 
-Ports `8000` and `50051` are not published on the VPS. ChromaDB is embedded in
-the AI process rather than deployed as another container. The immutable image
-contains a checksum-verified knowledge-base seed; mutable KB, history and
-feedback state live under `/opt/solar-ai/data`.
+The raw ports are never bound to a public interface, and the Compose project
+must not publish `80` or `443`. ChromaDB is embedded in the AI process rather
+than deployed as another container. The immutable image contains a
+checksum-verified knowledge-base seed; mutable KB, history and feedback state
+live under `/opt/solar-ai/data`.
 
 ## 2. Blocking DNS check
 
 The intended record is:
 
 ```text
-ai.solars.io.vn.  A  168.144.48.16
+ai.solars.io.vn.  A  116.118.6.30
 ```
 
-Replace `168.144.48.16` everywhere below if that is not the actual public IPv4
-shown on the AI Droplet. Do not add an AAAA record unless IPv6 is configured on
-VPS2, Caddy listens on it and the firewall also permits it.
+`jenkins.solars.io.vn` uses the same A record. Replace `116.118.6.30` everywhere
+if R3 changes. Do not add an AAAA record unless IPv6 is configured end-to-end,
+Caddy listens on it and the firewall also permits it.
 
-At the follow-up audit on **2026-08-13**, all four authoritative nameservers
-returned the intended Reserved IPv4:
+At the follow-up audit on **2026-08-23**, public resolvers returned:
 
 ```text
-ns1.zonedns.vn -> 168.144.48.16
-ns2.zonedns.vn -> 168.144.48.16
-ns3.zonedns.vn -> 168.144.48.16
-ns4.zonedns.vn -> 168.144.48.16
+ai.solars.io.vn      -> 116.118.6.30
+jenkins.solars.io.vn -> 116.118.6.30
 ```
 
 The AAAA result was empty. DNS was ready at that audit, but it remains a
@@ -63,22 +61,20 @@ done
 dig +short AAAA ai.solars.io.vn
 ```
 
-The four A answers must be identical to VPS2 and the AAAA result must be empty.
-The deployment preflight repeats these authoritative checks. It accepts
-`AI_PUBLIC_IPV4` only when the address is assigned locally or DigitalOcean's
-link-local metadata service reports the exact address as the active Reserved
-IPv4 for this Droplet. It refuses to touch the running release when these checks
-fail.
+The four authoritative A answers must be identical to R3 and the AAAA result
+must be empty. The deployment preflight repeats these checks, verifies the IP
+belongs to the host, and refuses to touch the running release when they fail.
 
-## 3. VPS2 capacity and base packages
+## 3. R3 capacity and base packages
 
-Use Ubuntu 24.04 LTS x86_64, 4 vCPU, 8 GiB RAM and at least 80 GiB SSD. No GPU is
-required. The AI container is limited to 3.25 CPU/5 GiB; the other four
-containers use separate small limits. Preflight requires at least 10 GiB free
-disk and 2 GiB currently available RAM. Do not colocate Jenkins, PostgreSQL,
-RabbitMQ, Redis, MinIO, Prometheus or Grafana on this VPS.
+Use Ubuntu 24.04 LTS x86_64. Because R3 also builds images in Jenkins, 8 vCPU,
+16 GiB RAM, at least 120 GiB SSD and 4 GiB swap are recommended. No GPU is
+required. The AI container is limited to 3.25 CPU/5 GiB; exporters use separate
+small limits. Preflight requires at least 10 GiB free disk and 2 GiB currently
+available RAM. Keep Jenkins at one executor and monitor memory/disk pressure.
+PostgreSQL, RabbitMQ, Redis, MinIO, Prometheus and Grafana remain on R4.
 
-Before provisioning, take a DigitalOcean snapshot. Then install base tools:
+Before provisioning, take a provider snapshot. Then install base tools:
 
 ```bash
 sudo apt-get update
@@ -93,32 +89,30 @@ docker version
 docker compose version
 ```
 
-Install Cosign on VPS2 and the Jenkins Docker agent from the official Sigstore
-release, then confirm `cosign version`. Keep the same reviewed major/minor
-version on both hosts.
+Install Caddy, Jenkins, Cosign and the pinned CI toolchain on R3. Keep Caddy on
+the host; never add it back to the AI Compose project.
 
-## 4. Network and DigitalOcean firewall
+## 4. Network and firewall
 
-Use a DigitalOcean Cloud Firewall. Docker-published ports can bypass ordinary
-UFW forwarding rules, so UFW alone is not the production security boundary.
+Use the VPS provider firewall as well as UFW. Docker-published ports can bypass
+ordinary UFW forwarding rules, so UFW alone is not the production boundary.
 
-Inbound rules for the AI Droplet:
+Inbound rules for R3:
 
 | Protocol/port | Source | Reason |
 |---|---|---|
-| TCP 22 | Jenkins VPS public IP and approved admin IP only | deployment/administration |
+| TCP 22 | approved admin IP only | administration; Jenkins deploy uses loopback SSH |
 | TCP 80 | all IPv4 | forced ACME HTTP-01 and HTTP-to-HTTPS redirect |
-| TCP 443 | backend VPS public IP; add an admin test IP only temporarily | gRPC + HTTPS fallback |
-| UDP WireGuard port, e.g. 51820 | backend VPS public IP | private monitoring/log network |
+| TCP 443 | all IPv4 | Jenkins UI plus AI REST/gRPC without a client VPN |
+| UDP 51820 | R4 public IP `139.59.224.185/32` | private Backend/AI and observability path |
 
-Do not create public rules for `8000`, `50051`, `8082` or `9100`. The Caddy
-configuration disables TLS-ALPN challenges so certificate renewal needs public
-port 80, while application port 443 can remain source-allowlisted. The backend
-and AI Droplets should use stable/reserved public IPs; update the firewall before
-changing either one.
+Do not create public rules for `15051`, `18000`, `8000`, `50051`, `8082`,
+`9100` or `12345`. Ports `15051` and `18000` must appear only on
+`127.0.0.1`. The Caddy configuration disables TLS-ALPN challenges, so public
+port 80 remains required for certificate renewal.
 
-For central Prometheus/Loki, configure WireGuard as `10.20.0.1/32` on VPS1 and
-`10.20.0.2/32` on VPS2. Only the two peer addresses are routed. Allow VPS1 to
+For central Prometheus/Loki, configure WireGuard as `10.20.0.1/32` on R4 and
+`10.20.0.2/32` on R3. Only the two peer addresses are routed. Allow R4 to
 scrape only:
 
 - `https://ai.solars.io.vn/metrics/` for application HTTP/gRPC metrics;
@@ -130,9 +124,10 @@ The Caddy route returns `403` for `/metrics` unless the remote address is the
 Backend WireGuard peer. `/live` and `/ready` remain available through normal
 HTTPS. Alloy pushes logs to `http://10.20.0.1:3100/loki/api/v1/push`.
 
-The current DigitalOcean VPC addresses are Backend `10.104.0.4` and AI
-`10.104.0.3`. Verify `ip route get 10.104.0.4` on AI, then bootstrap the peer
-without ever copying its private key:
+R3 and R4 no longer rely on the previous DigitalOcean VPC pair. Use the stable
+public peer endpoints R3 `116.118.6.30` and R4 `139.59.224.185`, restricted to
+UDP 51820 in both provider firewall and UFW. Bootstrap the peer without ever
+copying its private key:
 
 ```bash
 sudo apt-get install -y wireguard
@@ -140,12 +135,12 @@ sudo deploy/scripts/configure-ai-wireguard.sh init 10.20.0.2
 
 # After exchanging only the two public keys:
 sudo deploy/scripts/configure-ai-wireguard.sh configure \
-  10.20.0.2 "$BACKEND_WG_PUBLIC_KEY" 10.104.0.4:51820
+  10.20.0.2 "$BACKEND_WG_PUBLIC_KEY" 139.59.224.185:51820
 ```
 
-DigitalOcean Cloud Firewall and UFW must accept UDP `51820` only from Backend's
-VPC address. On `wg0`, accept TCP `443`, `9100`, `8082` and `12345` only from
-`10.20.0.1`. VPS1 accepts `3100` only from `10.20.0.2`. Do not merge a release
+The provider firewall and UFW must accept UDP `51820` only from the exact peer
+public IP. On `wg0`, accept TCP `443`, `9100`, `8082` and `12345` only from
+`10.20.0.1`. R4 accepts `3100` only from `10.20.0.2`. Do not merge a release
 containing the fail-closed preflight until the peer and the Backend Loki bridge
 are active.
 
@@ -156,7 +151,7 @@ HTTP readiness request to Loki at `10.20.0.1:3100`. Because only the peer `/32`
 is routed through `wg0`, a successful response proves the encrypted data path
 is usable and refreshes an idle WireGuard handshake.
 
-## 5. One-time VPS2 provisioning
+## 5. One-time R3 provisioning
 
 Create a dedicated SSH account. Its key must be key-only and used only by
 Jenkins. Docker group membership is root-equivalent, so never share this account.
@@ -181,9 +176,7 @@ sudo install -d -o deploy -g ai-runtime -m 2770 \
   /opt/solar-ai/data/alloy \
   /opt/solar-ai/data/kb \
   /opt/solar-ai/data/prescription-history \
-  /opt/solar-ai/data/classification-feedback \
-  /opt/solar-ai/data/caddy/data \
-  /opt/solar-ai/data/caddy/config
+  /opt/solar-ai/data/classification-feedback
 ```
 
 The final layout is:
@@ -197,7 +190,6 @@ The final layout is:
 ├── secrets/ai.env
 ├── data/
 │   ├── alloy/
-│   ├── caddy/{data,config}/
 │   ├── kb/
 │   ├── prescription-history/
 │   └── classification-feedback/
@@ -210,8 +202,7 @@ Create `/opt/solar-ai/config/host.env` from `deploy/host.env.example`:
 ```dotenv
 AI_PUBLIC_DOMAIN=ai.solars.io.vn
 AI_DNS_ZONE=solars.io.vn
-AI_PUBLIC_IPV4=168.144.48.16
-ACME_EMAIL=YOUR_MONITORED_EMAIL
+AI_PUBLIC_IPV4=116.118.6.30
 AI_MONITORING_BIND_IP=10.20.0.2
 PLATFORM_WIREGUARD_IPV4=10.20.0.1
 AI_DOCKER_SOCKET_GID=988
@@ -220,7 +211,7 @@ LOKI_PUSH_URL=http://10.20.0.1:3100/loki/api/v1/push
 ```
 
 `AI_DOCKER_SOCKET_GID` must be the numeric group ID of the Docker socket on
-VPS2. Do not assume that it is always `988`; obtain the value on that host and
+R3. Do not assume that it is always `988`; obtain the value on that host and
 put the exact result in `host.env`:
 
 ```bash
@@ -251,7 +242,7 @@ ghcr.io/gsu26se55/ai-module
 ```
 
 Copy the public half of the Jenkins Cosign key to
-`/opt/solar-ai/config/cosign.pub`. Never copy the private key to VPS2. Log in to
+`/opt/solar-ai/config/cosign.pub`. Never copy the private key to R3. Log in to
 GHCR once as `deploy` with a read-only robot/PAT so Compose can pull images:
 
 ```bash
@@ -265,39 +256,47 @@ shown in the placeholder.
 
 ## 6. Caddy TLS and automatic verification
 
-`deploy/caddy/Caddyfile` obtains and renews a publicly trusted certificate,
-redirects port 80 to HTTPS and routes both transports. Certificate/account state
-is persistent in `/opt/solar-ai/data/caddy`; include it in backups.
+`deploy/caddy/Caddyfile` is the canonical AI site block. Merge that block into
+the existing host `/etc/caddy/Caddyfile` beside the Jenkins site; do not replace
+or delete the Jenkins block. Then run:
+
+```bash
+sudo caddy fmt --overwrite /etc/caddy/Caddyfile
+sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+sudo systemctl reload caddy
+```
+
+Caddy must route REST to `127.0.0.1:18000`, gRPC h2c to
+`127.0.0.1:15051`, and allow `/metrics` only from `10.20.0.1`. Caddy's
+certificate state remains under the host package's data directory, not under
+`/opt/solar-ai`.
 
 Deployment succeeds only after all of the following pass:
 
 1. the monitoring bind IPv4 is assigned to a local interface;
-2. every authoritative DNS server returns only the configured Reserved IPv4;
+2. host Caddy is active and contains the exact shared-host routing contract;
+3. every authoritative DNS server returns only the configured R3 IPv4;
    transient authoritative DNS failures are retried five times before the
    deployment is rejected;
-3. all model/RAG artifact checksums;
-4. direct `/live`, `/ready` and real REST inference;
-5. direct standard/custom gRPC health plus NASA and LFP inference;
-6. the same REST and gRPC tests through Caddy with the real certificate name;
-7. Compose health for all containers.
+4. all model/RAG artifact checksums;
+5. direct `/live`, `/ready` and real REST inference;
+6. direct standard/custom gRPC health plus NASA and LFP inference;
+7. the same REST and gRPC tests through host Caddy with the real certificate;
+8. Compose health for all containers.
 
-The TLS smoke runs inside the Docker network using the production FQDN as a
-network alias. It therefore validates certificate hostname, TLS trust, HTTP/2
-and Caddy routing without depending on public hairpin routing. Failure triggers
+The AI container maps the production FQDN to Docker's host gateway for the TLS
+smoke. It therefore validates certificate hostname, trust, HTTP/2 and host
+Caddy routing without depending on public hairpin routing. Failure triggers
 automatic rollback to the previous immutable release.
 
 ## 7. Backend production settings
 
-The existing backend client code supports this topology. BatteryService uses
-gRPC primary plus HTTP fallback, while TicketService uses gRPC. However, the
-current backend Helm chart does **not** yet define any `Ai__*`/`TicketAi__*`
-entries in `deploy/helm/solar-battery/values-vps-small.yaml`. Its deployments
-load `solar-config` with `envFrom`, so omitting the keys silently leaves the
-application defaults pointing to the obsolete in-cluster AI names.
-
-For the intended k3s deployment, add this map to the backend production values
-overlay that Jenkins passes to `helm upgrade` (for the current small-VPS setup,
-merge it into the existing `config:` map in `values-vps-small.yaml`):
+The backend production chart already supports this topology. BatteryService
+uses gRPC primary plus HTTPS fallback, while TicketService uses gRPC. The
+production overlay at
+`deploy/helm/solar-battery/values-production.yaml` contains this contract and
+the backend deploy script also overrides the three endpoint values from R4
+`host.env` so a stale/default address cannot silently reach production:
 
 ```yaml
 config:
@@ -318,12 +317,10 @@ config:
   TicketAi__MaxDuplicateCandidates: "10"
 ```
 
-The current Helm BatteryService only publishes an HTTP service port. Before
-enabling TicketService's internal `BatteryGrpcAddress`, its chart must also
-publish the BatteryService gRPC listener/Service port expected by the backend
-code; that is a separate backend-chart gap, not an AI ingress gap. It does not
-affect BatteryService calling AI, but it affects the ticket sensor-verification
-path.
+The base chart publishes BatteryService's HTTP/2 gRPC listener as Service port
+`8081`, so `TicketAi__BatteryGrpcAddress=http://batteryservice:8081` remains
+cluster-internal. Do not expose that port through R4 Caddy or the provider
+firewall.
 
 Render the backend chart and inspect the generated ConfigMap before upgrading:
 
@@ -331,6 +328,7 @@ Render the backend chart and inspect the generated ConfigMap before upgrading:
 helm template solar-backend deploy/helm/solar-battery \
   -f deploy/helm/solar-battery/values.yaml \
   -f deploy/helm/solar-battery/values-vps-small.yaml \
+  -f deploy/helm/solar-battery/values-production.yaml \
   | grep -E 'Ai__|TicketAi__'
 ```
 
@@ -346,7 +344,7 @@ kubectl -n solar-prod exec deploy/ticketservice -- printenv \
 ```
 
 If backend is temporarily deployed with Docker Compose instead of k3s, put the
-same ASP.NET nested keys in VPS1 `/opt/solar/.env.prod`; the production Compose
+same ASP.NET nested keys in R4 `/opt/solar/.env.prod`; the production Compose
 loads them through `env_file` and does not translate the short `AI_*` aliases
 used by the development Compose:
 
@@ -374,9 +372,10 @@ FastAPI paths. Restart BatteryService and TicketService only after AI TLS smoke
 passes.
 
 Because the current backend does not send an API token or mTLS client
-certificate, do not add Caddy Basic Auth to these routes. Restrict TCP 443 by
-DigitalOcean source IP instead. A future mTLS/shared-token design must update
-both backend clients and AI ingress atomically.
+certificate, do not add Caddy Basic Auth to these routes. Keep application
+metrics restricted by WireGuard and apply rate limiting/abuse controls at the
+public edge. A future mTLS/shared-token design must update both backend clients
+and AI ingress atomically.
 
 ## 8. Jenkins architecture
 
@@ -390,11 +389,10 @@ Use two jobs:
    Jenkins rather than loaded from a PR-controlled workspace.
 
 The Docker Linux agent labeled `docker-linux` needs Python 3.11 + venv, Docker
-Engine/Compose/Buildx, Git, ShellCheck, Trivy, Syft, Cosign, tar and OpenSSH. Do
-not mount the host Docker socket into an Internet-facing Jenkins controller.
-Prefer an SSH-connected agent with an isolated workspace. If the Jenkins VPS is
-both controller and agent for a student deployment, restrict it by firewall and
-understand that Docker access is root-equivalent.
+Engine/Compose/Buildx, Git, ShellCheck, Trivy, Syft, Cosign, tar and OpenSSH. R3
+uses its built-in node for this student deployment. Keep it at one executor,
+bind Jenkins HTTP to `127.0.0.1:8080`, expose it only through Caddy, and
+understand that Docker group membership is root-equivalent.
 
 The source/workspace Trivy gate rejects every detected HIGH or CRITICAL issue.
 The final-image gates use `--ignore-unfixed`: they still reject actionable
@@ -424,13 +422,14 @@ where possible:
 | `ai-cosign-private-key` | Secret file | encrypted Cosign private key |
 | `ai-cosign-public-key` | Secret file | matching public key |
 | `ai-cosign-password` | Secret text | Cosign key password |
-| `ai-vps2-target` | Secret text | `deploy@168.144.48.16` (or actual VPS2 IP) |
-| `ai-vps2-ssh` | SSH username/private key | user `deploy`, dedicated key |
-| `ai-vps2-known-hosts` | Secret file | pinned `ssh-keyscan` result verified out-of-band |
+| `ai-r3-target` | Secret text | `deploy@127.0.0.1` |
+| `ai-r3-deploy-ssh` | SSH username/private key | user `deploy`, key restricted to loopback if supported |
+| `ai-r3-known-hosts` | Secret file | pinned localhost host key verified against R3's host public key |
 
 Never build `known_hosts` with `StrictHostKeyChecking=no`. From a trusted admin
-machine, compare VPS2's `/etc/ssh/ssh_host_ed25519_key.pub` fingerprint with the
-scan before uploading it to Jenkins.
+session, compare R3's `/etc/ssh/ssh_host_ed25519_key.pub` fingerprint with the
+localhost entry before uploading it to Jenkins. Do not target R3's public IP
+from a job already running on R3.
 
 ### Configure `solar-ai-ci`
 
@@ -440,18 +439,18 @@ scan before uploading it to Jenkins.
    credentials to untrusted fork PRs.
 4. Script Path = `Jenkinsfile`.
 5. Add the `docker-linux` label to the intended Jenkins agent.
-6. Set Jenkins Location URL to a public **HTTPS** Jenkins domain. The screenshot
-   URL `http://188.166.254.92:8080` is not acceptable for production credentials.
-7. In GitHub, add webhook `https://JENKINS_DOMAIN/github-webhook/`, content type
-   JSON, secret enabled, events Push and Pull request. Restrict Jenkins port 8080
-   so it is not directly public after the reverse proxy is active.
+6. Set Jenkins Location URL to `https://jenkins.solars.io.vn/`; port `8080`
+   remains loopback-only.
+7. In GitHub, add webhook `https://jenkins.solars.io.vn/github-webhook/`, content
+   type JSON, secret enabled, events Push and Pull request. Restrict Jenkins port
+   `8080` so it is never directly public.
 
 ### Configure `solar-ai-production`
 
 1. New Item → Pipeline → name exactly `solar-ai-production`.
 2. Definition = Pipeline script, not Pipeline script from SCM.
 3. Review and paste `deploy/jenkins/production.Jenkinsfile.example`.
-4. Ensure the Lockable Resources plugin can create/use `solar-vps2-prod`.
+4. Ensure the Lockable Resources plugin can create/use `solar-r3-ai-prod`.
 5. Restrict configure/build permissions to administrators and the CI service
    identity. Do not allow anonymous/manual arbitrary parameters.
 6. Run a credential/SSH preflight before the first real merge.
@@ -459,8 +458,8 @@ scan before uploading it to Jenkins.
 The trusted job independently checks that `GIT_SHA` is exactly the current
 `origin/main`, rebuilds and rescans it, pushes the full-SHA tag, resolves the
 registry digest, signs the digest, verifies the signature, transfers only the
-deployment payload and invokes the VPS deploy script. VPS2 again enforces its
-repository allowlist and Cosign signature before pulling.
+deployment payload and invokes the VPS deploy script through loopback SSH. R3
+again enforces its repository allowlist and Cosign signature before pulling.
 
 ## 9. Branch and release flow
 
@@ -479,7 +478,7 @@ production credentials/job scripts.
 
 ## 10. Acceptance checks and rollback
 
-Temporarily allow the admin test IP on TCP 443, then run:
+From an external client, run:
 
 ```bash
 curl --fail --show-error --silent https://ai.solars.io.vn/live
@@ -491,31 +490,33 @@ grpcurl -import-path . -proto protos/ai_service.proto \
   -d '{}' ai.solars.io.vn:443 aimodule.v1.AiService/Health
 ```
 
-Also verify on VPS2:
+Also verify on R3:
 
 ```bash
 cd /opt/solar-ai/current
 docker compose --project-name solar-ai \
   --env-file /opt/solar-ai/config/host.env \
   --env-file deploy.env -f docker-compose.prod.yml ps
-docker logs --since 10m solar-ai-caddy
 docker logs --since 10m solar-ai-module
+sudo systemctl status caddy --no-pager --full
+sudo journalctl -u caddy --since '10 minutes ago' --no-pager
 ```
 
-On VPS1, confirm BatteryService has no TLS/gRPC errors, force one real
+On R4, confirm BatteryService has no TLS/gRPC errors, force one real
 prediction, verify an HTTP fallback with gRPC deliberately blocked in a planned
-maintenance test, check all Prometheus targets, and confirm Caddy/AI logs arrive
-in Loki.
+maintenance test, check all Prometheus targets, and confirm AI logs arrive in
+Loki. Host Caddy access logs remain in the systemd journal on R3.
 
-The deploy and rollback scripts repeat the network checks. This helper also
-creates a unique Caddy log marker and queries it back from Backend Loki:
+The deploy and rollback scripts repeat the network checks. This helper sends a
+unique request through host Caddy and queries the AI access-log marker back from
+Backend Loki:
 
 ```bash
 /opt/solar-ai/current/deploy/scripts/verify-observability.sh
 ```
 
 From an Internet client, `https://ai.solars.io.vn/metrics/` must return `403`.
-From VPS1 with `--resolve ai.solars.io.vn:443:10.20.0.2`, it must return
+From R4 with `--resolve ai.solars.io.vn:443:10.20.0.2`, it must return
 Prometheus text with a valid certificate for `ai.solars.io.vn`.
 
 Manual rollback uses the previous immutable release:
@@ -529,8 +530,8 @@ plus TLS ingress smoke tests before moving `current`.
 
 ## 11. Backups and operations
 
-- Back up `/opt/solar-ai/data` daily to encrypted off-VPS storage, including
-  Caddy certificate state. Test restore regularly.
+- Back up `/opt/solar-ai/data` and host Caddy state daily to encrypted off-VPS
+  storage. Test restore regularly.
 - Alert on `/ready`, restart loops, model/RAG errors, TLS expiry, p95 inference,
   HTTP/gRPC error rate, memory pressure, disk below 15%, and missing Prometheus
   or Loki targets.

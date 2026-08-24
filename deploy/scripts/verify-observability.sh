@@ -44,16 +44,17 @@ fi
 curl --fail --silent --show-error --max-time 10 \
   "http://${platform_wireguard_ipv4}:3100/ready" >/dev/null
 
-# Prove the complete log path, not only Alloy process health: create a unique
-# Caddy access log, then query that exact marker back from backend Loki through
-# WireGuard. This closes the common gap where Alloy is Ready but cannot push.
+# Prove the complete log path, not only Alloy process health: send a unique
+# request through host Caddy, then query the AI module access log for that exact
+# marker from backend Loki over WireGuard. This closes the common gap where
+# Alloy is Ready but cannot push after Caddy moved out of the Compose project.
 observability_marker="ai-${release_id}-$(date +%s)"
 docker exec \
   -e "AI_OBSERVABILITY_URL=https://${public_domain}/ready?marker=${observability_marker}" \
   solar-ai-module python -c \
   'import os, urllib.request; urllib.request.urlopen(os.environ["AI_OBSERVABILITY_URL"], timeout=10).read()'
 
-loki_query="{container=\"solar-ai-caddy\"} |= \"${observability_marker}\""
+loki_query="{container=\"solar-ai-module\"} |= \"${observability_marker}\""
 log_attempts=0
 until curl --fail --silent --show-error --get \
   --data-urlencode "query=${loki_query}" \
