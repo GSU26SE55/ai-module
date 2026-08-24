@@ -29,7 +29,7 @@ Allowed tunnel addresses:
 
 Examples:
   sudo ./configure-ai-wireguard.sh init 10.20.0.2
-  sudo ./configure-ai-wireguard.sh configure 10.20.0.2 '<BACKEND_PUBLIC_KEY>' 10.104.0.4:51820
+  sudo ./configure-ai-wireguard.sh configure 10.20.0.2 '<BACKEND_PUBLIC_KEY>' '<BACKEND_PUBLIC_IP>:51820'
 EOF
 }
 

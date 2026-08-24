@@ -21,8 +21,39 @@ env_value() {
 monitoring_bind_ip="$(env_value AI_MONITORING_BIND_IP)"
 platform_wireguard_ipv4="$(env_value PLATFORM_WIREGUARD_IPV4)"
 public_domain="$(env_value AI_PUBLIC_DOMAIN)"
+observability_mode="$(env_value AI_OBSERVABILITY_MODE)"
 loki_push_url="$(env_value LOKI_PUSH_URL)"
 loki_base_url="${loki_push_url%/loki/api/v1/push}"
+
+case "${observability_mode}" in
+  standalone)
+    container_health="$(
+      docker inspect --format '{{.State.Health.Status}}' solar-ai-module
+    )"
+    [[ "${container_health}" == healthy ]] || {
+      printf 'AI container is not healthy: %s\n' "${container_health}" >&2
+      exit 1
+    }
+    docker exec \
+      -e "AI_METRICS_URL=https://${public_domain}/metrics" \
+      solar-ai-module python -c \
+      'import os, urllib.error, urllib.request
+try:
+    urllib.request.urlopen(os.environ["AI_METRICS_URL"], timeout=10)
+except urllib.error.HTTPError as exc:
+    if exc.code != 403:
+        raise
+else:
+    raise SystemExit("public metrics endpoint must return HTTP 403")'
+    printf 'AI standalone runtime verified: container=healthy public_metrics=403\n'
+    exit 0
+    ;;
+  central) ;;
+  *)
+    printf 'AI_OBSERVABILITY_MODE must be standalone or central\n' >&2
+    exit 2
+    ;;
+esac
 
 for metrics_url in \
   "http://${monitoring_bind_ip}:9100/metrics" \
@@ -44,16 +75,17 @@ fi
 curl --fail --silent --show-error --max-time 10 \
   "http://${platform_wireguard_ipv4}:3100/ready" >/dev/null
 
-# Prove the complete log path, not only Alloy process health: create a unique
-# Caddy access log, then query that exact marker back from backend Loki through
-# WireGuard. This closes the common gap where Alloy is Ready but cannot push.
+# Prove the complete log path, not only Alloy process health: send a unique
+# request through host Caddy, then query the AI module access log for that exact
+# marker from backend Loki over WireGuard. This closes the common gap where
+# Alloy is Ready but cannot push after Caddy moved out of the Compose project.
 observability_marker="ai-${release_id}-$(date +%s)"
 docker exec \
   -e "AI_OBSERVABILITY_URL=https://${public_domain}/ready?marker=${observability_marker}" \
   solar-ai-module python -c \
   'import os, urllib.request; urllib.request.urlopen(os.environ["AI_OBSERVABILITY_URL"], timeout=10).read()'
 
-loki_query="{container=\"solar-ai-caddy\"} |= \"${observability_marker}\""
+loki_query="{container=\"solar-ai-module\"} |= \"${observability_marker}\""
 log_attempts=0
 until curl --fail --silent --show-error --get \
   --data-urlencode "query=${loki_query}" \
