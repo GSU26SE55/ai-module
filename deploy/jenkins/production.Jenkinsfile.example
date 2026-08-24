@@ -66,8 +66,7 @@ pipeline {
                     ],
                     userRemoteConfigs: [
                         [
-                            url: env.REPOSITORY_URL,
-                            credentialsId: 'ai-github-read'
+                            url: env.REPOSITORY_URL
                         ]
                     ]
                 ])

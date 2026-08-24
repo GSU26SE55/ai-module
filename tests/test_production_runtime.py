@@ -86,6 +86,7 @@ def test_trusted_production_job_targets_the_shared_r3_lock_and_credentials():
     assert "ai-r3-target" in pipeline
     assert "ai-r3-deploy-ssh" in pipeline
     assert "ai-r3-known-hosts" in pipeline
+    assert "ai-github-read" not in pipeline
     assert "solar-vps2-prod" not in pipeline
 
 

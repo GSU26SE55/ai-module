@@ -424,7 +424,6 @@ where possible:
 
 | ID | Jenkins type | Value |
 |---|---|---|
-| `ai-github-read` | Username/password | GitHub user + fine-grained read token |
 | `ai-registry-host` | Secret text | `ghcr.io` |
 | `ai-image-repository` | Secret text | `ghcr.io/gsu26se55/ai-module` |
 | `ai-registry-write` | Username/password | GHCR push-capable robot/user token |
@@ -443,7 +442,9 @@ from a job already running on R3.
 ### Configure `solar-ai-ci`
 
 1. New Item → Multibranch Pipeline → name `solar-ai-ci`.
-2. Add GitHub branch source for `GSU26SE55/ai-module` with `ai-github-read`.
+2. Add the public GitHub branch source for `GSU26SE55/ai-module`. No checkout
+   credential is required. A separately scoped read-only GitHub API credential
+   may be added later only if anonymous scan rate limits become a problem.
 3. Discover `main`, normal branches and origin pull requests. Do not expose
    credentials to untrusted fork PRs.
 4. Script Path = `Jenkinsfile`.
