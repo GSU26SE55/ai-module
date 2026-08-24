@@ -58,6 +58,7 @@ env_value() {
 public_domain="$(env_value AI_PUBLIC_DOMAIN)"
 dns_zone="$(env_value AI_DNS_ZONE)"
 public_ipv4="$(env_value AI_PUBLIC_IPV4)"
+observability_mode="$(env_value AI_OBSERVABILITY_MODE)"
 monitoring_bind_ip="$(env_value AI_MONITORING_BIND_IP)"
 platform_wireguard_ipv4="$(env_value PLATFORM_WIREGUARD_IPV4)"
 loki_push_url="$(env_value LOKI_PUSH_URL)"
@@ -73,23 +74,27 @@ if ! [[ "${dns_zone}" =~ ^[a-z0-9][a-z0-9.-]*[a-z0-9]$ \
 fi
 [[ "${public_ipv4}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] \
   || fail "AI_PUBLIC_IPV4 is missing or malformed"
-test -n "${monitoring_bind_ip}" \
-  || fail "AI_MONITORING_BIND_IP is missing from ${host_env}"
-[[ "${monitoring_bind_ip}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] \
-  || fail "AI_MONITORING_BIND_IP is malformed"
-[[ "${platform_wireguard_ipv4}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] \
-  || fail "PLATFORM_WIREGUARD_IPV4 is missing or malformed"
-[[ "${monitoring_bind_ip}" != "${platform_wireguard_ipv4}" ]] \
-  || fail "AI and platform WireGuard addresses must be different"
-[[ "${loki_push_url}" == "http://${platform_wireguard_ipv4}:3100/loki/api/v1/push" ]] \
-  || fail "LOKI_PUSH_URL must use the platform WireGuard Loki bridge"
-[[ "${docker_socket_gid}" =~ ^[0-9]+$ ]] \
-  || fail "AI_DOCKER_SOCKET_GID is missing or is not numeric"
-test -S /var/run/docker.sock \
-  || fail "Docker socket /var/run/docker.sock does not exist"
-actual_docker_socket_gid="$(stat -c '%g' /var/run/docker.sock)"
-[[ "${docker_socket_gid}" = "${actual_docker_socket_gid}" ]] \
-  || fail "AI_DOCKER_SOCKET_GID ${docker_socket_gid} does not match Docker socket GID ${actual_docker_socket_gid}"
+case "${observability_mode}" in
+  standalone) ;;
+  central)
+    [[ "${monitoring_bind_ip}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] \
+      || fail "AI_MONITORING_BIND_IP is missing or malformed"
+    [[ "${platform_wireguard_ipv4}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] \
+      || fail "PLATFORM_WIREGUARD_IPV4 is missing or malformed"
+    [[ "${monitoring_bind_ip}" != "${platform_wireguard_ipv4}" ]] \
+      || fail "AI and platform WireGuard addresses must be different"
+    [[ "${loki_push_url}" == "http://${platform_wireguard_ipv4}:3100/loki/api/v1/push" ]] \
+      || fail "LOKI_PUSH_URL must use the platform WireGuard Loki bridge"
+    [[ "${docker_socket_gid}" =~ ^[0-9]+$ ]] \
+      || fail "AI_DOCKER_SOCKET_GID is missing or is not numeric"
+    test -S /var/run/docker.sock \
+      || fail "Docker socket /var/run/docker.sock does not exist"
+    actual_docker_socket_gid="$(stat -c '%g' /var/run/docker.sock)"
+    [[ "${docker_socket_gid}" = "${actual_docker_socket_gid}" ]] \
+      || fail "AI_DOCKER_SOCKET_GID ${docker_socket_gid} does not match Docker socket GID ${actual_docker_socket_gid}"
+    ;;
+  *) fail "AI_OBSERVABILITY_MODE must be standalone or central" ;;
+esac
 
 # R3 runs one host-level Caddy for both Jenkins and AI. The Compose project is
 # deliberately not allowed to own 80/443. Verify the installed site contract
@@ -101,12 +106,17 @@ caddy validate --config "${host_caddyfile}" --adapter caddyfile >/dev/null \
   || fail "host Caddy configuration is invalid"
 for expected_caddy_contract in \
   "${public_domain} {" \
-  "remote_ip ${platform_wireguard_ipv4}" \
+  '@metrics path /metrics /metrics/*' \
+  'respond "Forbidden" 403' \
   'reverse_proxy 127.0.0.1:18000' \
   'reverse_proxy @grpc h2c://127.0.0.1:15051'; do
   grep -Fq "${expected_caddy_contract}" "${host_caddyfile}" \
     || fail "host Caddy is missing AI contract: ${expected_caddy_contract}"
 done
+if [[ "${observability_mode}" == central ]]; then
+  grep -Fq "remote_ip ${platform_wireguard_ipv4}" "${host_caddyfile}" \
+    || fail "host Caddy does not allow the platform WireGuard peer to scrape metrics"
+fi
 
 # A 502/503 is valid before the first AI container starts; it still proves
 # local TLS, certificate trust, SNI and the correct host virtual route.
@@ -124,21 +134,21 @@ esac
 
 "${release_dir}/deploy/scripts/verify-public-ip.sh" "${public_ipv4}" \
   || fail "AI_PUBLIC_IPV4 ${public_ipv4} is neither a local address nor the active DigitalOcean Reserved IPv4"
-ip -4 -o address show dev wg0 |
-  awk '{print $4}' | cut -d/ -f1 | grep -Fxq "${monitoring_bind_ip}" \
-  || fail "AI_MONITORING_BIND_IP ${monitoring_bind_ip} is not assigned to wg0"
-ip -4 route get "${platform_wireguard_ipv4}" |
-  grep -Eq '(^|[[:space:]])dev wg0([[:space:]]|$)' \
-  || fail "platform WireGuard address is not routed through wg0"
+if [[ "${observability_mode}" == central ]]; then
+  ip -4 -o address show dev wg0 |
+    awk '{print $4}' | cut -d/ -f1 | grep -Fxq "${monitoring_bind_ip}" \
+    || fail "AI_MONITORING_BIND_IP ${monitoring_bind_ip} is not assigned to wg0"
+  ip -4 route get "${platform_wireguard_ipv4}" |
+    grep -Eq '(^|[[:space:]])dev wg0([[:space:]]|$)' \
+    || fail "platform WireGuard address is not routed through wg0"
 
-# The deploy account intentionally has no CAP_NET_ADMIN, so it cannot query
-# handshake timestamps with `wg show`. The /32 route above plus this bounded
-# application-layer probe proves that the configured peer and encrypted data
-# path are usable now; the request itself also initiates a fresh handshake when
-# an otherwise healthy tunnel has been idle.
-curl --fail --silent --show-error --connect-timeout 5 --max-time 10 \
-  "http://${platform_wireguard_ipv4}:3100/ready" >/dev/null \
-  || fail "Loki is not reachable through the platform WireGuard bridge"
+  # The deploy account intentionally has no CAP_NET_ADMIN, so it cannot query
+  # handshake timestamps with `wg show`. The /32 route above plus this bounded
+  # application-layer probe proves that the peer and encrypted path are usable.
+  curl --fail --silent --show-error --connect-timeout 5 --max-time 10 \
+    "http://${platform_wireguard_ipv4}:3100/ready" >/dev/null \
+    || fail "Loki is not reachable through the platform WireGuard bridge"
+fi
 
 # Check the authoritative servers, not only a potentially stale recursive DNS
 # cache. Every authoritative answer must point to this R3 host, otherwise
@@ -168,20 +178,30 @@ available_mem_kb="$(awk '/MemAvailable:/ {print $2}' /proc/meminfo)"
 for path in \
   "${root}/data/kb" \
   "${root}/data/prescription-history" \
-  "${root}/data/classification-feedback" \
-  "${root}/data/alloy"; do
+  "${root}/data/classification-feedback"; do
   test -d "${path}" || fail "missing persistent directory ${path}"
   test -w "${path}" || fail "persistent directory is not writable: ${path}"
 done
+if [[ "${observability_mode}" == central ]]; then
+  test -d "${root}/data/alloy" \
+    || fail "missing persistent directory ${root}/data/alloy"
+  test -w "${root}/data/alloy" \
+    || fail "persistent directory is not writable: ${root}/data/alloy"
+fi
 
 if ! grep -Eq '^(DEEPSEEK_API_KEY|GEMINI_API_KEY|ANTHROPIC_API_KEY)=.+$' "${secret_env}"; then
   fail "at least one non-empty LLM provider key is required"
 fi
 
+compose_profile_args=()
+if [[ "${observability_mode}" == central ]]; then
+  compose_profile_args+=(--profile central-observability)
+fi
 docker compose \
   --project-name solar-ai \
   --env-file "${host_env}" \
   --env-file "${deploy_env}" \
+  "${compose_profile_args[@]}" \
   -f "${compose_file}" \
   config --quiet
 

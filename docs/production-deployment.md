@@ -1,21 +1,23 @@
 # AI Module production deployment
 
 This is the source of truth for deploying `GSU26SE55/ai-module` to R3. R3 runs
-Jenkins and AI together; R4 runs Backend, IoT and central observability. AI runs
-with Docker Compose, while one host-level Caddy serves both
+Jenkins and AI together. The initial standalone release does not depend on a
+Backend or observability VPS. AI runs with Docker Compose, while one host-level Caddy serves both
 `jenkins.solars.io.vn` and `ai.solars.io.vn`. A successful, non-PR Jenkins build
 of `main` is the only event that may request a production deployment.
 
 ## 1. Production contract
 
-R3 runs four containers in the `solar-ai` Compose project:
+R3 standalone mode runs one required container in the `solar-ai` Compose
+project. Three central-observability containers are opt-in and remain stopped
+until that remote platform is provisioned:
 
 | Container | Purpose | Exposure |
 |---|---|---|
 | `solar-ai-module` | FastAPI, gRPC, NASA/LFP models, embedded ChromaDB/RAG | loopback `127.0.0.1:18000`, `127.0.0.1:15051` |
-| `solar-ai-node-exporter` | VPS CPU/RAM/disk metrics | WireGuard only: `9100` |
-| `solar-ai-cadvisor` | Container metrics | WireGuard only: `8082` |
-| `solar-ai-alloy` | Docker log shipping and self-metrics | outbound to Loki; WireGuard-only `12345` |
+| `solar-ai-node-exporter` | Optional VPS CPU/RAM/disk metrics | central mode, WireGuard only: `9100` |
+| `solar-ai-cadvisor` | Optional container metrics | central mode, WireGuard only: `8082` |
+| `solar-ai-alloy` | Optional Docker log shipping and self-metrics | central mode, outbound to Loki; WireGuard-only `12345` |
 
 Both backend transports use the same origin:
 
@@ -104,15 +106,17 @@ Inbound rules for R3:
 | TCP 22 | approved admin IP only | administration; Jenkins deploy uses loopback SSH |
 | TCP 80 | all IPv4 | forced ACME HTTP-01 and HTTP-to-HTTPS redirect |
 | TCP 443 | all IPv4 | Jenkins UI plus AI REST/gRPC without a client VPN |
-| UDP 51820 | R4 public IP `139.59.224.185/32` | private Backend/AI and observability path |
+| UDP 51820 | exact observability peer public IP, once known | optional private Backend/AI and observability path |
 
 Do not create public rules for `15051`, `18000`, `8000`, `50051`, `8082`,
 `9100` or `12345`. Ports `15051` and `18000` must appear only on
 `127.0.0.1`. The Caddy configuration disables TLS-ALPN challenges, so public
 port 80 remains required for certificate renewal.
 
-For central Prometheus/Loki, configure WireGuard as `10.20.0.1/32` on R4 and
-`10.20.0.2/32` on R3. Only the two peer addresses are routed. Allow R4 to
+Standalone mode requires no WireGuard peer and no UDP `51820` firewall rule.
+After the central Prometheus/Loki host and its public IP are known, configure
+WireGuard as `10.20.0.1/32` on that host and `10.20.0.2/32` on R3. Only the two
+peer addresses are routed. Allow the central host to
 scrape only:
 
 - `https://ai.solars.io.vn/metrics/` for application HTTP/gRPC metrics;
@@ -124,10 +128,10 @@ The Caddy route returns `403` for `/metrics` unless the remote address is the
 Backend WireGuard peer. `/live` and `/ready` remain available through normal
 HTTPS. Alloy pushes logs to `http://10.20.0.1:3100/loki/api/v1/push`.
 
-R3 and R4 no longer rely on the previous DigitalOcean VPC pair. Use the stable
-public peer endpoints R3 `116.118.6.30` and R4 `139.59.224.185`, restricted to
-UDP 51820 in both provider firewall and UFW. Bootstrap the peer without ever
-copying its private key:
+Do not invent or preconfigure a peer public IP. Once the central host exists,
+use R3 `116.118.6.30` and the actual peer endpoint, restricted to UDP 51820 in
+both provider firewall and UFW. Bootstrap the peer without ever copying its
+private key:
 
 ```bash
 sudo apt-get install -y wireguard
@@ -135,14 +139,14 @@ sudo deploy/scripts/configure-ai-wireguard.sh init 10.20.0.2
 
 # After exchanging only the two public keys:
 sudo deploy/scripts/configure-ai-wireguard.sh configure \
-  10.20.0.2 "$BACKEND_WG_PUBLIC_KEY" 139.59.224.185:51820
+  10.20.0.2 "$BACKEND_WG_PUBLIC_KEY" "$BACKEND_PUBLIC_IP:51820"
 ```
 
 The provider firewall and UFW must accept UDP `51820` only from the exact peer
 public IP. On `wg0`, accept TCP `443`, `9100`, `8082` and `12345` only from
-`10.20.0.1`. R4 accepts `3100` only from `10.20.0.2`. Do not merge a release
-containing the fail-closed preflight until the peer and the Backend Loki bridge
-are active.
+`10.20.0.1`; the central host accepts `3100` only from `10.20.0.2`. Central mode
+remains fail-closed until the peer and Loki bridge are active. Standalone mode
+does not run or validate these optional services.
 
 The Jenkins SSH account intentionally has no `CAP_NET_ADMIN` and must not be
 granted `sudo` merely to run `wg show`. Production preflight instead verifies
@@ -197,22 +201,25 @@ The final layout is:
 └── releases/
 ```
 
-Create `/opt/solar-ai/config/host.env` from `deploy/host.env.example`:
+Create `/opt/solar-ai/config/host.env` from `deploy/host.env.example`. For the
+first R3-only release use standalone mode:
 
 ```dotenv
 AI_PUBLIC_DOMAIN=ai.solars.io.vn
 AI_DNS_ZONE=solars.io.vn
 AI_PUBLIC_IPV4=116.118.6.30
-AI_MONITORING_BIND_IP=10.20.0.2
-PLATFORM_WIREGUARD_IPV4=10.20.0.1
-AI_DOCKER_SOCKET_GID=988
+AI_OBSERVABILITY_MODE=standalone
 AI_SECRETS_FILE=/opt/solar-ai/secrets/ai.env
-LOKI_PUSH_URL=http://10.20.0.1:3100/loki/api/v1/push
 ```
 
-`AI_DOCKER_SOCKET_GID` must be the numeric group ID of the Docker socket on
-R3. Do not assume that it is always `988`; obtain the value on that host and
-put the exact result in `host.env`:
+Only after the central host is known, change the mode to `central` and append
+`AI_MONITORING_BIND_IP`, `PLATFORM_WIREGUARD_IPV4`, and `LOKI_PUSH_URL` using
+the actual peer configuration. The deploy scripts then enable the
+`central-observability` Compose profile automatically.
+
+In central mode, `AI_DOCKER_SOCKET_GID` must be the numeric group ID of the
+Docker socket on R3. Do not assume that it is always `988`; obtain the value on
+that host and put the exact result in `host.env`:
 
 ```bash
 stat -c '%g' /var/run/docker.sock
@@ -271,18 +278,20 @@ Caddy must route REST to `127.0.0.1:18000`, gRPC h2c to
 certificate state remains under the host package's data directory, not under
 `/opt/solar-ai`.
 
-Deployment succeeds only after all of the following pass:
+Standalone deployment succeeds only after all of the following pass:
 
-1. the monitoring bind IPv4 is assigned to a local interface;
-2. host Caddy is active and contains the exact shared-host routing contract;
-3. every authoritative DNS server returns only the configured R3 IPv4;
+1. host Caddy is active and contains the exact shared-host routing contract;
+2. every authoritative DNS server returns only the configured R3 IPv4;
    transient authoritative DNS failures are retried five times before the
    deployment is rejected;
-4. all model/RAG artifact checksums;
-5. direct `/live`, `/ready` and real REST inference;
-6. direct standard/custom gRPC health plus NASA and LFP inference;
-7. the same REST and gRPC tests through host Caddy with the real certificate;
-8. Compose health for all containers.
+3. all model/RAG artifact checksums;
+4. direct `/live`, `/ready` and real REST inference;
+5. direct standard/custom gRPC health plus NASA and LFP inference;
+6. the same REST and gRPC tests through host Caddy with the real certificate;
+7. Compose health for the AI container and public denial of `/metrics`.
+
+Central mode adds the WireGuard route, Loki readiness, exporter and end-to-end
+log delivery checks to this gate.
 
 The AI container maps the production FQDN to Docker's host gateway for the TLS
 smoke. It therefore validates certificate hostname, trust, HTTP/2 and host
@@ -502,14 +511,15 @@ sudo systemctl status caddy --no-pager --full
 sudo journalctl -u caddy --since '10 minutes ago' --no-pager
 ```
 
-On R4, confirm BatteryService has no TLS/gRPC errors, force one real
-prediction, verify an HTTP fallback with gRPC deliberately blocked in a planned
-maintenance test, check all Prometheus targets, and confirm AI logs arrive in
-Loki. Host Caddy access logs remain in the systemd journal on R3.
+After a Backend/observability VPS is later provisioned, confirm BatteryService
+has no TLS/gRPC errors, force one real prediction, check all Prometheus targets,
+and confirm AI logs arrive in Loki. These are not blockers for the initial
+R3-only release. Host Caddy access logs remain in the systemd journal on R3.
 
-The deploy and rollback scripts repeat the network checks. This helper sends a
-unique request through host Caddy and queries the AI access-log marker back from
-Backend Loki:
+The deploy and rollback scripts repeat the checks for the selected mode. In
+standalone mode the helper verifies container health and that public metrics are
+forbidden. In central mode it additionally sends a unique request through host
+Caddy and queries the AI access-log marker back from Loki:
 
 ```bash
 /opt/solar-ai/current/deploy/scripts/verify-observability.sh

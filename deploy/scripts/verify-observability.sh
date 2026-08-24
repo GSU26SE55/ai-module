@@ -21,8 +21,39 @@ env_value() {
 monitoring_bind_ip="$(env_value AI_MONITORING_BIND_IP)"
 platform_wireguard_ipv4="$(env_value PLATFORM_WIREGUARD_IPV4)"
 public_domain="$(env_value AI_PUBLIC_DOMAIN)"
+observability_mode="$(env_value AI_OBSERVABILITY_MODE)"
 loki_push_url="$(env_value LOKI_PUSH_URL)"
 loki_base_url="${loki_push_url%/loki/api/v1/push}"
+
+case "${observability_mode}" in
+  standalone)
+    container_health="$(
+      docker inspect --format '{{.State.Health.Status}}' solar-ai-module
+    )"
+    [[ "${container_health}" == healthy ]] || {
+      printf 'AI container is not healthy: %s\n' "${container_health}" >&2
+      exit 1
+    }
+    docker exec \
+      -e "AI_METRICS_URL=https://${public_domain}/metrics" \
+      solar-ai-module python -c \
+      'import os, urllib.error, urllib.request
+try:
+    urllib.request.urlopen(os.environ["AI_METRICS_URL"], timeout=10)
+except urllib.error.HTTPError as exc:
+    if exc.code != 403:
+        raise
+else:
+    raise SystemExit("public metrics endpoint must return HTTP 403")'
+    printf 'AI standalone runtime verified: container=healthy public_metrics=403\n'
+    exit 0
+    ;;
+  central) ;;
+  *)
+    printf 'AI_OBSERVABILITY_MODE must be standalone or central\n' >&2
+    exit 2
+    ;;
+esac
 
 for metrics_url in \
   "http://${monitoring_bind_ip}:9100/metrics" \

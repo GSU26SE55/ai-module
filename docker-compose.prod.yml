@@ -72,6 +72,8 @@ services:
         max-file: "5"
 
   node-exporter:
+    profiles:
+      - central-observability
     image: prom/node-exporter:v1.9.1@sha256:d00a542e409ee618a4edc67da14dd48c5da66726bbd5537ab2af9c1dfc442c8a
     container_name: solar-ai-node-exporter
     restart: unless-stopped
@@ -79,7 +81,7 @@ services:
       - --path.rootfs=/host
       - --web.listen-address=:9100
     ports:
-      - "${AI_MONITORING_BIND_IP:?AI_MONITORING_BIND_IP must be the WireGuard address}:9100:9100"
+      - "${AI_MONITORING_BIND_IP:-127.0.0.1}:9100:9100"
     volumes:
       - /:/host:ro,rslave
     read_only: true
@@ -92,6 +94,8 @@ services:
     cpus: 0.1
 
   cadvisor:
+    profiles:
+      - central-observability
     image: gcr.io/cadvisor/cadvisor:v0.52.1@sha256:f40e65878e25c2e78ea037f73a449527a0fb994e303dc3e34cb6b187b4b91435
     container_name: solar-ai-cadvisor
     restart: unless-stopped
@@ -99,7 +103,7 @@ services:
     devices:
       - /dev/kmsg:/dev/kmsg
     ports:
-      - "${AI_MONITORING_BIND_IP}:8082:8080"
+      - "${AI_MONITORING_BIND_IP:-127.0.0.1}:8082:8080"
     volumes:
       - /:/rootfs:ro
       - /var/run:/var/run:ro
@@ -111,6 +115,8 @@ services:
     cpus: 0.25
 
   alloy:
+    profiles:
+      - central-observability
     image: grafana/alloy:v1.10.2@sha256:bcf27f18c4402869af112fb39e35e1db3804a404686f4caa20bdf77814219223
     container_name: solar-ai-alloy
     restart: unless-stopped
@@ -119,16 +125,16 @@ services:
     # group separately so discovery works without running the process as root.
     user: "473:10001"
     group_add:
-      - "${AI_DOCKER_SOCKET_GID:?AI_DOCKER_SOCKET_GID must match the Docker socket group}"
+      - "${AI_DOCKER_SOCKET_GID:-0}"
     command:
       - run
       - --server.http.listen-addr=0.0.0.0:12345
       - --storage.path=/var/lib/alloy/data
       - /etc/alloy/config.alloy
     environment:
-      LOKI_PUSH_URL: ${LOKI_PUSH_URL:-http://10.20.0.1:3100/loki/api/v1/push}
+      LOKI_PUSH_URL: ${LOKI_PUSH_URL:-http://127.0.0.1:3100/loki/api/v1/push}
     ports:
-      - "${AI_MONITORING_BIND_IP}:12345:12345"
+      - "${AI_MONITORING_BIND_IP:-127.0.0.1}:12345:12345"
     volumes:
       - ./deploy/alloy/config.alloy:/etc/alloy/config.alloy:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro

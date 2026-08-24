@@ -35,16 +35,25 @@ export AI_IMAGE="${image_ref}"
 "${script_dir}/preflight.sh" "${target}"
 
 host_env="${root}/config/host.env"
+observability_mode="$(
+  sed -n 's/^AI_OBSERVABILITY_MODE=//p' "${host_env}" | tail -n 1 | tr -d '\r'
+)"
+compose_profile_args=()
+if [[ "${observability_mode}" == central ]]; then
+  compose_profile_args+=(--profile central-observability)
+fi
 docker compose \
   --project-name solar-ai \
   --env-file "${host_env}" \
   --env-file "${target}/deploy.env" \
+  "${compose_profile_args[@]}" \
   -f "${target}/docker-compose.prod.yml" \
   pull
 docker compose \
   --project-name solar-ai \
   --env-file "${host_env}" \
   --env-file "${target}/deploy.env" \
+  "${compose_profile_args[@]}" \
   -f "${target}/docker-compose.prod.yml" \
   up -d --remove-orphans --wait --wait-timeout 240
 docker exec solar-ai-module python /app/deploy/scripts/verify-models.py

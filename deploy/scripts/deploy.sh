@@ -37,11 +37,19 @@ else
 fi
 
 host_env="${root}/config/host.env"
+observability_mode="$(
+  sed -n 's/^AI_OBSERVABILITY_MODE=//p' "${host_env}" | tail -n 1 | tr -d '\r'
+)"
+compose_profile_args=()
+if [[ "${observability_mode}" == central ]]; then
+  compose_profile_args+=(--profile central-observability)
+fi
 compose() {
   docker compose \
     --project-name solar-ai \
     --env-file "${host_env}" \
     --env-file "${release_dir}/deploy.env" \
+    "${compose_profile_args[@]}" \
     -f "${release_dir}/docker-compose.prod.yml" \
     "$@"
 }
