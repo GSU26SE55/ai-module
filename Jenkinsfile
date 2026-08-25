@@ -157,6 +157,8 @@ pipeline {
                             set -eu
 
                             trivy fs \
+                              --ignorefile .trivyignore.yaml \
+                              --show-suppressed \
                               --exit-code 1 \
                               --severity HIGH,CRITICAL \
                               --scanners vuln,secret,misconfig \
