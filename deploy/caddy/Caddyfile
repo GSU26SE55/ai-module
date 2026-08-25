@@ -2,7 +2,7 @@
 #
 # Merge this site block into /etc/caddy/Caddyfile alongside the Jenkins site.
 # The AI Compose project must never publish ports 80/443 itself.
-ai.solars.io.vn {
+ai.solaris.io.vn {
 	tls {
 		issuer acme {
 			disable_tlsalpn_challenge

@@ -3,7 +3,7 @@
 This is the source of truth for deploying `GSU26SE55/ai-module` to R3. R3 runs
 Jenkins and AI together. The initial standalone release does not depend on a
 Backend or observability VPS. AI runs with Docker Compose, while one host-level Caddy serves both
-`jenkins.solars.io.vn` and `ai.solars.io.vn`. A successful, non-PR Jenkins build
+`jenkins.solars.io.vn` and `ai.solaris.io.vn`. A successful, non-PR Jenkins build
 of `main` is the only event that may request a production deployment.
 
 ## 1. Production contract
@@ -21,8 +21,8 @@ until that remote platform is provisioned:
 
 Both backend transports use the same origin:
 
-- primary gRPC: `https://ai.solars.io.vn:443` over HTTP/2;
-- fallback REST: `https://ai.solars.io.vn`;
+- primary gRPC: `https://ai.solaris.io.vn:443` over HTTP/2;
+- fallback REST: `https://ai.solaris.io.vn`;
 - host Caddy routes gRPC to `h2c://127.0.0.1:15051` and all other AI traffic to
   FastAPI on `127.0.0.1:18000`.
 
@@ -37,7 +37,7 @@ live under `/opt/solar-ai/data`.
 The intended record is:
 
 ```text
-ai.solars.io.vn.  A  116.118.6.30
+ai.solaris.io.vn.  A  116.118.6.30
 ```
 
 `jenkins.solars.io.vn` uses the same A record. Replace `116.118.6.30` everywhere
@@ -47,7 +47,7 @@ Caddy listens on it and the firewall also permits it.
 At the follow-up audit on **2026-08-23**, public resolvers returned:
 
 ```text
-ai.solars.io.vn      -> 116.118.6.30
+ai.solaris.io.vn     -> 116.118.6.30
 jenkins.solars.io.vn -> 116.118.6.30
 ```
 
@@ -56,11 +56,11 @@ deployment-time invariant rather than a one-time assumption. Verify from any
 Internet-connected machine before the first release and after every IP change:
 
 ```bash
-dig +short NS solars.io.vn
+dig +short NS solaris.io.vn
 for ns in ns1.zonedns.vn ns2.zonedns.vn ns3.zonedns.vn ns4.zonedns.vn; do
-  dig +short "@${ns}" A ai.solars.io.vn
+  dig +short "@${ns}" A ai.solaris.io.vn
 done
-dig +short AAAA ai.solars.io.vn
+dig +short AAAA ai.solaris.io.vn
 ```
 
 The four authoritative A answers must be identical to R3 and the AAAA result
@@ -119,7 +119,7 @@ WireGuard as `10.20.0.1/32` on that host and `10.20.0.2/32` on R3. Only the two
 peer addresses are routed. Allow the central host to
 scrape only:
 
-- `https://ai.solars.io.vn/metrics/` for application HTTP/gRPC metrics;
+- `https://ai.solaris.io.vn/metrics/` for application HTTP/gRPC metrics;
 - `10.20.0.2:9100/metrics` for node-exporter;
 - `10.20.0.2:8082/metrics` for cAdvisor;
 - `10.20.0.2:12345/metrics` for Alloy health/self-metrics.
@@ -205,8 +205,8 @@ Create `/opt/solar-ai/config/host.env` from `deploy/host.env.example`. For the
 first R3-only release use standalone mode:
 
 ```dotenv
-AI_PUBLIC_DOMAIN=ai.solars.io.vn
-AI_DNS_ZONE=solars.io.vn
+AI_PUBLIC_DOMAIN=ai.solaris.io.vn
+AI_DNS_ZONE=solaris.io.vn
 AI_PUBLIC_IPV4=116.118.6.30
 AI_OBSERVABILITY_MODE=standalone
 AI_SECRETS_FILE=/opt/solar-ai/secrets/ai.env
@@ -310,8 +310,8 @@ the backend deploy script also overrides the three endpoint values from R4
 ```yaml
 config:
   Ai__Enabled: "true"
-  Ai__GrpcAddress: "https://ai.solars.io.vn"
-  Ai__HttpBaseUrl: "https://ai.solars.io.vn"
+  Ai__GrpcAddress: "https://ai.solaris.io.vn"
+  Ai__HttpBaseUrl: "https://ai.solaris.io.vn"
   Ai__TimeoutSeconds: "5"
   Ai__IntervalMinutes: "5"
   Ai__MinReadings: "30"
@@ -320,7 +320,7 @@ config:
 
   TicketAi__Enabled: "true"
   TicketAi__BatteryServiceBaseUrl: "http://batteryservice:80"
-  TicketAi__AiGrpcAddress: "https://ai.solars.io.vn"
+  TicketAi__AiGrpcAddress: "https://ai.solaris.io.vn"
   TicketAi__BatteryGrpcAddress: "http://batteryservice:8081"
   TicketAi__TimeoutSeconds: "5"
   TicketAi__MaxDuplicateCandidates: "10"
@@ -359,8 +359,8 @@ used by the development Compose:
 
 ```dotenv
 Ai__Enabled=true
-Ai__GrpcAddress=https://ai.solars.io.vn
-Ai__HttpBaseUrl=https://ai.solars.io.vn
+Ai__GrpcAddress=https://ai.solaris.io.vn
+Ai__HttpBaseUrl=https://ai.solaris.io.vn
 Ai__TimeoutSeconds=5
 Ai__IntervalMinutes=5
 Ai__MinReadings=30
@@ -369,7 +369,7 @@ Ai__PrescriptionEnabled=true
 
 TicketAi__Enabled=true
 TicketAi__BatteryServiceBaseUrl=http://batteryservice:8080
-TicketAi__AiGrpcAddress=https://ai.solars.io.vn
+TicketAi__AiGrpcAddress=https://ai.solaris.io.vn
 TicketAi__BatteryGrpcAddress=http://batteryservice:8081
 TicketAi__TimeoutSeconds=5
 TicketAi__MaxDuplicateCandidates=10
@@ -491,13 +491,13 @@ production credentials/job scripts.
 From an external client, run:
 
 ```bash
-curl --fail --show-error --silent https://ai.solars.io.vn/live
-curl --fail --show-error --silent https://ai.solars.io.vn/ready
-openssl s_client -connect ai.solars.io.vn:443 \
-  -servername ai.solars.io.vn -alpn h2 </dev/null 2>/dev/null \
+curl --fail --show-error --silent https://ai.solaris.io.vn/live
+curl --fail --show-error --silent https://ai.solaris.io.vn/ready
+openssl s_client -connect ai.solaris.io.vn:443 \
+  -servername ai.solaris.io.vn -alpn h2 </dev/null 2>/dev/null \
   | openssl x509 -noout -subject -issuer -ext subjectAltName
 grpcurl -import-path . -proto protos/ai_service.proto \
-  -d '{}' ai.solars.io.vn:443 aimodule.v1.AiService/Health
+  -d '{}' ai.solaris.io.vn:443 aimodule.v1.AiService/Health
 ```
 
 Also verify on R3:
@@ -526,9 +526,9 @@ Caddy and queries the AI access-log marker back from Loki:
 /opt/solar-ai/current/deploy/scripts/verify-observability.sh
 ```
 
-From an Internet client, `https://ai.solars.io.vn/metrics/` must return `403`.
-From R4 with `--resolve ai.solars.io.vn:443:10.20.0.2`, it must return
-Prometheus text with a valid certificate for `ai.solars.io.vn`.
+From an Internet client, `https://ai.solaris.io.vn/metrics/` must return `403`.
+From R4 with `--resolve ai.solaris.io.vn:443:10.20.0.2`, it must return
+Prometheus text with a valid certificate for `ai.solaris.io.vn`.
 
 Manual rollback uses the previous immutable release:
 

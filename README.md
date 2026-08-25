@@ -85,8 +85,8 @@ The same inference/prescription pipeline is exposed over two transports running 
 
 | Transport | Internal port | Public production endpoint | Use for |
 |-----------|---------------|----------------------------|---------|
-| REST (FastAPI) | 8000 | `https://ai.solars.io.vn` | HTTPS fallback, health, metrics |
-| gRPC (`aimodule.v1.AiService`) | 50051 (env `GRPC_PORT`) | `https://ai.solars.io.vn:443` | primary backend transport, streaming |
+| REST (FastAPI) | 8000 | `https://ai.solaris.io.vn` | HTTPS fallback, health, metrics |
+| gRPC (`aimodule.v1.AiService`) | 50051 (env `GRPC_PORT`) | `https://ai.solaris.io.vn:443` | primary backend transport, streaming |
 
 In production, FastAPI owns the lifecycle of both transports: model/RAG artifacts
 are verified and loaded once during startup, then the gRPC server starts in the
