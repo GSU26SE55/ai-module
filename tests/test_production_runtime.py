@@ -38,7 +38,7 @@ def test_shared_host_caddy_uses_loopback_upstreams_and_private_metrics():
     assert ai_module["extra_hosts"] == [
         "${AI_PUBLIC_DOMAIN:?AI_PUBLIC_DOMAIN is required}:host-gateway"
     ]
-    assert "ai.solars.io.vn {" in caddyfile
+    assert "ai.solaris.io.vn {" in caddyfile
     assert "@metrics path /metrics /metrics/*" in caddyfile
     assert "remote_ip 10.20.0.1" in caddyfile
     assert "reverse_proxy 127.0.0.1:18000" in caddyfile

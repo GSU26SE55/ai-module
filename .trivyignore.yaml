@@ -1,0 +1,37 @@
+vulnerabilities:
+  - id: CVE-2026-45830
+    paths:
+      - requirements.txt
+      - requirements-runtime.txt
+    purls:
+      - pkg:pypi/chromadb@0.5.3
+    expired_at: 2026-09-25
+    statement: >-
+      ChromaDB is used only through the in-process PersistentClient with local
+      storage. The Chroma HTTP server and multi-tenant authorization APIs
+      required to exploit this finding are not exposed. Remove this exception
+      as soon as an upstream fixed version is available.
+  - id: CVE-2026-45831
+    paths:
+      - requirements.txt
+      - requirements-runtime.txt
+    purls:
+      - pkg:pypi/chromadb@0.5.3
+    expired_at: 2026-09-25
+    statement: >-
+      ChromaDB is used only through the in-process PersistentClient with local
+      storage. SimpleRBAC and the Chroma multi-tenant server are not enabled or
+      exposed. Remove this exception as soon as an upstream fixed version is
+      available.
+  - id: CVE-2026-45833
+    paths:
+      - requirements.txt
+      - requirements-runtime.txt
+    purls:
+      - pkg:pypi/chromadb@0.5.3
+    expired_at: 2026-09-25
+    statement: >-
+      ChromaDB is used only through the in-process PersistentClient with local
+      storage. The vulnerable Chroma collection update API is not exposed and
+      the application does not enable trust_remote_code. Remove this exception
+      as soon as an upstream fixed version is available.
