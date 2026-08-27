@@ -443,3 +443,5 @@ No GPU. No `mamba-ssm`. Runs on any CPU.
 - Deng et al. (2024). *From Prediction to Prescription: LLM Agent for Context-Aware Maintenance Decision Support*. PHM Society.
 - Dubarry, M., & Liaw, B. Y. (2009). *Identify capacity fading mechanism in a commercial LiFePO4 cell*. Journal of Power Sources.
 - NASA Ames Battery Dataset: [PCoE Data Set Repository](https://www.nasa.gov/intelligent-systems-division/discovery-and-systems-health/pcoe/pcoe-data-set-repository/)
+
+<!-- CI webhook verification -->
