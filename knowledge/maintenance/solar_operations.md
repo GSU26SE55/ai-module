@@ -11,7 +11,9 @@ This document covers the operational patterns specific to that cycle.
 - A day with abnormally low generation (heavy cloud cover, panel
   soiling/shading) can produce a partial-charge cycle, which if repeated
   compounds into a `LowSoc` condition (see `anomaly_soc_soh.md`) even without
-  any single anomalous reading.
+  any single anomalous reading. `LowSoc` is notification-only: what makes this
+  pattern worth acting on is the pack **failing to recover** across successive
+  charging windows, not the low reading itself.
 - Partial-cycling over many days accelerates capacity fade compared to full
   cycles at the same total throughput — worth noting in a prescription when
   the degradation trend correlates with a low-generation period rather than

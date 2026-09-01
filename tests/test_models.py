@@ -445,9 +445,33 @@ class TestGenerateWarnings:
         codes = [w["code"] for w in generate_warnings(self._raw(voltage=3.1), soh=95.0, classification="Normal")]
         assert "VOLTAGE_LOW" in codes
 
+    def test_voltage_low_is_info_so_a_drained_pack_opens_no_ticket(self):
+        """Điện áp sát cutoff = pin dùng gần hết, tức vận hành bình thường.
+
+        severity="warning" cũ đi thẳng vào has_warning của compute_risk_profile ⇒ mỗi lần
+        khách dùng cạn pin là một ticket P3 SCHEDULE_MAINTENANCE cho viên pin hoàn toàn
+        khoẻ. Test này khoá "info" lại: đổi ngược về "warning" là ticket giả quay lại.
+        """
+        ws = generate_warnings(self._raw(voltage=3.1), soh=95.0, classification="Normal")
+        low = next(w for w in ws if w["code"] == "VOLTAGE_LOW")
+        assert low["severity"] == "info"
+
+        risk = compute_risk_profile(
+            health_stage="Healthy", anomaly_status="Normal", warnings=ws,
+            soh=95.0, cycles_to_maintenance=500,
+        )
+        assert risk["risk_level"] == "Low"
+        assert risk["action_code"] == "MONITOR"
+
     def test_voltage_critical_warning(self):
         codes = [w["code"] for w in generate_warnings(self._raw(voltage=2.9), soh=95.0, classification="Normal")]
         assert "VOLTAGE_CRITICAL" in codes
+
+    def test_voltage_critical_stays_critical(self):
+        """Dưới cutoff BMS là nguy cơ hư cell thật — KHÔNG hạ theo VOLTAGE_LOW."""
+        ws = generate_warnings(self._raw(voltage=2.9), soh=95.0, classification="Normal")
+        crit = next(w for w in ws if w["code"] == "VOLTAGE_CRITICAL")
+        assert crit["severity"] == "critical"
 
     def test_temp_elevated_warning(self):
         codes = [w["code"] for w in generate_warnings(self._raw(temperature=38.0), soh=95.0, classification="Normal")]
