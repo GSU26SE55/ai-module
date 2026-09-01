@@ -247,15 +247,29 @@ message DuplicateCandidate {
 | Tiêu đề rỗng hoặc trùng y hệt mô tả | **−0.10** |
 | Có từ khoá bất thường (nóng, phồng, khói…) | **+0.20** |
 | Spam rõ rệt (1 ký tự lặp, toàn số) | **−0.40** |
-| **Sensor xác nhận có bất thường thật** | **+0.30** |
-| Sensor bình thường, không có gì bất thường | **−0.10** |
+| **Sensor xác nhận có bất thường thật** | **+0.18 … +0.43** — theo mức vượt ngưỡng |
+| Không gửi snapshot (chưa đối chiếu được) | **−0.10** |
+| Sensor bình thường, không có gì bất thường | **−0.20** |
+| Chỉ mỗi SOC dưới ngưỡng, còn lại bình thường | **−0.20** — xem ghi chú dưới |
 
 Kết quả clip về `[0, 1]`. **`score >= 0.5` → `legitimate`, ngược lại `suspicious`.**
 Dò trùng dùng Jaccard trên token đã bỏ dấu; **`duplicate_score >= 0.45`** thì báo trùng,
 cùng `category` được cộng thêm trọng số.
 
-> Trọng số lớn nhất là **sensor** (±0.30/0.40 cả cụm). Gửi `has_sensor_snapshot=true` kèm
-> số đo thật làm kết quả tin cậy hơn hẳn so với chỉ chấm chữ.
+> Trọng số lớn nhất là **sensor**. Gửi `has_sensor_snapshot=true` kèm số đo thật làm kết quả
+> tin cậy hơn hẳn so với chỉ chấm chữ.
+
+> ⚠️ **SOC thấp KHÔNG phải bằng chứng lỗi.** Pin trong hệ solar xả mỗi đêm — chạm ngưỡng
+> cảnh báo SOC là vận hành bình thường, không phải hỏng hóc. Trước đây luật này cộng điểm,
+> nên ticket khai "pin hỏng" gửi lúc 10 giờ đêm được AI xác nhận "khớp cảm biến thật" chỉ vì
+> pin đang cạn theo đúng thiết kế. Giờ SOC không cộng cũng không trừ; nó chỉ đổi **câu lý do**
+> để Manager thấy đúng: *"the only reading below its threshold was the state of charge —
+> normal operation for a pack in use, not evidence of a fault"*.
+>
+> `soc_warning_threshold` (field 9) **vẫn giữ trong contract** — BE không phải đổi gì, cứ gửi
+> như cũ. SOC chỉ thành bất thường khi **không hồi phục** qua một cửa sổ sạc, hoặc khi xuống
+> dưới ngưỡng bảo vệ deep-discharge; cả hai đều cần lịch sử nhiều giờ mà snapshot một điểm đo
+> không có, nên phán ở BE mới đúng chỗ.
 
 ### 7.4. Mapping sang `TicketVerifyStatusEnum`
 

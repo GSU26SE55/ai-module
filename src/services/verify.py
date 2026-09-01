@@ -52,11 +52,13 @@ _tokens = tokens
 _jaccard = jaccard
 
 
-def _sensor_supports_anomaly(snap: TicketSensorSnapshot) -> tuple[bool, str, float]:
+def _sensor_supports_anomaly(snap: TicketSensorSnapshot) -> tuple[bool, str, float, bool]:
     """Does the sensor data actually show a fault? → strengthens the ticket's legitimacy.
 
-    Returns `(supported, reason, severity)` where `severity` is how far past the limit the
-    worst reading went, as a FRACTION of that limit (72°C against a 60°C cap → 0.20).
+    Returns `(supported, reason, severity, soc_low)` where `severity` is how far past the
+    limit the worst reading went, as a FRACTION of that limit (72°C against a 60°C cap →
+    0.20), and `soc_low` says the state of charge sat below its threshold — an observation
+    the caller needs to word its verdict honestly, NOT a fault (see the SOC block below).
 
     Severity exists because a yes/no answer made every confirmed ticket score identically:
     61°C and 720°C both meant "matches sensor data", both added the same 0.3, and the Manager
@@ -111,18 +113,26 @@ def _sensor_supports_anomaly(snap: TicketSensorSnapshot) -> tuple[bool, str, flo
             (snap.temperature_min - snap.temperature) / abs(snap.temperature_min)
         )
 
-    if snap.soc_warning_threshold and snap.soc_percent and snap.soc_percent < snap.soc_warning_threshold:
-        reasons.append(
-            f"SOC {snap.soc_percent:.0f}% below the {snap.soc_warning_threshold:.0f}% threshold"
-        )
-        exceedances.append(
-            (snap.soc_warning_threshold - snap.soc_percent) / snap.soc_warning_threshold
-        )
+    # SOC dưới ngưỡng KHÔNG còn là bằng chứng lỗi — nó chỉ được ghi nhận và trả về riêng.
+    #
+    # Pin trong hệ solar xả mỗi đêm; chạm ngưỡng cảnh báo SOC là kết quả tất yếu của tải và
+    # chu kỳ nắng, không phải hỏng hóc. Trước đây luật này cộng điểm hợp lệ, nên một ticket
+    # khai "pin hỏng" gửi lúc 10 giờ đêm được AI xác nhận "khớp cảm biến thật" chỉ vì pin
+    # đang cạn theo đúng thiết kế — tức AI xác nhận một sự cố không tồn tại.
+    #
+    # SOC chỉ thành bất thường khi KHÔNG HỒI PHỤC qua một cửa sổ sạc, hoặc khi xuống dưới
+    # ngưỡng bảo vệ deep-discharge. Cả hai đều cần lịch sử nhiều giờ mà snapshot một điểm
+    # đo này không có — nên chỗ đúng để phán là BE, không phải đây.
+    soc_low = bool(
+        snap.soc_warning_threshold
+        and snap.soc_percent
+        and snap.soc_percent < snap.soc_warning_threshold
+    )
 
     # Lấy mức vượt LỚN NHẤT, không phải tổng: một viên pin vượt ba ngưỡng nhẹ không nghiêm
     # trọng bằng một viên vượt một ngưỡng gấp đôi, và cộng dồn sẽ nói ngược lại.
     severity = max(exceedances) if exceedances else 0.0
-    return (len(reasons) > 0, ", ".join(reasons), severity)
+    return (len(reasons) > 0, ", ".join(reasons), severity, soc_low)
 
 
 def _hours_apart(a: str, b: str) -> float | None:
@@ -279,7 +289,9 @@ def run_verify(req: VerifyTicketRequest) -> VerifyTicketResponse:
             "no sensor readings around the reported time — assessed from the text only"
         )
     else:
-        supported, sensor_reason, severity = _sensor_supports_anomaly(req.sensor_snapshot)
+        supported, sensor_reason, severity, soc_low = _sensor_supports_anomaly(
+            req.sensor_snapshot
+        )
         if supported:
             # Thưởng theo mức vượt ngưỡng: 0.18 sàn (vừa chạm ngưỡng) → 0.43 trần (vượt ≥50%).
             #
@@ -292,6 +304,16 @@ def run_verify(req: VerifyTicketRequest) -> VerifyTicketResponse:
             score += bonus
             reasons.append(
                 f"matches sensor data ({sensor_reason}, {severity * 100:.0f}% past the limit)"
+            )
+        elif soc_low:
+            # Cùng mức phạt −0.20 như nhánh dưới: SOC thấp không cộng cũng không trừ, nó
+            # đơn giản KHÔNG phải bằng chứng. Chỉ câu chữ khác, và khác là bắt buộc —
+            # nói "mọi chỉ số trong ngưỡng" trong khi SOC đang dưới ngưỡng là sai sự thật,
+            # Manager đối chiếu số đo sẽ thấy AI mâu thuẫn với chính dữ liệu nó vừa đọc.
+            score -= 0.20
+            reasons.append(
+                "the only reading below its threshold was the state of charge — normal "
+                "operation for a pack in use, not evidence of a fault"
             )
         else:
             # Đo được mà mọi chỉ số trong ngưỡng là bằng chứng NGƯỢC lại lời khai — nặng hơn
