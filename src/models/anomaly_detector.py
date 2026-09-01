@@ -470,12 +470,25 @@ def generate_warnings(
             ),
         })
     elif v_min < v_warn_lo:
+        # severity="info" là CỐ Ý, cùng lý do với INSUFFICIENT_DISCHARGE bên dưới:
+        # compute_risk_profile() chỉ leo thang với "warning"/"critical", nên cờ này KHÔNG
+        # sinh P3/SCHEDULE_MAINTENANCE.
+        #
+        # Điện áp gần cutoff chính là hình bóng vật lý của "pin dùng gần hết". Đường xả LFP
+        # rất phẳng (3.2 V danh định), nên 2.8 V/cell ứng với SOC chỉ còn ~5% — tức pack 8S
+        # tụt xuống 22.4 V mỗi khi khách dùng cạn pin theo đúng thiết kế. Ở severity
+        # "warning" cũ, mỗi lần như vậy là một ticket P3 "SCHEDULE_MAINTENANCE" cho một
+        # viên pin hoàn toàn bình thường — cùng loại ticket giả mà ngưỡng nhiệt LFP đã phải
+        # sửa ở GH-67, chỉ khác cảm biến.
+        #
+        # VOLTAGE_CRITICAL phía trên GIỮ NGUYÊN "critical": dưới cutoff BMS là nguy cơ hư
+        # cell thật, không phải xả bình thường.
         warnings.append({
             "code": "VOLTAGE_LOW",
-            "severity": "warning",
+            "severity": "info",
             "message": (
                 f"Minimum voltage {v_min:.3f}V is approaching cutoff "
-                f"({v_warn_lo}V)."
+                f"({v_warn_lo}V) — expected near the end of a normal discharge."
             ),
         })
 

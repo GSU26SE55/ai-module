@@ -421,6 +421,32 @@ Chỉ dùng nó cho 2 việc:
 
 Cờ biến mất ngay khi cửa sổ có mẫu xả.
 
+### 10.3 `VOLTAGE_LOW` đã hạ xuống `severity: "info"` — pin dùng hết không còn sinh ticket
+
+**Đây là thay đổi hành vi, BE cần biết.** Trước: `severity: "warning"`. Sau: `"info"`.
+
+Điện áp sát cutoff chính là hình bóng vật lý của *"pin đã dùng gần hết"*. Đường xả LFP
+rất phẳng (3.2 V danh định), nên **2.8 V/cell ứng với SOC chỉ còn ~5%** — pack 8S tụt
+xuống **22.4 V mỗi lần khách dùng cạn pin theo đúng thiết kế**.
+
+Ở `severity: "warning"` cũ, mỗi lần như vậy đi thẳng vào `has_warning` của
+`compute_risk_profile()` và cho ra:
+
+| Trường | Trước (sai) | Sau |
+|---|---|---|
+| `risk.risk_level` | `Medium` | `Low` |
+| `risk.priority` | `P3` | `None` |
+| `recommended_action` | `SCHEDULE_MAINTENANCE` | `MONITOR` |
+
+Tức **một ticket P3 cho một viên pin hoàn toàn khoẻ, mỗi lần khách xài hết pin.** Dùng
+pin đến cạn là trạng thái vận hành, không phải sự cố.
+
+**`VOLTAGE_CRITICAL` GIỮ NGUYÊN `critical`** — dưới cutoff BMS (< 2.5 V/cell = 20.0 V
+pack 8S) là nguy cơ hư cell thật, vẫn phải sinh ticket P1.
+
+> Cùng loại lỗi với ngưỡng nhiệt LFP đã sửa ở GH-67 (`TEMP_ELEVATED` nổ mỗi trưa nắng),
+> chỉ khác cảm biến: ngưỡng an toàn bị dùng làm ngưỡng cảnh báo cho một điều kiện xảy ra
+> hằng ngày.
 
 ---
 

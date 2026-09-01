@@ -389,7 +389,9 @@ class ClassificationFeedbackResponse(BaseModel):
 
 class WarningItem(BaseModel):
     code: str  # e.g. "VOLTAGE_LOW", "TEMP_CRITICAL", "SOH_LOW"
-    severity: str  # "warning" | "critical"
+    # "info" | "warning" | "critical" — only warning/critical escalate risk_level.
+    # "info" is observational (VOLTAGE_LOW, INSUFFICIENT_DISCHARGE) and opens no ticket.
+    severity: str
     message: str
 
 

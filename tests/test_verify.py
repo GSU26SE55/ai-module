@@ -50,6 +50,59 @@ def test_sensor_snapshot_boosts_legitimacy():
     assert "sensor" in res.reason.lower()
 
 
+def test_low_soc_alone_is_not_evidence_of_a_fault():
+    """SOC dưới ngưỡng KHÔNG được coi là bằng chứng lỗi.
+
+    Pin solar xả mỗi đêm; chạm ngưỡng SOC là vận hành bình thường. Luật cũ cộng điểm
+    "khớp cảm biến thật" cho nó ⇒ AI xác nhận một sự cố không tồn tại.
+    """
+    drained = TicketSensorSnapshot(
+        soh_percent=97.0,
+        temperature=30.0,
+        soc_percent=8.0,
+        soc_warning_threshold=20.0,
+        temperature_max=55.0,
+        soh_warning_threshold=80.0,
+    )
+    res = run_verify(
+        VerifyTicketRequest(
+            title="Pin hỏng",
+            description="Pin của tôi bị hết điện, chắc là hỏng rồi cần kiểm tra.",
+            category=1,
+            sensor_snapshot=drained,
+        )
+    )
+    assert "matches sensor data" not in res.reason
+    # Câu lý do phải nói đúng: SOC CÓ dưới ngưỡng, chỉ là nó không chứng minh lỗi.
+    # Nói "stayed within every threshold" ở đây là mâu thuẫn với chính số đo gửi kèm.
+    assert "state of charge" in res.reason
+    assert "within every threshold" not in res.reason
+
+
+def test_low_soc_scores_same_as_a_full_battery():
+    """SOC thấp không cộng cũng không trừ — hai snapshot chỉ khác SOC phải ra cùng điểm."""
+    common = dict(
+        soh_percent=97.0, temperature=30.0,
+        soc_warning_threshold=20.0, temperature_max=55.0, soh_warning_threshold=80.0,
+    )
+    body = dict(
+        title="Pin hỏng",
+        description="Pin của tôi bị hết điện, chắc là hỏng rồi cần kiểm tra.",
+        category=1,
+    )
+    drained = run_verify(
+        VerifyTicketRequest(
+            **body, sensor_snapshot=TicketSensorSnapshot(soc_percent=8.0, **common)
+        )
+    )
+    full = run_verify(
+        VerifyTicketRequest(
+            **body, sensor_snapshot=TicketSensorSnapshot(soc_percent=95.0, **common)
+        )
+    )
+    assert drained.score == full.score
+
+
 def test_sensor_snapshot_normal_lowers_score():
     """Sensor bình thường trong khi mô tả kêu hỏng → hạ điểm."""
     with_normal = run_verify(

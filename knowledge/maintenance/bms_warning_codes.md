@@ -8,7 +8,7 @@ pack (LFP, 8S, 24V nominal) use the LFP column.
 
 | Code | LFP (production) | NMC/LCO | Action |
 |---|---|---|---|
-| VOLTAGE_LOW | 2.5–2.8 V | 3.0–3.2 V | Approaching cutoff, reduce load |
+| VOLTAGE_LOW | 2.5–2.8 V | 3.0–3.2 V | Approaching cutoff — normal at the end of a discharge, informational only |
 | VOLTAGE_CRITICAL | < 2.5 V | < 3.0 V | Stop discharge immediately, risk of cell damage |
 | OVERVOLTAGE | > 3.65 V | > 4.15 V | Check charger settings |
 | OVERVOLTAGE_CRITICAL | > 3.8 V | > 4.2 V | Stop charging immediately, overcharge risk |
@@ -80,11 +80,22 @@ all of them so none is silently assumed to be lower.
 | TEMP_ELEVATED | warning | P3 Standard | 72 hours |
 | OVERVOLTAGE | warning | P3 Standard | 72 hours |
 | OVERCURRENT | warning | P3 Standard | 72 hours |
-| VOLTAGE_LOW | warning | P3 Standard | 72 hours |
+| VOLTAGE_LOW | **info** | — | no ticket |
+| INSUFFICIENT_DISCHARGE | info | — | no ticket |
 
 > Any `severity="warning"` code lands on P3 `SCHEDULE_MAINTENANCE`; P2 is now
 > reached only by `anomaly_status = "Anomaly"` (IsolationForest sensor pattern),
-> not by any SOH band.
+> not by any SOH band. `severity="info"` codes never escalate risk at all —
+> `compute_risk_profile()` only reacts to `warning`/`critical`.
+>
+> **Why `VOLTAGE_LOW` is info, not warning.** A voltage near cutoff is the
+> physical shadow of "the pack has been used up". The LFP discharge curve is
+> flat (3.2 V nominal), so 2.8 V/cell corresponds to roughly 5% SOC — a
+> production 8S pack reaches 22.4 V every time the customer drains it as
+> designed. At `warning` this opened a P3 `SCHEDULE_MAINTENANCE` ticket for a
+> perfectly healthy battery, once per deep discharge. Running a battery flat is
+> an operating state, not a fault. `VOLTAGE_CRITICAL` stays `critical`: below
+> the BMS cutoff there is a real risk of cell damage.
 
 ## Codes this pipeline does NOT emit
 `generate_warnings()` only sees voltage / current / temperature (+ SOH). The

@@ -5,15 +5,32 @@ state-of-charge and state-of-health drift. These are the anomaly types most
 directly tied to the project's Mamba SOH predictor output.
 
 ## LowSoc
-- **Threshold:** SOC critical 10%, SOC warning 20%.
+- **Notification only — a low state of charge does not open a ticket.** A solar
+  pack discharges every night; reaching the SOC warning threshold is the
+  expected result of the load and the daily generation cycle, not a fault. The
+  thresholds below are read from each battery type's own `threshold_configs`,
+  so a customer is told their pack is running low, and nothing more happens.
+- **Threshold:** SOC critical 10%, SOC warning 20% (defaults — the per-type
+  configured value wins).
 - **Symptoms:** state-of-charge dropping toward the operational floor faster
   than the expected daily solar cycle.
 - **Causes:** insufficient solar generation for the load profile (cloudy
   period, panel soiling/shading), load higher than sized for the pack,
   charge controller misconfiguration.
-- **Response:** if critical (<10%), shed non-essential load immediately to
-  protect the pack from deep-discharge damage; if warning tier (10-20%),
-  review the load/generation balance for the site before the next cycle.
+- **Response:** notify the customer so they can shed non-essential load. Review
+  the load/generation balance for the site if it keeps recurring — that review
+  is a planning activity, not an incident.
+- **When a low SOC *does* warrant a ticket** — only these two, and both need
+  history that a single reading cannot provide, so they are decided backend-side
+  where the time series lives:
+  1. **Not recovering** — SOC stays below the critical threshold across a full
+     charging window that should have replenished it. That points at the
+     charger, the controller, or the panels, not at the pack being used.
+  2. **Below the deep-discharge protection floor** — voltage/SOC under the BMS
+     cutoff, where cell damage becomes a real risk. See `VOLTAGE_CRITICAL` in
+     `bms_warning_codes.md`; that one is `severity="critical"` and does escalate.
+- **Do not** infer a fault from a low SOC reading on its own, and do not treat a
+  drained battery as evidence supporting a customer's fault report.
 
 ## SohDegradation
 - **Threshold:** SOH < 80% = End-of-Life, the single health-stage boundary.

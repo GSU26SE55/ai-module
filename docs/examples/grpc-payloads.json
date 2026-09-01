@@ -115,7 +115,7 @@
         "evidence": {
           "warnings": [
             { "code": "SOH_CRITICAL", "severity": "critical", "message": "SOH 82.1% is critically low — plan replacement soon." },
-            { "code": "VOLTAGE_LOW", "severity": "warning", "message": "Minimum voltage 3.150V is approaching cutoff (3.2V)." }
+            { "code": "VOLTAGE_LOW", "severity": "info", "message": "Minimum voltage 3.150V is approaching cutoff (3.2V) — expected near the end of a normal discharge." }
           ],
           "feature_summary": {
             "voltage": { "mean": 3.45, "min": 3.15, "max": 3.75 },
@@ -137,7 +137,7 @@
         "anomaly_score": -0.18, "recommended_action": "SCHEDULE_REPLACEMENT",
         "warnings": [
           { "code": "SOH_CRITICAL", "severity": "critical", "message": "SOH 82.1% is critically low — plan replacement soon." },
-          { "code": "VOLTAGE_LOW", "severity": "warning", "message": "Minimum voltage 3.150V is approaching cutoff (3.2V)." }
+          { "code": "VOLTAGE_LOW", "severity": "info", "message": "Minimum voltage 3.150V is approaching cutoff (3.2V) — expected near the end of a normal discharge." }
         ],
         "feature_summary": {
           "voltage": { "mean": 3.45, "min": 3.15, "max": 3.75 },
@@ -175,7 +175,7 @@
           "warnings": [
             { "code": "BATTERY_EOL", "severity": "critical", "message": "SOH 67.4% is below end-of-life threshold (80%) — battery should be replaced." },
             { "code": "TEMP_CRITICAL", "severity": "critical", "message": "Peak temperature 50.0°C exceeds critical threshold (45.0°C)." },
-            { "code": "VOLTAGE_LOW", "severity": "warning", "message": "Minimum voltage 2.750V is approaching cutoff (2.8V)." },
+            { "code": "VOLTAGE_LOW", "severity": "info", "message": "Minimum voltage 2.750V is approaching cutoff (2.8V) — expected near the end of a normal discharge." },
             { "code": "OVERCURRENT", "severity": "warning", "message": "Discharge current 2.08A exceeds recommended limit (2.0A)." },
             { "code": "TEMP_OOD", "severity": "warning", "message": "Temperature 6.0°C from nearest training cluster (4/24/44°C) — prediction may be extrapolated." }
           ],
@@ -201,7 +201,7 @@
         "warnings": [
           { "code": "BATTERY_EOL", "severity": "critical", "message": "SOH 67.4% is below end-of-life threshold (80%) — battery should be replaced." },
           { "code": "TEMP_CRITICAL", "severity": "critical", "message": "Peak temperature 50.0°C exceeds critical threshold (45.0°C)." },
-          { "code": "VOLTAGE_LOW", "severity": "warning", "message": "Minimum voltage 2.750V is approaching cutoff (2.8V)." },
+          { "code": "VOLTAGE_LOW", "severity": "info", "message": "Minimum voltage 2.750V is approaching cutoff (2.8V) — expected near the end of a normal discharge." },
           { "code": "OVERCURRENT", "severity": "warning", "message": "Discharge current 2.08A exceeds recommended limit (2.0A)." },
           { "code": "TEMP_OOD", "severity": "warning", "message": "Temperature 6.0°C from nearest training cluster (4/24/44°C) — prediction may be extrapolated." }
         ],

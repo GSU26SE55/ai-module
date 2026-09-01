@@ -110,7 +110,9 @@ message PredictRequest {
 
 message WarningItem {
   string code = 1;      // e.g. "VOLTAGE_LOW", "TEMP_CRITICAL", "SOH_LOW"
-  string severity = 2;  // "warning" | "critical"
+  // "info" | "warning" | "critical". Only warning/critical escalate risk_level;
+  // "info" is observational (VOLTAGE_LOW, INSUFFICIENT_DISCHARGE) and opens no ticket.
+  string severity = 2;
   string message = 3;
 }
 
