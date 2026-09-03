@@ -1,134 +1,147 @@
-# AI Module — Solar Battery Maintenance System
+<div align="center">
 
-> **GSU26SE55 Capstone Project** | FPT University | GVHD: Trương Long
-> Timeline: 11/05/2026 → 06/09/2026
+# AI Module — Solar Battery Maintenance
 
-AI service for real-time **State of Health (SOH) prediction**, **Remaining Useful Life (RUL) estimation**, and **anomaly detection** of lithium-ion batteries in solar energy systems. Built with FastAPI + pure-PyTorch Mamba SSM — no CUDA required.
+**State of Health prediction, anomaly detection and LLM-grounded maintenance prescriptions for lithium-ion batteries — Mamba state space models in pure PyTorch, served over gRPC and REST, on CPU.**
 
----
+[![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)](https://www.python.org)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.6%20CPU-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-REST%20%3A8000-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![gRPC](https://img.shields.io/badge/gRPC-%3A50051%20primary-244C5A?logo=grpc&logoColor=white)](protos/ai_service.proto)
+[![Mamba](https://img.shields.io/badge/Mamba%20SSM-pure%20PyTorch%20·%20no%20CUDA-6E44FF)](#model-architecture)
+[![Latency](https://img.shields.io/badge/inference-%3C%20100%20ms%20CPU-success)](#target-metrics)
 
-## Overview
-
-```
-┌───────────────────────────────────────────────────────┐
-│           Solar Battery Maintenance System            │
-├─────────────────┬──────────────────┬──────────────────┤
-│  Mobile App     │    Web App       │   AI Module      │
-│  React Native   │    ReactJS       │  FastAPI+PyTorch  │
-│  Customer       │  Admin/Manager/  │  SOH · RUL ·     │
-│  real-time view │  Staff tickets   │  Anomaly detect  │
-└─────────────────┴──────────────────┴──────────────────┘
-```
-
-The AI module sits behind the ASP.NET Core backend. When BatteryService detects a reading anomaly, it calls `POST /predict` to get an AI-powered assessment, then fires a `BatteryAnomalyDetectedEvent` to auto-create a P1/P2/P3 ITIL ticket.
+</div>
 
 ---
 
-## Features
+The AI service of the **Solar Lithium-ion Battery Maintenance Management System** (capstone GSU26SE55). BatteryService calls it with a window of sensor readings; it returns an SOH estimate with a confidence interval, a health classification, an anomaly score and — when asked — a step-by-step maintenance prescription grounded in the SOP knowledge base. That result is what turns into a P1/P2/P3 ITIL ticket upstream.
 
-| Capability | Model | Status |
-|-----------|-------|--------|
-| SOH Regression | MambaSOHPredictor (pure-PyTorch SSM) | Production |
-| Anomaly Classification | IsolationForest (sklearn) | Production |
-| Spectral + Kurtosis Features | 54-dim FFT + time-domain stats | Production |
-| RUL Estimation | RULPredictor (cycle-axis Mamba) | Research |
-| Prescription Layer | LLM + RAG over SOP knowledge base | Sprint 3 |
+No GPU, no `mamba-ssm` CUDA extension. Everything runs on a CPU container.
+
+## Table of contents
+
+- [What it does](#what-it-does)
+- [Quick start](#quick-start)
+- [Serving — gRPC + REST](#serving--grpc--rest)
+- [API surface](#api-surface)
+- [Model architecture](#model-architecture)
+- [Features — 57 dimensions](#features--57-dimensions)
+- [Two chemistries](#two-chemistries)
+- [Dataset & split](#dataset--split)
+- [Target metrics](#target-metrics)
+- [Prescription layer](#prescription-layer)
+- [Project structure](#project-structure)
+- [Model artifacts & versioning](#model-artifacts--versioning)
+- [Development](#development)
+- [Deployment](#deployment)
+- [Team](#team)
+- [References](#references)
 
 ---
 
-## Quick Start
+## What it does
 
-### Prerequisites
+| Capability | How | Status |
+| --- | --- | --- |
+| **SOH regression** | `MambaSOHPredictor` — selective SSM + FiLM conditioning | Production (`v1.6`) |
+| **Confidence** | Monte Carlo Dropout, 20 stochastic passes | Production |
+| **Anomaly detection** | IsolationForest over the same 57-dim feature space | Production (`v1.6`) |
+| **LFP chemistry** | Separate artifacts trained on Severson, per-chemistry voltage guards | Production (`v2.2-lfp`) |
+| **Long-sequence SOH** | Patch-embedded Mamba over `L = 4096` full discharge cycles | Research (`long v2.2`) |
+| **RUL estimation** | `RULPredictor` — cycle-axis Mamba, 1 token = 1 discharge cycle | Research (`rul v1.0`) |
+| **SOH forecasting** | Same cycle-axis tokens, predict SOH *h* cycles ahead | Research |
+| **Prescription** | LLM + RAG over the SOP knowledge base (ChromaDB) | Production |
+| **Staff / KB suggestion** | Retrieval over knowledge base + staff skill matching | Production |
+| **Ticket verification** | LLM check of a resolution against the reported fault | Production |
 
-- Python 3.11
-- No GPU required — CPU-only inference
+---
 
-### Install
+## Quick start
+
+Everything routine is a Make target — `make help` lists them all.
 
 ```bash
-git clone https://github.com/GSU26SE55/ai-module.git
-cd ai-module
-pip install -r requirements.txt
+make setup            # .venv on Python 3.11 + runtime deps           (once)
+make setup-dev        # + pytest, ruff                                (once)
+make dummy            # generate placeholder weights — no dataset needed
+make serve            # REST on :8000, Swagger at /docs
 ```
 
-### Run with dummy artifacts (dev mode)
+With real weights instead of dummies:
 
 ```bash
-# Generate placeholder model weights (no real data needed)
-python -X utf8 scripts/create_dummy_artifacts.py
-
-# Start the server
-uvicorn main:app --reload --port 8000
+# 1. Put the NASA Ames cleaned dataset in data/raw/nasa/cleaned_dataset/
+python scripts/preprocess.py          # raw CSV → tensors
+python scripts/train.py --epochs 50   # Mamba + IsolationForest (~10 min, CPU)
+make serve
 ```
 
-Open [http://localhost:8000/docs](http://localhost:8000/docs) for the interactive Swagger UI.
-
-### Run with real trained weights
+Other useful targets:
 
 ```bash
-# 1. Download NASA Ames dataset → data/raw/nasa/cleaned_dataset/
-# 2. Preprocess
-python -X utf8 scripts/preprocess.py
-
-# 3. Train (50 epochs, ~10 min on CPU)
-python -X utf8 scripts/train.py --epochs 50
-
-# 4. Start server
-uvicorn main:app --reload --port 8000
+make grpc         # standalone gRPC server (development only)
+make demo         # exercise all 4 gRPC RPCs — the demo path, instead of Swagger
+make smoke        # gRPC Health + Predict smoke test
+make benchmark    # latency benchmark (--real-weights enforces the <100 ms SLA)
+make test         # pytest + coverage (quality gate: ≥ 85 %)
+make lint format  # ruff
+make proto        # regenerate gRPC stubs from protos/ai_service.proto
+make docker-build docker-run
 ```
 
 ---
 
-## Serving — REST + gRPC (hybrid)
+## Serving — gRPC + REST
 
-The same inference/prescription pipeline is exposed over two transports running side by side:
+One inference pipeline, two transports running side by side:
 
-| Transport | Internal port | Public production endpoint | Use for |
-|-----------|---------------|----------------------------|---------|
-| REST (FastAPI) | 8000 | `https://ai.solaris.io.vn` | HTTPS fallback, health, metrics |
-| gRPC (`aimodule.v1.AiService`) | 50051 (env `GRPC_PORT`) | `https://ai.solaris.io.vn:443` | primary backend transport, streaming |
+| Transport | Internal port | Public endpoint | Role |
+| --- | --- | --- | --- |
+| gRPC (`aimodule.v1.AiService`) | `50051` (`GRPC_PORT`) | `https://ai.solaris.io.vn:443` | **Primary** backend transport, incl. streaming |
+| REST (FastAPI) | `8000` | `https://ai.solaris.io.vn` | HTTPS fallback, health, metrics, Swagger |
 
-In production, FastAPI owns the lifecycle of both transports: model/RAG artifacts
-are verified and loaded once during startup, then the gRPC server starts in the
-FastAPI lifespan. `python -m src.grpc_server` remains available only as a standalone
-development command. Caddy is the only public production ingress and multiplexes
-both transports on TLS port 443; the internal application ports are not published.
-See [`docs/production-deployment.md`](docs/production-deployment.md) for the
-DNS, firewall, VPS and Jenkins contract.
+In production **FastAPI owns the lifecycle of both**: model and RAG artifacts are verified and loaded once at startup, then the gRPC server starts inside the FastAPI lifespan. `python -m src.grpc_server` exists only as a development convenience. Caddy is the sole public ingress and multiplexes both transports on TLS 443 — the internal ports are never published.
 
-gRPC RPCs: `Predict`, `Prescribe`, `Health` (unary — mirror the REST endpoints, parity-tested field-by-field) and `PredictStream` (bidirectional streaming: N windows in → N predictions out, in order, over one connection).
+gRPC RPCs: `Predict`, `Prescribe`, `Health` (unary, field-by-field parity-tested against REST) and `PredictStream` (bidirectional — N windows in, N predictions out, in order, over one connection).
 
-- Contract: [`protos/ai_service.proto`](protos/ai_service.proto) — regenerate Python stubs with `python scripts/gen_proto.py`
-- Demo client (all 4 RPCs, replaces Swagger for demos): `python scripts/grpc_client_demo.py`
-- Benchmark: `python scripts/benchmark_grpc.py` (add `--real-weights` to enforce the <100ms SLA with production artifacts)
-- BE (.NET) integration guide: [`docs/grpc-integration-be.md`](docs/grpc-integration-be.md)
+- Contract: [`protos/ai_service.proto`](protos/ai_service.proto)
+- Demo client: `python scripts/grpc_client_demo.py`
+- .NET integration guide: [`docs/grpc-integration-be.md`](docs/grpc-integration-be.md)
+- Deployment contract: [`docs/production-deployment.md`](docs/production-deployment.md)
 
 ---
 
-## API
+## API surface
 
-### `POST /predict`
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `POST` | `/predict/` | SOH + classification + anomaly score from a 30-step window |
+| `POST` | `/predict/long` | Long-sequence variant (`L = 4096`, full discharge cycles) |
+| `POST` | `/predict/feedback` | Record a human correction of a classification |
+| `POST` | `/prescribe/` | Prediction → grounded maintenance prescription (LLM + RAG) |
+| `POST` | `/prescribe/feedback` | Record usefulness feedback on a prescription |
+| `POST` | `/suggest/staff` | Suggest technicians by skill match |
+| `POST` | `/suggest/kb` | Retrieve relevant knowledge-base articles |
+| `POST` | `/verify-ticket/` | Check a resolution against the reported fault |
+| `GET` | `/health` | Full readiness: which artifacts are loaded |
+| `GET` | `/live` · `/ready` | Kubernetes-style liveness / readiness probes |
 
-Predict SOH and battery health classification from 30 timesteps of sensor data.
+### `POST /predict/`
 
-**Request**
 ```json
 {
   "battery_id": "B0005",
   "readings": [
     [3.92, -0.99, 25.3, 0.0],
     [3.87, -0.99, 25.5, 13.0],
-    "... 30 rows of [voltage, current, temperature, time]"
+    "… 30 rows of [voltage, current, temperature, time]"
   ]
 }
 ```
 
-> Preferred input is 4 features; the service derives cycle/SOC features. A complete
-> 6-feature row `[voltage, current, temperature, time, cycle_count, soc_percent]`
-> and legacy 3-feature input are also supported. See the protobuf contract for the
-> chemistry-dependent SOC semantics before sending 6 features.
+Four features is the preferred input — the service derives the rest. A full six-feature row and the legacy three-feature form are also accepted; an optional `chemistry` field selects the per-chemistry voltage range and temperature guards (see [Two chemistries](#two-chemistries)).
 
-**Response**
 ```json
 {
   "battery_id": "B0005",
@@ -139,307 +152,243 @@ Predict SOH and battery health classification from 30 timesteps of sensor data.
   "degradation_rate_per_cycle": 0.15,
   "anomaly_score": -0.12,
   "recommended_action": "SCHEDULE_MAINTENANCE",
-  "warnings": [{"code": "SOH_LOW", "severity": "warning", "message": "SOH below 90%"}],
+  "warnings": [{ "code": "SOH_LOW", "severity": "warning", "message": "SOH below 90%" }],
   "inference_ms": 87.4
 }
 ```
 
-Classifications: `Normal` | `Degrading` | `Failed`
+Classification — SOH is the primary driver, the anomaly score only breaks ties in the healthy band:
 
-Classification logic:
-- `SOH < 80%` → **Failed**
-- `SOH 80–90%` → **Degrading**
-- `SOH ≥ 90%` + anomaly score `< -0.1` → **Degrading**
-- `SOH ≥ 90%` + anomaly score `≥ -0.1` → **Normal**
-
-Latency SLA: **< 100ms** (P1 Critical ticket requirement)
-
-### `GET /health`
-
-```json
-{
-  "status": "ready",
-  "model_version": "1.6",
-  "scaler_loaded": true,
-  "mamba_loaded": true,
-  "isolation_forest_loaded": true,
-  "lfp_loaded": true,
-  "long_model_loaded": true
-}
-```
-
-### `POST /prescribe`
-
-Turn a prediction result into a step-by-step maintenance prescription, grounded in the SOP knowledge base via RAG.
-
-**Request**
-```json
-{
-  "battery_id": "B0005",
-  "prediction": {
-    "soh_percent": 68.3,
-    "classification": "Degrading",
-    "confidence": 0.87
-  }
-}
-```
-
-**Response**
-```json
-{
-  "battery_id": "B0005",
-  "fault_statement": "Battery B0005 shows significant SOH degradation to 68.3%...",
-  "prescription": {
-    "action": "Schedule battery inspection",
-    "urgency": "Within 24 hours",
-    "priority": "P2",
-    "steps": [
-      "1. Kiểm tra terminal kết nối",
-      "2. Đo điện áp từng cell",
-      "3. Kiểm tra nhiệt độ vận hành",
-      "4. So sánh với baseline capacity"
-    ],
-    "sop_reference": "SOP-BAT-002",
-    "safety_warnings": ["Không charge quá 4.2V", "Dừng nếu nhiệt độ > 60°C"]
-  },
-  "inference_ms": 1240
-}
-```
+| Condition | Result |
+| --- | --- |
+| `SOH < 80 %` | **Failed** |
+| `80 % ≤ SOH < 90 %` | **Degrading** |
+| `SOH ≥ 90 %` and anomaly score `< -0.1` | **Degrading** |
+| `SOH ≥ 90 %` and anomaly score `≥ -0.1` | **Normal** |
 
 ---
 
-## Prescription Layer *(Sprint 3)*
+## Model architecture
 
-Based on: *"From Prediction to Prescription: LLM Agent for Context-Aware Maintenance Decision Support"* — Deng et al., PHM Society 2024.
+### MambaSOHPredictor — production
 
-```
-POST /predict → {soh_percent, classification, confidence, risk}
-      │
-      ▼ Step 1 — LLM: Fault Statement
-        "Battery B0005 SOH 68.3% — significant capacity fade..."
-      │
-      ▼ Step 2 — LLM: Search Query Generation
-        ["battery degradation maintenance SOH 68%", ...]
-      │
-      ▼ Step 3 — RAG: ChromaDB SOP Knowledge Base
-        Top-3 relevant standard operating procedures
-      │
-      ▼ Step 4 — LLM: Prescription Report
-        {action, steps, urgency, sop_reference, safety_warnings}
-```
-
-Additional dependencies for Sprint 3:
-
-| Component | Library |
-|-----------|---------|
-| LLM | Claude API (`claude-sonnet-4-6`) |
-| Vector DB | ChromaDB |
-| Embeddings | sentence-transformers |
-| SOP docs | Markdown files in `data/sop/` |
-
----
-
-## Model Architecture
-
-### MambaSOHPredictor (Production)
-
-Pure-PyTorch implementation of the Mamba Selective State Space Model — no `mamba-ssm` CUDA dependency, runs natively on Windows 11.
+Pure-PyTorch Mamba selective state space model. No `mamba-ssm`, no CUDA, runs natively on Windows and in a slim Linux container.
 
 ```
-Input (batch, 30, 6)        ← [voltage, current, temperature, current_load, voltage_load, time]
-  → Linear(6→64)
-  → MambaBlock × 2          ← Selective SSM with ZOH discretization
+Input (batch, 30, 6)      ← 4 base features [voltage, current, temperature, time]
+                            + 2 server-derived [cycle_count, soc_percent] (pre-normalised)
+  → Linear(6 → 64)
+  → MambaBlock × 2        ← selective SSM, ZOH discretisation
   → LayerNorm
-  → Last token hidden state
-  → FiLM conditioning       ← 2-layer MLP: 54-dim spectral features → γ + β
-  → Linear(64→32) + GELU + Dropout(0.2)
-  → Linear(32→1)
-Output (batch,)              # SOH %
+  → last-token hidden state
+  → FiLM conditioning     ← 2-layer MLP: 57-dim spectral features → γ, β
+  → Linear(64 → 32) + GELU + Dropout(0.2)
+  → Linear(32 → 1)
+Output (batch,)             SOH %
 ```
 
-Confidence: **MC Dropout** — 20 stochastic forward passes → mean=SOH, std→confidence score.
+Confidence comes from **MC Dropout**: 20 stochastic forward passes, mean → SOH, standard deviation → confidence.
 
-### Long-Sequence Model (Research, L=4096)
+### Long-sequence model — research, `L = 4096`
 
 ```
-Input (batch, L, 8)         ← 6 base features + dQ/dV (IC curve) + phase mask
+Input (batch, 4096, 8)    ← 6 base + dQ/dV (incremental capacity) + phase mask
   → Conv1d patch embed (P16S16) → 256 tokens
-  → PatchDegradationEncoder    ← RMS / peak-to-peak / std / kurtosis per patch
+  → PatchDegradationEncoder     ← RMS / peak-to-peak / std / kurtosis per patch
   → MambaBlock × 2
-  → Attention pooling
+  → attention pooling
   → FiLM conditioning + head
-Output (batch,)              # SOH %
+Output (batch,)             SOH %
 ```
 
-Results (Kaggle GPU, 2026-06-20): **MAE 1.6293%** ✅ | **RMSE 2.0871%** ✅
+Kaggle GPU run, 2026-06-20: **MAE 1.6293 %**, **RMSE 2.0871 %**.
 
-### Spectral + Kurtosis Features (54-dim)
-
-Each window is enriched with physics-informed features used for both **FiLM conditioning** (Mamba) and **IsolationForest** input:
-
-- **9 spectral features × 3 channels** — FFT-based: centroid, entropy, peak frequency, spectral flatness, rolloff, band energy distribution
-- **9 statistical features × 3 channels** — Time-domain: kurtosis, crest factor, waveform factor, skewness, peak-to-peak amplitude
-
-### IsolationForest (Anomaly Detection)
+### IsolationForest — anomaly detection
 
 ```python
 IsolationForest(contamination=0.1, n_estimators=100, random_state=42)
-# Input: 54-dim spectral+kurtosis features (StandardScaler'd)
-
-# Classification logic (SOH is the primary driver):
-# SOH < 80%                    → Failed
-# SOH 80–90%                   → Degrading
-# SOH ≥ 90% AND score < -0.1   → Degrading
-# SOH ≥ 90% AND score ≥ -0.1   → Normal
+# input: the same 57-dim spectral + statistical vector, StandardScaler'd
 ```
 
 ---
 
-## Dataset
+## Features — 57 dimensions
 
-**NASA Ames Battery Dataset** — 34 lithium-ion 18650 cells (B0005–B0056)
+Each window is enriched with physics-informed features, used both for **FiLM conditioning** of the Mamba model and as the **IsolationForest** input. `SPECTRAL_FEAT_DIM = 57` in `src/core/config.py` is the single source of truth:
 
-| Split | Batteries | Windows | SOH Range |
-|-------|-----------|---------|-----------|
-| Train | B0005, B0006, B0007 | 4,812 | 57.7–101.8% |
-| Val | B0018 (first 70%) | 767 | 72.0–92.8% |
-| Test | B0018 (last 30%) | 329 | 67.1–73.5% |
+**(10 spectral + 9 statistical) × 3 channels** — voltage, current, temperature.
 
-Split by battery ID (not by timestep) to prevent data leakage across cells.
+- **Spectral (FFT)** — centroid, entropy, peak frequency, flatness, rolloff, band-energy distribution, and a **spectral Gini coefficient**. Gini measures how concentrated the spectral energy is: as a cell ages, broadband noise rises and the Gini coefficient falls, which complements flatness.
+- **Statistical (time domain)** — kurtosis, crest factor, waveform factor, skewness, peak-to-peak amplitude.
 
-SOH formula: `capacity_current / 2.0 Ah × 100`
+> [!WARNING]
+> The feature dimension is baked into the first FiLM layer (`57 × 64`). Any checkpoint trained against an older 54-dim extractor is unloadable — `src/core/model_loader.py` rejects it rather than silently mis-predicting. Re-extract and retrain if you change the feature set.
 
 ---
 
-## Target Metrics
+## Two chemistries
 
-| Metric | Target | Notes |
-|--------|--------|-------|
-| MAE | **< 2.0%** SOH | Test set |
-| RMSE | **< 3.0%** SOH | Test set |
+The service handles both NASA-style **NMC** cells and **LFP** packs, because they fail differently and share nothing but the interface:
+
+| | NMC (default) | LFP |
+| --- | --- | --- |
+| Artifacts | `soh_mamba_v1.6`, `isolation_forest_v1.6` | `*_v2.2-lfp` |
+| Trained on | NASA Ames | Severson |
+| Per-cell voltage range | 2.0 – 4.5 V | 2.0 – 3.8 V |
+| Temperature domain | 4 / 24 / 43 °C clusters | single 30 °C chamber |
+
+Declaring `chemistry` on the request matters: a real 8S LFP pack reading 26.4 V is a genuine overvoltage, but the shared NMC range is loose enough to miss it. Requests are also checked against the training temperature clusters, and flagged when they fall more than 5 °C outside any of them — an out-of-domain prediction is reported as such instead of being quietly returned.
+
+---
+
+## Dataset & split
+
+**NASA Ames Battery Dataset** — 18650 cells, `cleaned_dataset` release. Split **by battery, never by timestep**, so no cell appears on both sides.
+
+| Split | Cells | Notes |
+| --- | --- | --- |
+| Train | 24 cells | B0005–B0007, B0018 (24 °C) · B0025–B0032 (24 / 43 °C) · B0042–B0044 (22 °C) · B0033, B0034 (~197 cycles, deepest curves) · B0041, B0045, B0047, B0053–B0056 (4 °C) |
+| Val | **B0046** | 4 °C, 72 cycles, SOH 0–86.4 % — held out |
+| Test | **B0048** | 4 °C, 72 cycles — held out entirely |
+
+The 4 °C cells exist for a reason: the original 15-cell train set had none, so the model had to extrapolate into a temperature domain it had never seen — the main cross-battery generalisation gap. B0047 was later moved val → train (`GH-88`) because the 4 °C train cells only spanned SOH 0–67.2 % while val/test demand predictions up to ~86 %, which caused systematic underprediction right at the 80 % EOL threshold. B0048 stayed fully held out, so the test protocol is still honest.
+
+Excluded: B0036 (capacity spikes to 122 %), B0049–B0052 (too short or corrupt). SOH target: `capacity_current / 2.0 Ah × 100`. Seed `42` everywhere.
+
+---
+
+## Target metrics
+
+| Metric | Target | Measured on |
+| --- | --- | --- |
+| MAE | **< 2.0 %** SOH | held-out test cell |
+| RMSE | **< 3.0 %** SOH | held-out test cell |
 | Anomaly F1 | **> 0.80** | — |
-| Inference latency | **< 100ms** | CPU, batch_size=1 |
+| Inference latency | **< 100 ms** | CPU, batch size 1 — the P1 ticket requirement |
+
+`make benchmark --real-weights` enforces the latency SLA against production artifacts.
 
 ---
 
-## Project Structure
+## Prescription layer
+
+Based on Deng et al., *From Prediction to Prescription: LLM Agent for Context-Aware Maintenance Decision Support* (PHM Society, 2024).
+
+```
+POST /predict → { soh_percent, classification, confidence }
+      │
+      ▼ 1 — LLM: fault statement        "B0005 SOH 68.3 % — significant capacity fade…"
+      ▼ 2 — LLM: search query generation
+      ▼ 3 — RAG: ChromaDB over the SOP knowledge base   → top-3 procedures
+      ▼ 4 — LLM: prescription report
+        { action, steps, urgency, priority, sop_reference, safety_warnings }
+```
+
+The knowledge base lives in [`knowledge/`](knowledge) (`maintenance/`, `safety/`) and is ingested with `python scripts/ingest_rag.py`. Prescription quality is evaluated by [`eval/evaluate_prescription.py`](eval); usefulness feedback comes back through `POST /prescribe/feedback`.
+
+| Component | Choice |
+| --- | --- |
+| LLM | Claude API |
+| Vector DB | ChromaDB |
+| Embeddings | sentence-transformers (baked into the image at build time) |
+
+---
+
+## Project structure
 
 ```
 ai-module/
-├── main.py                    # FastAPI entry point
+├── main.py                       # FastAPI entry point — loads artifacts, starts gRPC in the lifespan
 ├── src/
-│   ├── models/
-│   │   ├── soh_predictor.py   # MambaBlock + MambaSOHPredictor
-│   │   ├── rul_predictor.py   # RULPredictor (research)
-│   │   └── anomaly_detector.py
-│   ├── features/
-│   │   └── extractor.py       # 54-dim spectral + kurtosis features
-│   ├── routers/
-│   │   ├── predict.py         # POST /predict
-│   │   └── health.py          # GET /health
-│   ├── services/
-│   │   ├── inference.py       # Full prediction pipeline
-│   │   └── confidence.py
-│   └── core/
-│       ├── config.py
-│       └── model_loader.py    # Load artifacts at startup
-├── scripts/
-│   ├── preprocess.py          # Raw NASA CSV → tensors
-│   ├── preprocess_long.py     # 8-feature long-context preprocessing
-│   ├── train.py               # Train Mamba + IsolationForest
-│   └── create_dummy_artifacts.py
-├── tests/
-│   ├── test_models.py
-│   ├── test_inference.py      # Includes latency benchmark
-│   ├── test_preprocess.py
-│   └── test_routers.py
-├── models/weights/            # Committed model artifacts
-│   ├── scaler.pkl                    # 6-feat MinMaxScaler
-│   ├── feature_scaler.pkl            # 54-dim StandardScaler
-│   ├── soh_mamba_v1.2.pth            # Production Mamba
-│   ├── isolation_forest_v1.2.pkl     # IsolationForest
-│   ├── feature_scaler_long.pkl       # 54-dim StandardScaler (long)
-│   ├── soh_mamba_long_v2.0.pth       # Long Mamba (L=4096)
-│   ├── feature_scaler_rul.pkl
-│   └── soh_mamba_rul_v1.0.pth        # RUL Predictor
-└── data/                      # .gitignored — download separately
-    └── raw/nasa/cleaned_dataset/
+│   ├── core/
+│   │   ├── config.py             # single source of truth: versions, dims, thresholds, paths
+│   │   ├── model_loader.py       # artifact loading + version/dimension guards
+│   │   ├── artifact_manifest.py  # what must be present for the service to be "ready"
+│   │   ├── runtime.py · metrics.py
+│   ├── models/                   # soh_predictor · rul_predictor · anomaly_detector
+│   ├── features/extractor.py     # the 57-dim spectral + statistical extractor
+│   ├── routers/                  # predict · prescribe · suggest · verify · health
+│   ├── schemas/                  # pydantic request/response contracts
+│   ├── services/                 # inference · confidence · prescription/ · suggest_* · verify
+│   │                             # battery_history · classification_feedback · text_utils
+│   ├── grpc_server.py · grpc_gen/
+├── protos/ai_service.proto       # gRPC contract
+├── scripts/                      # preprocess* · train · eval_* · experiment_* · benchmark_* ·
+│                                 # gen_proto · ingest_rag · create_dummy_artifacts · grpc_client_demo
+├── tests/                        # ~36 test modules incl. gRPC contract + production runtime
+├── models/weights/               # committed artifacts (see below)
+├── knowledge/                    # SOP knowledge base for RAG (maintenance/, safety/)
+├── eval/ · demo/ · notebooks/    # evaluation harness, demo payloads, exploration
+├── deploy/                       # Caddy config, host env template, deployment scripts
+├── docs/                         # ADRs, integration guides, production runbook
+└── Makefile · Dockerfile · Jenkinsfile · pyproject.toml
 ```
+
+---
+
+## Model artifacts & versioning
+
+Committed under `models/weights/` — inference must use exactly the artifacts training produced.
+
+| Artifact | Current | Notes |
+| --- | --- | --- |
+| `soh_mamba_v{MODEL_VERSION}.pth` | `1.6` | Production SOH model |
+| `isolation_forest_v{MODEL_VERSION}.pkl` | `1.6` | Must match the model version |
+| `scaler.pkl` | `1.3` | 6-feature MinMaxScaler |
+| `feature_scaler.pkl` | `1.5` | 57-dim StandardScaler |
+| `*_v2.2-lfp.*` | `2.2` | LFP chemistry set |
+| `soh_mamba_long_v2.2.pth`, `feature_scaler_long.pkl` | `long-2.0` | `L = 4096` research pipeline |
+| `soh_mamba_rul_v1.0.pth`, `feature_scaler_rul.pkl` | `1.0` | RUL predictor |
+
+| Version bump | When |
+| --- | --- |
+| `v1.0 → v1.1` | Retrain, same architecture, new data or hyperparameters |
+| `v1.x → v2.0` | Architecture change |
+
+All artifacts of a set land in **one commit**, and scalers are **never refit on production data** — the model would then be reading a distribution it was not trained on.
 
 ---
 
 ## Development
 
-### Run tests
-
 ```bash
-pytest tests/ -v --cov=src
-# Target: >= 85% coverage
+make test          # pytest + coverage — gate is ≥ 85 %
+make lint format   # ruff
 ```
 
-### Lint & format
+Tests cover the pure pieces (extractor, preprocessing, confidence, schemas), the routers, the gRPC contract and server, the model loader's version guards, and the production runtime wiring — plus the RAG and prescription services.
 
-```bash
-ruff check src/ scripts/ tests/
-ruff format src/ scripts/ tests/
-```
-
-### Model versioning
-
-| Version bump | When |
-|--------------|------|
-| `v1.0 → v1.1` | Retrain same architecture with new data or hyperparameters |
-| `v1.x → v2.0` | Architecture change (new layers, new model class) |
-
-All artifacts (`scaler.pkl`, `feature_scaler.pkl`, `soh_mamba_vX.Y.pth`, `isolation_forest_vX.Y.pkl`) must be committed together in a single commit. **Do not refit scalers on production data.**
+**CI** — [`Jenkinsfile`](Jenkinsfile) runs: checkout → Python CI (lint, tests, coverage) → contract and deployment-config checks → filesystem security scan → immutable image build → container verification → image security scan + SBOM → a gated request for a trusted production release.
 
 ---
 
-## Roadmap
+## Deployment
 
-| Sprint | Period | Goal |
-|--------|--------|------|
-| Sprint 1 | May 11 – Jun 1 | Base architecture, preprocessing, FastAPI skeleton |
-| Sprint 2 | Jun 2 – Jun 21 | Production training (v1.2), FiLM + spectral features, long-seq L=4096 (GH-10), RULPredictor (GH-13) |
-| Sprint 3 | Jun 22 – Jul 6 | Prescription Layer (LLM + RAG + ChromaDB) |
-| Sprint 4 | Jul 7 – Jul 20 | Integration with BatteryService event bus |
-| Sprint 5 | Jul 21 – Aug 3 | Load testing, performance hardening |
-| Sprint 6+ | Aug 4 – Sep 6 | System test, IoT pipeline (optional) |
+A multi-stage [`Dockerfile`](Dockerfile) pins the Python base image **by digest**, installs CPU-only Torch, and installs the runtime from a hash-locked requirements file (`requirements-runtime.lock`, `--require-hashes`) so a build is reproducible and cannot silently drift. The embedding model is downloaded at build time, so the container needs no model download at runtime.
 
----
-
-## Tech Stack
-
-| Layer | Choice | Version |
-|-------|--------|---------|
-| Language | Python | 3.11 |
-| ML | PyTorch | 2.6.0 |
-| Anomaly | scikit-learn | 1.6.1 |
-| Signal processing | scipy | 1.13.1 |
-| API | FastAPI | 0.141.1 |
-| Server | uvicorn | 0.30.1 |
-| Data | numpy, pandas | 1.26.4 / 2.2.2 |
-
-No GPU. No `mamba-ssm`. Runs on any CPU.
+Production runs on a VPS behind **Caddy**, which terminates TLS on 443 and multiplexes gRPC (HTTP/2) and REST to the same container. DNS, firewall, VPS and Jenkins contract: [`docs/production-deployment.md`](docs/production-deployment.md).
 
 ---
 
 ## Team
 
-| Name | ID | Role |
-|------|----|------|
-| Nguyen Phuc Duy | SE184821 | BE + AI |
-| Bui Phuoc Thang | SE180445 | BE + AI |
-| Mai Hong Thai | SE183923 | BE + AI |
-| Tran Minh Tri | SE183109 | FE / Leader |
-| Nguyen Nhat Minh | SE170310 | FE + AI |
+Capstone project **GSU26SE55** — supervisor: Trương Long.
+
+| Name | Student ID | Role |
+| --- | --- | --- |
+| Nguyễn Phúc Duy | SE184821 | Backend + AI |
+| Bùi Phước Thắng | SE180445 | Backend + AI |
+| Mai Hồng Thái | SE183923 | Backend + AI |
+| Trần Minh Trí | SE183109 | Frontend (team lead) |
+| Nguyễn Nhật Minh | SE170310 | Frontend + AI |
 
 ---
 
 ## References
 
-- Gu, A., & Dao, T. (2024). *Mamba: Linear-Time Sequence Modeling with Selective State Spaces*. COLM 2024 (arXiv:2312.00752, 2023).
-- Liu, F. T., Ting, K. M., & Zhou, Z. H. (2008). *Isolation Forest*. ICDM 2008.
-- Deng et al. (2024). *From Prediction to Prescription: LLM Agent for Context-Aware Maintenance Decision Support*. PHM Society.
-- Dubarry, M., & Liaw, B. Y. (2009). *Identify capacity fading mechanism in a commercial LiFePO4 cell*. Journal of Power Sources.
-- NASA Ames Battery Dataset: [PCoE Data Set Repository](https://www.nasa.gov/intelligent-systems-division/discovery-and-systems-health/pcoe/pcoe-data-set-repository/)
+- Gu, A. & Dao, T. (2024). *Mamba: Linear-Time Sequence Modeling with Selective State Spaces.* COLM 2024 (arXiv:2312.00752).
+- Liu, F. T., Ting, K. M. & Zhou, Z. H. (2008). *Isolation Forest.* ICDM 2008.
+- Deng et al. (2024). *From Prediction to Prescription: LLM Agent for Context-Aware Maintenance Decision Support.* PHM Society.
+- Severson, K. A. et al. (2019). *Data-driven prediction of battery cycle life before capacity degradation.* Nature Energy.
+- Dubarry, M. & Liaw, B. Y. (2009). *Identify capacity fading mechanism in a commercial LiFePO4 cell.* Journal of Power Sources.
+- [NASA Ames PCoE Battery Data Set](https://www.nasa.gov/intelligent-systems-division/discovery-and-systems-health/pcoe/pcoe-data-set-repository/)
